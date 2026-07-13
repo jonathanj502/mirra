@@ -35,30 +35,9 @@ def _stripe_webhook_configured() -> bool:
     return bool(settings.stripe_secret_key and settings.stripe_webhook_secret)
 
 
-def _stripe_ready_for_checkout() -> None:
-    if not stripe_checkout_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="Stripe checkout is not configured yet",
-        )
-    stripe.api_key = settings.stripe_secret_key
-
-
-def _stripe_ready_for_portal() -> None:
-    if not stripe_portal_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="Stripe customer portal is not configured yet",
-        )
-    stripe.api_key = settings.stripe_secret_key
-
-
-def _stripe_ready_for_webhooks() -> None:
-    if not _stripe_webhook_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="Stripe webhook signing is not configured yet",
-        )
+def _stripe_ready(configured: bool, detail: str) -> None:
+    if not configured:
+        raise HTTPException(status_code=503, detail=detail)
     stripe.api_key = settings.stripe_secret_key
 
 
@@ -101,22 +80,14 @@ def _find_subscription_owner(
     stripe_subscription_id: str | None = None,
     stripe_customer_id: str | None = None,
 ) -> str | None:
-    if stripe_subscription_id:
+    columns = (("stripe_subscription_id", stripe_subscription_id), ("stripe_customer_id", stripe_customer_id))
+    for column, value in columns:
+        if not value:
+            continue
         result = (
             db.table("billing_subscriptions")
             .select("user_id")
-            .eq("stripe_subscription_id", stripe_subscription_id)
-            .maybe_single()
-            .execute()
-        )
-        if result and result.data:
-            return result.data["user_id"]
-
-    if stripe_customer_id:
-        result = (
-            db.table("billing_subscriptions")
-            .select("user_id")
-            .eq("stripe_customer_id", stripe_customer_id)
+            .eq(column, value)
             .maybe_single()
             .execute()
         )
@@ -126,20 +97,14 @@ def _find_subscription_owner(
     return None
 
 
-def _price_id_from_subscription(subscription: Any) -> str | None:
-    items = _field(_field(subscription, "items", {}), "data", []) or []
-    if not items:
-        return None
-    price = _field(items[0], "price", {})
-    return _field(price, "id")
-
-
 def _subscription_payload(subscription: Any, user_id: str) -> dict:
+    items = _field(_field(subscription, "items", {}), "data", []) or []
+    price_id = _field(_field(items[0], "price", {}), "id") if items else None
     return {
         "user_id": user_id,
         "stripe_customer_id": _field(subscription, "customer"),
         "stripe_subscription_id": _field(subscription, "id"),
-        "stripe_price_id": _price_id_from_subscription(subscription),
+        "stripe_price_id": price_id,
         "status": _field(subscription, "status", "free") or "free",
         "current_period_end": _iso_timestamp(_field(subscription, "current_period_end")),
         "trial_end": _iso_timestamp(_field(subscription, "trial_end")),
@@ -177,7 +142,7 @@ def fetch_billing_status(db: Client, user_id: str) -> BillingStatus:
 
 
 def create_checkout_session(db: Client, user_id: str) -> BillingSessionResponse:
-    _stripe_ready_for_checkout()
+    _stripe_ready(stripe_checkout_configured(), "Stripe checkout is not configured yet")
     row = _fetch_subscription_row(db, user_id)
     if row and row.get("status") in PRO_ACCESS_STATUSES:
         raise HTTPException(status_code=409, detail="This account is already on Mirra Pro")
@@ -210,7 +175,7 @@ def create_checkout_session(db: Client, user_id: str) -> BillingSessionResponse:
 
 
 def create_portal_session(db: Client, user_id: str) -> BillingSessionResponse:
-    _stripe_ready_for_portal()
+    _stripe_ready(stripe_portal_configured(), "Stripe customer portal is not configured yet")
     row = _fetch_subscription_row(db, user_id)
     customer_id = row.get("stripe_customer_id") if row else None
     if not customer_id:
@@ -279,7 +244,7 @@ def _handle_checkout_completed(db: Client, session: Any) -> None:
 
 
 def handle_stripe_webhook(db: Client, payload: bytes, signature: str | None) -> StripeWebhookResponse:
-    _stripe_ready_for_webhooks()
+    _stripe_ready(_stripe_webhook_configured(), "Stripe webhook signing is not configured yet")
     if not signature:
         raise HTTPException(status_code=400, detail="Missing Stripe signature")
 

@@ -170,10 +170,6 @@ def _total_words(row: dict) -> int:
 
 def _vocabulary_richness(row: dict) -> float:
     total = _total_words(row)
-    if total <= 0:
-        transcript_words = re.findall(r"[a-z']+", str(row.get("transcript") or "").lower())
-        total = len(transcript_words)
-        return round(len(set(transcript_words)) / total, 3) if total else 0.0
     return round(_unique_words(row) / total, 3) if total else 0.0
 
 

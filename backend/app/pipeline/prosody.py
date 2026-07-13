@@ -98,15 +98,7 @@ def _pitch_for_segments(audio: np.ndarray, sample_rate: int, segments: list[Segm
         if len(chunk) < max(400, sample_rate // 12):
             continue
         try:
-            frame_length = min(2048, max(512, 2 ** int(math.floor(math.log2(len(chunk))))))
-            f0 = librosa.yin(
-                chunk.astype(np.float32),
-                fmin=50,
-                fmax=500,
-                sr=sample_rate,
-                frame_length=frame_length,
-                hop_length=max(128, frame_length // 4),
-            )
+            f0 = librosa.yin(chunk.astype(np.float32), fmin=50, fmax=500, sr=sample_rate)
         except Exception:
             continue
         voiced = f0[np.isfinite(f0)]
@@ -118,13 +110,13 @@ def _pitch_for_segments(audio: np.ndarray, sample_rate: int, segments: list[Segm
 def _normalize_series(values: list[float]) -> list[float]:
     if not values:
         return []
-    high = max(values)
-    low = min(values)
+    high, low = max(values), min(values)
     if high <= 0:
         return [0.0 for _ in values]
     if high == low:
         return [5.0 if value > 0 else 0.0 for value in values]
-    return [_round_float(1.0 + 9.0 * ((value - low) / (high - low)), 2) if value > 0 else 0.0 for value in values]
+    scaled = np.interp(values, [low, high], [1.0, 10.0])
+    return [_round_float(s, 2) if value > 0 else 0.0 for value, s in zip(values, scaled)]
 
 
 def _energy_series(audio: np.ndarray, sample_rate: int, segments: list[Segment], total_seconds: float, buckets: int = 16) -> list[float]:
@@ -240,7 +232,7 @@ def compute_stats(
 
     function_profile = _function_profile(tokenized)
     language_score = _language_style_score(function_profile)
-    acoustic_score = float(np.mean([volume_match, pitch_match, speech_rate_score])) if energy_axes else 0.0
+    acoustic_score = float(np.mean(energy_axes))
     lsm_score = _clamp((language_score * 0.55) + (acoustic_score * 0.45))
     unique_word_count = len(set(tokenized))
     total_word_count = len(tokenized)
