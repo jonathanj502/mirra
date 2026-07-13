@@ -38,7 +38,7 @@ pytest tests/test_usage_gate.py
 All audio capture happens on-device as a plain WAV file; no streaming or on-device VAD. On stop, the app uploads the file to `POST /sessions`. The backend runs a synchronous pipeline in order:
 
 1. `pipeline/vad.py` — Silero VAD extracts speech segments with timestamps and energy levels
-2. `pipeline/speaker.py` — Energy-percentile heuristic: top-quartile energy = user, rest = other party. **User segments only** are passed forward; other-party audio is discarded.
+2. `pipeline/speaker.py` — Adaptive energy-clustering heuristic (2-means over segment log-energy, not a fixed percentile): splits segments into a loud and a soft group and keeps the louder group as the user. Backs off and keeps everything if the two groups aren't well-separated (single-speaker guard). **User segments only** are passed forward; other-party audio is discarded.
 3. `pipeline/whisper.py` — Concatenates user segments with 200ms silence pads → OpenAI Whisper API → transcript
 4. `pipeline/prosody.py` — librosa: pitch (yin), RMS energy, WPM from transcript/duration
 5. `pipeline/claude.py` — Anthropic `claude-sonnet-4-6` with `tool_use` for structured `DebriefCard` output. 2-retry on schema mismatch. System prompt + tool definition use `cache_control: ephemeral` (prompt caching).
@@ -47,7 +47,9 @@ All audio capture happens on-device as a plain WAV file; no streaming or on-devi
 
 ### Auth & JWT
 
-The backend verifies Supabase JWTs on every request (`app/auth.py`). Uses `python-jose` against Supabase's JWKS endpoint — JWKS is cached (do not fetch per-request). `user_id` is extracted from the token and threaded through all DB operations.
+The backend verifies Supabase JWTs on every request (`app/auth.py`). Uses `python-jose` to decode locally with HS256 against `SUPABASE_JWT_SECRET` (Supabase Project Settings > API > JWT Secret) — no network call to Supabase per request, and no JWKS involved. `SUPABASE_JWT_SECRET` is required; the backend fails to start if it's unset. `user_id` comes from the token's `sub` claim and is threaded through all DB operations.
+
+Username/password sign-in is a thin wrapper: the backend maps `<username>` to the fake email `<username>@users.mirra.local` and drives Supabase's REST auth API directly. Sign-up needs `SUPABASE_SERVICE_ROLE_KEY` on the backend (`POST /auth/v1/admin/users`); sign-in only needs the password grant. `GET /auth/status` reports whether username sign-up and Google OAuth are currently available so the app can gate its UI.
 
 ### Data Models
 
@@ -84,11 +86,11 @@ Control Center widget, Back Tap, and Lock Screen Shortcut all fire `ToggleRecord
 
 - **Claude structured output** — always use `tool_use`, never free-text JSON parsing. The 2-retry loop in `claude.py` is mandatory before surfacing an error to the user.
 
-- **Speaker classification accuracy** — the energy heuristic requires the user to be consistently closer to the mic. Document this constraint in onboarding. A dedicated speaker diarization model is planned for v2.
+- **Speaker classification accuracy** — the energy heuristic requires the user to be consistently closer to the mic. Document this constraint in onboarding. The 2-means split in `speaker.py` was kept deliberately over a simpler max-gap split: max-gap picks the single widest adjacent gap in sorted energy values, so one loud transient VAD segment (a laugh, a door, a mic bump) can hijack the split point and discard nearly all real user audio for that session. 2-means clusters by group mean, so the same outlier gets absorbed into the correct cluster instead. A dedicated speaker diarization model is planned for v2.
 
 - **Whisper 25MB limit** — a 2-minute WAV at 16kHz mono is ~3.8MB (safe for MVP). Chunk at 20-minute boundaries if allowing longer sessions.
 
-- **Supabase JWKS caching** — cache the JWKS response; do not fetch on every request.
+- **Supabase JWT secret required** — `SUPABASE_JWT_SECRET` must be set in every environment (local `.env`, CI, prod). The backend decodes tokens locally and does not fall back to a live Supabase call; startup fails immediately if the secret is missing.
 
 - **Prompt caching** — mark the Claude system prompt and tool definition as `cache_control: ephemeral`. Track hit rate via `usage.cache_read_input_tokens` in SDK responses.
 
@@ -97,6 +99,10 @@ Control Center widget, Back Tap, and Lock Screen Shortcut all fire `ToggleRecord
 - `users` — managed by Supabase Auth
 - `debrief_usage(user_id, month_key UNIQUE WITH user_id, count int)` — monthly usage counter
 - `debriefs(id uuid, user_id, created_at, observation, pattern_to_reduce, thing_to_try_next, stats jsonb, transcript text)`
+- `user_settings(user_id, notifications_enabled, weekly_summary_day, weekly_summary_time, reflection_reminders, product_updates, save_transcripts, include_transcript_in_reflect, coaching_tone, coaching_depth)` — one row per user, backend-managed (`app/user_settings.py`)
+- `billing_subscriptions(user_id, stripe_customer_id, stripe_subscription_id, stripe_price_id, status, current_period_end, trial_end, cancel_at_period_end)` — Stripe subscription state, mutated by the backend service role and Stripe webhooks (`app/billing.py`)
+
+All tables have RLS enabled with `(select auth.uid()) = user_id` read policies; writes go through the backend's service-role key, not the client directly.
 
 Free tier cap: 5 debriefs/month. Enforced server-side — `POST /sessions` returns 402 when at cap.
 
@@ -105,24 +111,27 @@ Free tier cap: 5 debriefs/month. Enforced server-side — `POST /sessions` retur
 | Endpoint | Description |
 |---|---|
 | `POST /sessions` | multipart `audio` (WAV/M4A ≤25MB) + JSON metadata → runs pipeline → returns `{ debrief, usedThisMonth, remaining }` |
-| `GET /debriefs` | paginated debrief history for the authenticated user |
+| `GET /debriefs`, `GET /debriefs/{id}` | paginated debrief history / single debrief for the authenticated user |
 | `GET /usage` | `{ usedThisMonth, remaining, resetsAt }` |
+| `GET /auth/status` | which sign-in methods are currently available (username/password, Google, email) |
+| `POST /auth/username/sign-up`, `POST /auth/username/sign-in` | username+password auth, backed by Supabase email/password under the hood |
+| `GET /profile/summary` | profile stats for ProfileScreen |
+| `GET /account/export` | account data export |
+| `GET /settings`, `PATCH /settings` | notification/coaching-tone user settings |
+| `GET /billing/status`, `POST /billing/checkout`, `POST /billing/portal`, `POST /billing/webhook` | Stripe subscription status, checkout/portal session creation, webhook receiver |
+| `GET /analytics/progress` | weekly aggregated stats for ProgressScreen/InsightsIndexScreen |
+| `POST /reflect` | Reflect chat — calls `open_model.py`, not the Claude debrief pipeline |
 
 ## Backend Integration Status
 
-The frontend is fully client-side with mock data — no backend calls are wired up yet. All screens consume static imports from `app/src/data/`. The integration work is replacing those imports with API hooks.
+The frontend is fully wired to the backend — no more mock data. `src/data/recents.ts` and `src/data/weeks.ts` (the old static mocks) are deleted. Every screen fetches through a hook in `src/hooks/` (`useDebriefs`, `useUsage`, `useBilling`, `useUserSettings`, `useProfileSummary`, `useProgressSummary`, `useRecordAudio`, `useImportAudio`), which goes through `app/src/api/client.ts`.
 
-**API boundary:** All fetch calls go through `app/api/client.ts`, which handles snake_case → camelCase conversion. New hooks should use this file.
+**API boundary:** all fetch calls go through `app/src/api/client.ts`, which handles snake_case → camelCase conversion. New hooks should use this file.
 
-**Integration gaps — mock file → hook to write → endpoint:**
+- Auth (username/password + Google, via Supabase) — `src/auth/AuthContext.tsx`, `src/api/auth.ts`, `backend/app/auth.py` / `main.py`'s `/auth/*` routes.
+- Billing (Stripe) — `useBilling`, `backend/app/billing.py`, `/billing/*` routes.
+- User settings (notifications, coaching tone) — `useUserSettings`, `backend/app/user_settings.py`, `/settings` routes.
+- Dashboard/analytics — `useProgressSummary`, `backend/app/dashboard.py`, `/analytics/progress`.
+- Reflect chat — `useDebriefs` + `api/client.ts`'s reflect call, `backend/app/open_model.py`, `/reflect`. `src/data/reflect.ts` still exists but only for seed/starter-prompt copy and canned replies used if the live call fails — not conversation data.
 
-| Screen | Mock file | Hook to write | Endpoint |
-|---|---|---|---|
-| HomeScreen recent list | `src/data/recents.ts` | `useDebriefs` | `GET /debriefs` |
-| HomeScreen record button | (no-op) | `useRecorder` | `POST /sessions` (multipart WAV) |
-| AnalyticsScreen conversation data | `src/data/weeks.ts` (single conv slice) | fetch by id via `useDebriefs` | `GET /debriefs` or debrief from session response |
-| ProgressScreen / InsightsIndexScreen weekly stats | `src/data/weeks.ts` | `useDebriefs` + client-side aggregation | `GET /debriefs` |
-| ProfileScreen usage pill | hardcoded | `useUsage` | `GET /usage` |
-| ReflectScreen AI chat | `src/data/reflect.ts` (canned replies) | `useReflect` | Not yet built in backend |
-
-**Data models are already aligned** — `backend/app/models/debrief.py` matches the TypeScript `DebriefCard`/`ConversationStats` interfaces in `app/src/models/`. No schema changes needed for initial wiring.
+**Data models are already aligned** — `backend/app/models/debrief.py` matches the TypeScript `DebriefCard`/`ConversationStats` interfaces in `app/src/models/`.
