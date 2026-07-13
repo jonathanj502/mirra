@@ -13,13 +13,18 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.mirra.app"
+      "bundleIdentifier": "com.mirra.app",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Mirra uses your microphone to record conversations you choose to debrief.",
+        "UIBackgroundModes": ["audio"]
+      }
     },
     "android": {
       "package": "com.mirra.app",
       "adaptiveIcon": {
         "backgroundColor": "#ECE2D2"
-      }
+      },
+      "permissions": ["RECORD_AUDIO", "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_MICROPHONE"]
     },
     "plugins": [
       "expo-router",

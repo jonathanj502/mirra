@@ -1,9 +1,18 @@
 import { useCallback, useRef, useState } from 'react';
-import { Alert, Platform } from 'react-native';
-import { Audio } from 'expo-av';
+import { Alert, NativeModules, Platform } from 'react-native';
+import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 import { uploadSession } from '@/api/client';
 import { useAuth } from '@/auth/AuthContext';
 import { DebriefCard } from '@/models/debrief';
+
+// Android needs a foreground service holding the mic open once the app backgrounds;
+// optional so web/iOS (and stale native builds) just no-op.
+function setForegroundService(running: boolean) {
+  if (Platform.OS !== 'android') return;
+  const service = NativeModules.RecordingService;
+  if (running) service?.startForegroundService();
+  else service?.stopForegroundService();
+}
 
 function recordingName() {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -20,6 +29,9 @@ export function useRecordAudio() {
   const [recordingMs, setRecordingMs] = useState(0);
   const [uploading, setUploading] = useState(false);
   const startedAt = useRef<number | null>(null);
+  // Null until createAsync fully resolves, so mid-creation status updates
+  // (canRecord && !isRecording) can't trigger a spurious resume; cleared again on stop.
+  const liveRecording = useRef<Audio.Recording | null>(null);
 
   const startRecording = useCallback(async () => {
     if (!accessToken) {
@@ -37,17 +49,32 @@ export function useRecordAudio() {
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
+        staysActiveInBackground: true,
+        interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+        interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
+        shouldDuckAndroid: false,
+        playThroughEarpieceAndroid: false,
       });
 
+      setForegroundService(true);
       const created = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY,
-        (status) => setRecordingMs(status.durationMillis ?? 0),
+        (status) => {
+          setRecordingMs(status.durationMillis ?? 0);
+          // Interruption (e.g. phone call) paused a still-valid recording: resume.
+          // Retries every status tick until the audio session is available again.
+          if (liveRecording.current && status.canRecord && !status.isRecording && !status.isDoneRecording) {
+            liveRecording.current.startAsync().catch(() => {});
+          }
+        },
         500
       );
+      liveRecording.current = created.recording;
       startedAt.current = Date.now();
       setRecordingMs(created.status.durationMillis ?? 0);
       setRecording(created.recording);
     } catch {
+      setForegroundService(false);
       Alert.alert('Recording failed', 'Could not start the microphone recording.');
     }
   }, [accessToken]);
@@ -58,6 +85,7 @@ export function useRecordAudio() {
     setUploading(true);
     const current = recording;
     setRecording(null);
+    liveRecording.current = null;
     try {
       await current.stopAndUnloadAsync();
       const uri = current.getURI();
@@ -80,6 +108,7 @@ export function useRecordAudio() {
       Alert.alert('Recording failed', 'Could not analyze that recording. Try a shorter recording or import an audio file.');
       return null;
     } finally {
+      setForegroundService(false);
       setRecordingMs(0);
       startedAt.current = null;
       setUploading(false);

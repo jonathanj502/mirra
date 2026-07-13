@@ -1,16 +1,9 @@
-# dependencies
-node_modules/
-
-# Expo
-.expo/
-dist/
-web-build/
-expo-env.d.ts
-
 # OSX
+#
 .DS_Store
 
 # Xcode
+#
 build/
 *.pbxuser
 !default.pbxuser
@@ -20,28 +13,18 @@ build/
 !default.mode2v3
 *.perspectivev3
 !default.perspectivev3
-xcuserdata/
+xcuserdata
 *.xccheckout
 *.moved-aside
-DerivedData/
+DerivedData
 *.hmap
 *.ipa
 *.xcuserstate
-project.xcworkspace/
+project.xcworkspace
 .xcode.env.local
 
 # Bundle artifacts
 *.jsbundle
 
 # CocoaPods
-ios/Pods/
-
-# Android
-android/.gradle/
-android/local.properties
-android/app/.cxx/
-*.keystore
-!debug.keystore
-
-# misc
-*.log
+/Pods/

@@ -433,11 +433,22 @@ export async function uploadSession(
     form.append('client_duration_seconds', String(metadata.clientDurationSeconds));
   }
 
-  const raw = await fetch(endpoint('/sessions'), {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-    body: form,
-  }).then((r) => parseResponse<{ debrief: RawDebrief; used_this_month: number; remaining: number }>(r));
+  // 2-retry on network-level failure only (mirrors the backend's claude.py convention);
+  // HTTP error responses reach parseResponse unretried — a 4xx won't succeed on retry.
+  let response!: Response;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      response = await fetch(endpoint('/sessions'), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      });
+      break;
+    } catch (error) {
+      if (attempt >= 2) throw error;
+    }
+  }
+  const raw = await parseResponse<{ debrief: RawDebrief; used_this_month: number; remaining: number }>(response);
 
   return {
     debrief: toDebrief(raw.debrief),

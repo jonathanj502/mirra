@@ -19,8 +19,6 @@ node_modules/
 dist/
 web-build/
 app/.expo-export-check/
-android/
-ios/
 *.jks
 *.p8
 *.p12
