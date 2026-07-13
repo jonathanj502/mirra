@@ -1,3 +1,6 @@
+import { ConversationSummary } from '@/models/debrief';
+import { formatConversationWhen, formatDuration } from '@/utils/timeFormat';
+
 export interface ConvListItem {
   id: string;
   title: string;
@@ -5,6 +8,17 @@ export interface ConvListItem {
   duration: string;
   tone: string;
   note: string;
+}
+
+export function toConvListItem(conversation: ConversationSummary): ConvListItem {
+  return {
+    id: conversation.id,
+    title: conversation.title,
+    when: formatConversationWhen(conversation.createdAt),
+    duration: formatDuration(Math.round(conversation.durationMinutes * 60)),
+    tone: conversation.tone,
+    note: conversation.note,
+  };
 }
 
 export interface OffsetPoint {

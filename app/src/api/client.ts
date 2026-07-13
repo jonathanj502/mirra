@@ -1,4 +1,4 @@
-import { env } from '@/config/env';
+import { endpoint, parseResponse } from '@/api/http';
 import {
   AccountExport,
   BillingStatus,
@@ -162,18 +162,12 @@ type RawAccountExport = {
   debriefs: RawDebrief[];
 };
 
-function endpoint(path: string) {
-  return `${env.backendUrl.replace(/\/$/, '')}${path}`;
-}
-
-async function parseResponse<T>(response: Response): Promise<T> {
-  const text = await response.text();
-  const body = text ? JSON.parse(text) : null;
-  if (!response.ok) {
-    const detail = body?.detail ?? 'Request failed';
-    throw new Error(typeof detail === 'string' ? detail : 'Request failed');
+function camelizeKeys<T>(raw: Record<string, unknown>): T {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    result[key.replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase())] = value;
   }
-  return body as T;
+  return result as T;
 }
 
 function toStats(raw: RawStats) {
@@ -219,11 +213,7 @@ export function toDebrief(raw: RawDebrief): DebriefCard {
 }
 
 function toUsage(raw: RawUsage): UsageSummary {
-  return {
-    usedThisMonth: raw.used_this_month,
-    remaining: raw.remaining,
-    resetsAt: raw.resets_at,
-  };
+  return camelizeKeys<UsageSummary>(raw);
 }
 
 function toConversationSummary(raw: RawConversationSummary): ConversationSummary {
@@ -244,7 +234,7 @@ function toConversationSummary(raw: RawConversationSummary): ConversationSummary
 }
 
 function toFillerCount(raw: RawFillerCount): FillerCount {
-  return { phrase: raw.phrase, count: raw.count };
+  return camelizeKeys<FillerCount>(raw);
 }
 
 function toProgressWeek(raw: RawProgressWeek): ProgressWeekSummary {
@@ -292,44 +282,15 @@ function toProgressSummary(raw: RawProgressSummary): ProgressSummary {
 }
 
 function toProfileSummary(raw: RawProfileSummary): ProfileSummary {
-  return {
-    totalConversations: raw.total_conversations,
-    totalMinutes: raw.total_minutes,
-    averageQuestions: raw.average_questions,
-    talkListenPercent: raw.talk_listen_percent,
-    usedThisMonth: raw.used_this_month,
-    remaining: raw.remaining,
-    resetsAt: raw.resets_at,
-  };
+  return camelizeKeys<ProfileSummary>(raw);
 }
 
 function toUserSettings(raw: RawUserSettings): UserSettings {
-  return {
-    notificationsEnabled: raw.notifications_enabled,
-    weeklySummaryDay: raw.weekly_summary_day,
-    weeklySummaryTime: raw.weekly_summary_time,
-    reflectionReminders: raw.reflection_reminders,
-    productUpdates: raw.product_updates,
-    saveTranscripts: raw.save_transcripts,
-    includeTranscriptInReflect: raw.include_transcript_in_reflect,
-    coachingTone: raw.coaching_tone,
-    coachingDepth: raw.coaching_depth,
-  };
+  return camelizeKeys<UserSettings>(raw);
 }
 
 function toBillingStatus(raw: RawBillingStatus): BillingStatus {
-  return {
-    plan: raw.plan,
-    status: raw.status,
-    isPro: raw.is_pro,
-    freeConversationsRemaining: raw.free_conversations_remaining,
-    currentPeriodEnd: raw.current_period_end,
-    trialEnd: raw.trial_end,
-    cancelAtPeriodEnd: raw.cancel_at_period_end,
-    stripeConfigured: raw.stripe_configured,
-    checkoutAvailable: raw.checkout_available,
-    portalAvailable: raw.portal_available,
-  };
+  return camelizeKeys<BillingStatus>(raw);
 }
 
 function toAccountExport(raw: RawAccountExport): AccountExport {

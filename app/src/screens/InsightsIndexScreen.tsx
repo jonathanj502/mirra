@@ -7,21 +7,8 @@ import { Body, Serif, SerifItalic, Eyebrow } from '@/components/Typography';
 import { Icon } from '@/components/Icon';
 import { WeekPaginator } from '@/components/WeekPaginator';
 import { colors } from '@/theme/tokens';
-import { ConvListItem, fullDay } from '@/models/week';
-import { ConversationSummary } from '@/models/debrief';
+import { ConvListItem, fullDay, toConvListItem } from '@/models/week';
 import { useProgressSummary } from '@/hooks/useProgressSummary';
-import { formatConversationWhen, formatDuration } from '@/utils/timeFormat';
-
-function toConvListItem(conversation: ConversationSummary): ConvListItem {
-  return {
-    id: conversation.id,
-    title: conversation.title,
-    when: formatConversationWhen(conversation.createdAt),
-    duration: formatDuration(Math.round(conversation.durationMinutes * 60)),
-    tone: conversation.tone,
-    note: conversation.note,
-  };
-}
 
 function ConvRow({ item, isLast, onPress }: { item: ConvListItem; isLast: boolean; onPress: () => void }) {
   return (

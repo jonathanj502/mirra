@@ -1,4 +1,4 @@
-import { env } from '@/config/env';
+import { endpoint, parseResponse } from '@/api/http';
 
 export interface AuthStatus {
   usernamePasswordReady: boolean;
@@ -7,14 +7,15 @@ export interface AuthStatus {
   signupDisabled: boolean;
 }
 
-function endpoint(path: string) {
-  return `${env.backendUrl.replace(/\/$/, '')}${path}`;
-}
+type RawAuthStatus = {
+  username_password_ready: boolean;
+  google_enabled: boolean;
+  email_enabled: boolean;
+  signup_disabled: boolean;
+};
 
 export async function fetchAuthStatus(): Promise<AuthStatus> {
-  const response = await fetch(endpoint('/auth/status'));
-  const body = await response.json();
-  if (!response.ok) throw new Error(body?.detail ?? 'Could not load auth status');
+  const body = await fetch(endpoint('/auth/status')).then((r) => parseResponse<RawAuthStatus>(r));
   return {
     usernamePasswordReady: Boolean(body.username_password_ready),
     googleEnabled: Boolean(body.google_enabled),

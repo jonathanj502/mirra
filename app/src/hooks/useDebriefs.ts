@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { fetchDebriefs } from '@/api/client';
-import { useAuth } from '@/auth/AuthContext';
 import { ConversationListItem } from '@/models/conversation';
 import { DebriefCard } from '@/models/debrief';
 import { formatConversationWhen, formatDuration } from '@/utils/timeFormat';
+import { useAuthedFetch } from './useAuthedFetch';
 
 export function titleForDebrief(debrief: DebriefCard) {
   const metadataTitle = debrief.stats.metadata.title;
@@ -33,33 +33,11 @@ export function toConversationListItem(debrief: DebriefCard): ConversationListIt
 }
 
 export function useDebriefs() {
-  const { accessToken } = useAuth();
-  const [debriefs, setDebriefs] = useState<DebriefCard[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    if (!accessToken) {
-      setDebriefs([]);
-      setLoading(false);
-      setError(null);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      setDebriefs(await fetchDebriefs(accessToken));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load debriefs');
-    } finally {
-      setLoading(false);
-    }
-  }, [accessToken]);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
+  const { data: debriefs, setData: setDebriefs, loading, error, refresh } = useAuthedFetch<DebriefCard[]>(
+    fetchDebriefs,
+    [],
+    'Could not load debriefs'
+  );
   const listItems = useMemo(() => debriefs.map(toConversationListItem), [debriefs]);
 
   return { debriefs, listItems, loading, error, refresh, setDebriefs };

@@ -21,7 +21,6 @@ const TAB_HREF: Record<TabId, '/' | '/insights' | '/progress' | '/profile'> = {
   home: '/', insights: '/insights', progress: '/progress', profile: '/profile',
 };
 
-const FILLERS = ['honestly', 'kind of', 'you know', 'like', 'i mean', 'actually', 'right'];
 const LSM_AXES = [
   { key: 'pronouns', label: 'Pronouns' },
   { key: 'articles', label: 'Articles' },
@@ -39,14 +38,6 @@ function talkPercent(raw: number) {
 
 function words(text?: string | null) {
   return (text?.toLowerCase().match(/[a-z']+/g) ?? []).filter((word) => word.length > 1);
-}
-
-function fillerCounts(text?: string | null) {
-  const lower = text?.toLowerCase() ?? '';
-  return FILLERS.map((phrase) => ({
-    phrase,
-    count: (lower.match(new RegExp(`\\b${phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g')) ?? []).length,
-  })).filter((item) => item.count > 0);
 }
 
 // Questions card — vertical bar with count baked inside.
@@ -130,7 +121,7 @@ export function AnalyticsScreen() {
   const uniqueWords = selected.stats.uniqueWordCount || new Set(transcriptWords).size;
   const totalWords = selected.stats.totalWordCount || transcriptWords.length || Math.max(0, Math.round(selected.stats.estimatedWpm * durationMin));
   const uniquePct = totalWords > 0 ? Math.round((uniqueWords / totalWords) * 100) : 0;
-  const fillers = selected.stats.fillerCounts.length ? selected.stats.fillerCounts : fillerCounts(selected.transcript);
+  const fillers = selected.stats.fillerCounts;
   const fillerTotal = fillers.reduce((sum, item) => sum + item.count, 0);
   const turnOffset = selected.stats.averageTurnOffsetMs;
   const turnOffsetData = selected.stats.turnOffsetSeries;

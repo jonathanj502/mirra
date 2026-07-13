@@ -50,15 +50,7 @@ const DEPTH_OPTIONS: { value: CoachingDepth; label: string }[] = [
   { value: 'deep', label: 'Deep' },
 ];
 
-const dayLabel: Record<WeeklySummaryDay, string> = {
-  sunday: 'Sunday',
-  monday: 'Monday',
-  tuesday: 'Tuesday',
-  wednesday: 'Wednesday',
-  thursday: 'Thursday',
-  friday: 'Friday',
-  saturday: 'Saturday',
-};
+const dayLabel = Object.fromEntries(DAY_OPTIONS.map((option) => [option.value, option.label])) as Record<WeeklySummaryDay, string>;
 const timeLabel: Record<WeeklySummaryTime, string> = {
   early_morning: 'early morning',
   morning: 'morning',
@@ -235,19 +227,15 @@ function HelpAction({ label, hint, subject }: { label: string; hint: string; sub
   );
 }
 
+const SETTINGS_TITLES: Record<SettingsPanelId, string> = {
+  notifications: 'Notifications',
+  privacy: 'Voice & Privacy',
+  coaching: 'Coaching Tone',
+  help: 'Help & Feedback',
+};
+
 function settingsTitle(panel: SettingsPanelId | null) {
-  switch (panel) {
-    case 'notifications':
-      return 'Notifications';
-    case 'privacy':
-      return 'Voice & Privacy';
-    case 'coaching':
-      return 'Coaching Tone';
-    case 'help':
-      return 'Help & Feedback';
-    default:
-      return '';
-  }
+  return panel ? SETTINGS_TITLES[panel] : '';
 }
 
 function notificationsHint(settings: UserSettings) {

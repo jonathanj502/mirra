@@ -1,4 +1,4 @@
-import { env } from '@/config/env';
+import { endpoint, parseResponse } from '@/api/http';
 
 export interface BackendAuthSession {
   access_token: string;
@@ -8,26 +8,12 @@ export interface BackendAuthSession {
   user: Record<string, unknown>;
 }
 
-function endpoint(path: string) {
-  return `${env.backendUrl.replace(/\/$/, '')}${path}`;
-}
-
-async function parseAuthResponse(response: Response): Promise<BackendAuthSession> {
-  const text = await response.text();
-  const body = text ? JSON.parse(text) : null;
-  if (!response.ok) {
-    const detail = body?.detail ?? 'Request failed';
-    throw new Error(typeof detail === 'string' ? detail : 'Request failed');
-  }
-  return body as BackendAuthSession;
-}
-
 export async function usernameSignIn(username: string, password: string) {
   return fetch(endpoint('/auth/username/sign-in'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password }),
-  }).then(parseAuthResponse);
+  }).then((r) => parseResponse<BackendAuthSession>(r));
 }
 
 export async function usernameSignUp(username: string, password: string) {
@@ -35,5 +21,5 @@ export async function usernameSignUp(username: string, password: string) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password }),
-  }).then(parseAuthResponse);
+  }).then((r) => parseResponse<BackendAuthSession>(r));
 }

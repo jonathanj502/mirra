@@ -11,10 +11,9 @@ import { ExpandableMetric, Delta } from '@/components/ExpandableMetric';
 import { Donut, RingMeter, WeeklyBars, PairedBarChart, TurnOffsetChart, LSMHistogram } from '@/components/charts';
 import { FillerBars, OffsetZoneLegend } from '@/components/meters';
 import { colors, fonts } from '@/theme/tokens';
-import { DAY_LABELS, Week } from '@/models/week';
+import { DAY_LABELS, Week, toConvListItem } from '@/models/week';
 import { useProgressSummary } from '@/hooks/useProgressSummary';
 import { ProgressWeekSummary } from '@/models/debrief';
-import { formatConversationWhen, formatDuration } from '@/utils/timeFormat';
 
 const comma = (n: number) => n.toLocaleString('en-US');
 
@@ -107,14 +106,7 @@ function toWeek(summary: ProgressWeekSummary): Week {
     ttrCounts: { unique: uniqueWords, total: totalWords },
     topFillers: summary.topFillers,
     lsmConvs: summary.conversations.map((conversation) => ({ name: conversation.title, score: conversation.lsmScore })),
-    convsList: summary.conversations.map((conversation) => ({
-      id: conversation.id,
-      title: conversation.title,
-      when: formatConversationWhen(conversation.createdAt),
-      duration: formatDuration(Math.round(conversation.durationMinutes * 60)),
-      tone: conversation.tone,
-      note: conversation.note,
-    })),
+    convsList: summary.conversations.map(toConvListItem),
   };
 }
 
