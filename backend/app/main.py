@@ -148,6 +148,10 @@ def _fetch_debrief_row(db: Client, user_id: str, debrief_id: str) -> dict | None
     return enrich_debrief_row(result.data) if result and result.data else None
 
 
+# TODO: sign-up has no real email today (fabricates <username>@users.mirra.local, no
+# verification). Tighten before wider launch: add a required, verified email field so
+# accounts are recoverable and can't be thrown away in one curl call. Decide whether
+# username stays as the login handle or is replaced by email+password outright.
 @app.post("/auth/username/sign-up", response_model=UsernameAuthResponse)
 async def username_sign_up(payload: UsernameAuthRequest):
     username = _normalize_username(payload.username)
