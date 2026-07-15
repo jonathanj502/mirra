@@ -47,7 +47,7 @@ All audio capture happens on-device via `expo-av` (`useRecordAudio.ts`), encoded
 
 ### Auth & JWT
 
-The backend verifies Supabase JWTs on every request (`app/auth.py`). Uses `python-jose` to decode locally with HS256 against `SUPABASE_JWT_SECRET` (Supabase Project Settings > API > JWT Secret) — no network call to Supabase per request, and no JWKS involved. `SUPABASE_JWT_SECRET` is required; the backend fails to start if it's unset. `user_id` comes from the token's `sub` claim and is threaded through all DB operations.
+The backend verifies Supabase JWTs on every request (`app/auth.py`). Uses `python-jose` to verify ES256 signatures against the project's public JWKS (`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`), fetched once and cached for the process lifetime — no per-request network call and no shared secret. The Supabase project uses asymmetric signing keys; there is no `SUPABASE_JWT_SECRET` setting. `user_id` comes from the token's `sub` claim and is threaded through all DB operations.
 
 Username/password sign-in is a thin wrapper: the backend maps `<username>` to the fake email `<username>@users.mirra.local` and drives Supabase's REST auth API directly. Sign-up needs `SUPABASE_SERVICE_ROLE_KEY` on the backend (`POST /auth/v1/admin/users`); sign-in only needs the password grant. `GET /auth/status` reports whether username sign-up and Google OAuth are currently available so the app can gate its UI.
 
@@ -92,7 +92,7 @@ Note: the original plan called for `react-native-receive-sharing-intent` handlin
 
 - **Whisper 25MB limit** — recordings are compressed (`.m4a`/`.webm`, not WAV), so 25MB covers well over 20 minutes in practice; `main.py` enforces the cap directly (`MAX_AUDIO_BYTES`, 413 if exceeded) before the pipeline runs. Chunk at 20-minute boundaries if allowing longer sessions.
 
-- **Supabase JWT secret required** — `SUPABASE_JWT_SECRET` must be set in every environment (local `.env`, CI, prod). The backend decodes tokens locally and does not fall back to a live Supabase call; startup fails immediately if the secret is missing.
+- **JWT verification is ES256/JWKS, not a shared secret** — this Supabase project signs tokens with asymmetric keys, so an HS256 `SUPABASE_JWT_SECRET` can never verify them (this once silently broke every authenticated request). `app/auth.py` fetches the public JWKS once and caches it for the process lifetime; restart the backend if Supabase signing keys are ever rotated.
 
 - **Prompt caching** — mark the Claude system prompt and tool definition as `cache_control: ephemeral`. Track hit rate via `usage.cache_read_input_tokens` in SDK responses.
 

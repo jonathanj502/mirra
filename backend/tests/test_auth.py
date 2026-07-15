@@ -1,9 +1,12 @@
 import time
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
-from jose import jwt
+from jose import jwk, jwt
 
+import app.auth
 from app.auth import verify_token
 
 _app = FastAPI()
@@ -13,11 +16,31 @@ def _me(user_id: str = Depends(verify_token)):
     return {"user_id": user_id}
 
 client = TestClient(_app)
-SECRET = "test-jwt-secret"
 
 
-def _token(payload: dict, secret: str = SECRET, algo: str = "HS256") -> str:
-    return jwt.encode(payload, secret, algorithm=algo)
+def _keypair() -> tuple[str, str]:
+    key = ec.generate_private_key(ec.SECP256R1())
+    private_pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    public_pem = key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode()
+    return private_pem, public_pem
+
+
+PRIVATE_PEM, PUBLIC_PEM = _keypair()
+WRONG_PRIVATE_PEM, _ = _keypair()
+
+# Pre-fill the module-level JWKS cache so no network fetch happens in tests.
+app.auth._jwks = {"keys": [jwk.construct(PUBLIC_PEM, "ES256").to_dict()]}
+
+
+def _token(payload: dict, key: str = PRIVATE_PEM) -> str:
+    return jwt.encode({"aud": "authenticated", **payload}, key, algorithm="ES256")
 
 
 def test_valid_token():
@@ -41,8 +64,14 @@ def test_expired_token():
     assert r.status_code == 401
 
 
-def test_wrong_secret():
-    token = _token({"sub": "user-123"}, secret="wrong-secret")
+def test_wrong_key():
+    token = _token({"sub": "user-123"}, key=WRONG_PRIVATE_PEM)
+    r = client.get("/me", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 401
+
+
+def test_wrong_audience():
+    token = jwt.encode({"sub": "user-123", "aud": "anon"}, PRIVATE_PEM, algorithm="ES256")
     r = client.get("/me", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 401
 
