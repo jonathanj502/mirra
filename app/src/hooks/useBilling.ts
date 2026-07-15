@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
+import { friendlyErrorMessage } from '@/api/http';
 import { createBillingCheckoutSession, createBillingPortalSession, fetchBillingStatus } from '@/api/client';
 import { BillingStatus } from '@/models/debrief';
 
 function billingErrorMessage(err: unknown, fallback: string) {
-  const message = err instanceof Error ? err.message : fallback;
-  if (message === 'Failed to fetch' || message.includes('Network request failed')) {
-    return 'Could not reach Mirra. Please try again.';
-  }
+  const message = friendlyErrorMessage(err, fallback);
   if (message.includes('Stripe checkout is not configured') || message.includes('Stripe customer portal is not configured')) {
     return 'Billing setup is not ready yet';
   }

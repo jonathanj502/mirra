@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { Alert, NativeModules, Platform } from 'react-native';
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
+import { friendlyErrorMessage } from '@/api/http';
 import { uploadSession } from '@/api/client';
 import { useAuth } from '@/auth/AuthContext';
 import { DebriefCard } from '@/models/debrief';
@@ -104,8 +105,12 @@ export function useRecordAudio() {
         { title: 'Recorded conversation', clientDurationSeconds: elapsedSeconds }
       );
       return response.debrief;
-    } catch {
-      Alert.alert('Recording failed', 'Could not analyze that recording. Try a shorter recording or import an audio file.');
+    } catch (err) {
+      const message = friendlyErrorMessage(
+        err,
+        'Could not analyze that recording. Try a shorter recording or import an audio file.'
+      );
+      Alert.alert('Recording failed', message);
       return null;
     } finally {
       setForegroundService(false);

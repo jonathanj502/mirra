@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
+import { friendlyErrorMessage } from '@/api/http';
 import { uploadSession } from '@/api/client';
 import { useAuth } from '@/auth/AuthContext';
 import { DebriefCard } from '@/models/debrief';
@@ -80,8 +81,12 @@ export function useImportAudio() {
       );
 
       return response.debrief;
-    } catch {
-      Alert.alert('Import failed', 'Could not analyze that audio file. Try another format or a shorter recording.');
+    } catch (err) {
+      const message = friendlyErrorMessage(
+        err,
+        'Could not analyze that audio file. Try another format or a shorter recording.'
+      );
+      Alert.alert('Import failed', message);
       return null;
     } finally {
       setImporting(false);

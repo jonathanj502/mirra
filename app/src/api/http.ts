@@ -13,3 +13,13 @@ export async function parseResponse<T>(response: Response): Promise<T> {
   }
   return body as T;
 }
+
+// Surfaces the real backend detail (e.g. a 402's "Monthly debrief limit reached") instead of a
+// generic message, while still catching raw fetch-level errors so we don't leak "Failed to fetch".
+export function friendlyErrorMessage(err: unknown, fallback: string): string {
+  const message = err instanceof Error && err.message ? err.message : fallback;
+  if (message === 'Failed to fetch' || message.includes('Network request failed')) {
+    return 'Could not reach Mirra. Please try again.';
+  }
+  return message;
+}
