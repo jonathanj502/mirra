@@ -1,5 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
 import { Body, Eyebrow, Serif, SerifItalic } from '@/components/Typography';
 import { colors, fonts } from '@/theme/tokens';
 import { isSupabaseConfigured } from '@/config/env';
@@ -67,7 +75,10 @@ export function AuthScreen() {
   }
 
   return (
-    <View style={styles.root}>
+    <KeyboardAvoidingView
+      style={styles.root}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
       <View style={styles.content}>
         <Eyebrow>Mirra</Eyebrow>
         <Serif style={styles.title}>
@@ -108,6 +119,8 @@ export function AuthScreen() {
               onChangeText={setUsername}
               autoCapitalize="none"
               autoCorrect={false}
+              textContentType="username"
+              autoComplete="username"
               placeholder="username"
               placeholderTextColor={colors.muted}
               style={styles.input}
@@ -119,6 +132,8 @@ export function AuthScreen() {
               autoCapitalize="none"
               autoCorrect={false}
               secureTextEntry
+              textContentType={isSignUp ? 'newPassword' : 'password'}
+              autoComplete={isSignUp ? 'new-password' : 'password'}
               placeholder="password"
               placeholderTextColor={colors.muted}
               style={styles.input}
@@ -143,7 +158,7 @@ export function AuthScreen() {
 
         {message ? <Body style={styles.message}>{message}</Body> : null}
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
