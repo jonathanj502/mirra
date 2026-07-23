@@ -6,9 +6,18 @@ export function endpoint(path: string) {
 
 export async function parseResponse<T>(response: Response): Promise<T> {
   const text = await response.text();
-  const body = text ? JSON.parse(text) : null;
+  let body: unknown = null;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      // Non-JSON body (e.g. an unhandled backend exception returns plain-text "Internal Server Error").
+      if (!response.ok) throw new Error(`Request failed (${response.status})`);
+      throw new Error('Invalid response from server');
+    }
+  }
   if (!response.ok) {
-    const detail = body?.detail ?? 'Request failed';
+    const detail = (body as { detail?: unknown })?.detail ?? 'Request failed';
     throw new Error(typeof detail === 'string' ? detail : 'Request failed');
   }
   return body as T;

@@ -1,8 +1,10 @@
+import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import httpx
 from jose import JWTError, jwt
 from supabase import Client
@@ -44,6 +46,27 @@ SUPPORTED_AUDIO_TYPES = {
 }
 
 USERNAME_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789_")
+
+logger = logging.getLogger(__name__)
+
+
+# Starlette's default 500 handler returns a plain-text body, which breaks clients that assume
+# every response is JSON (e.g. the app's parseResponse). Route unhandled exceptions through JSON too.
+#
+# This has to be HTTP middleware, not @app.exception_handler(Exception): Starlette routes the
+# Exception/500 handler key to ServerErrorMiddleware, which always sits outermost, outside
+# CORSMiddleware, so a JSONResponse returned from there would skip CORS header injection and get
+# blocked by browsers. Starlette's add_middleware() prepends (each new call becomes the new
+# outermost layer), so registering this middleware *before* CORSMiddleware puts CORS on the
+# outside, letting its response pass back through CORSMiddleware's header injection normally.
+@app.middleware("http")
+async def catch_unhandled_exceptions(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception:
+        logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
 
 app.add_middleware(
     CORSMiddleware,
