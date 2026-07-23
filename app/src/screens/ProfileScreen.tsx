@@ -710,27 +710,31 @@ export function ProfileScreen() {
           </Serif>
           <Body style={styles.subDesc}>{billingLoading ? 'Checking plan…' : planDescription}</Body>
 
-          <View style={styles.subDivider} />
+          {!isPro && (
+            <>
+              <View style={styles.subDivider} />
 
-          <View style={styles.subUpgradeRow}>
-            <View style={{ flex: 1 }}>
-              <Body style={styles.subEyebrow}>Upgrade to</Body>
-              <Serif style={styles.subPlan}>Mirra <SerifItalic style={[styles.subPlan, { color: colors.terracottaSoft }]}>Pro</SerifItalic></Serif>
-            </View>
-            <View style={{ alignItems: 'flex-end' }}>
-              <Serif style={{ fontSize: 24, lineHeight: 24, color: '#F6EFE0' }}>$8</Serif>
-              <Body style={styles.subPerMonth}>per month</Body>
-            </View>
-          </View>
-
-          <View style={{ gap: 8, marginTop: 14 }}>
-            {['Unlimited conversations', 'Full history & weekly themes', 'Energy & vocabulary deep-dives', 'Custom goals + gentle nudges'].map((f, i) => (
-              <View key={i} style={styles.featureRow}>
-                <Check color={colors.terracottaSoft} />
-                <Body style={styles.featureText}>{f}</Body>
+              <View style={styles.subUpgradeRow}>
+                <View style={{ flex: 1 }}>
+                  <Body style={styles.subEyebrow}>Upgrade to</Body>
+                  <Serif style={styles.subPlan}>Mirra <SerifItalic style={[styles.subPlan, { color: colors.terracottaSoft }]}>Pro</SerifItalic></Serif>
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Serif style={{ fontSize: 24, lineHeight: 24, color: '#F6EFE0' }}>$8</Serif>
+                  <Body style={styles.subPerMonth}>per month</Body>
+                </View>
               </View>
-            ))}
-          </View>
+
+              <View style={{ gap: 8, marginTop: 14 }}>
+                {['Unlimited conversations', 'Full history & weekly themes', 'Energy & vocabulary deep-dives', 'Custom goals + gentle nudges'].map((f, i) => (
+                  <View key={i} style={styles.featureRow}>
+                    <Check color={colors.terracottaSoft} />
+                    <Body style={styles.featureText}>{f}</Body>
+                  </View>
+                ))}
+              </View>
+            </>
+          )}
 
           <Pressable
             onPress={handleBillingPress}

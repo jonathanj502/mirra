@@ -137,13 +137,13 @@ export function HomeScreen() {
   const today = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
   const name = displayName(user?.email, user?.user_metadata?.username);
   const heroHint = isUploadingRecording
-    ? 'Analyzing recording...'
+    ? 'Analyzing...'
     : isRecording
-      ? `Recording ${Math.floor(recordingSeconds / 60)}:${String(Math.floor(recordingSeconds % 60)).padStart(2, '0')} - tap to finish`
-      : 'Tap to start - tap again to end';
+      ? `${Math.floor(recordingSeconds / 60)}:${String(Math.floor(recordingSeconds % 60)).padStart(2, '0')} · tap to stop`
+      : 'Tap to record';
   const greeting = listItems.length > 0
-    ? `${listItems.length} real ${listItems.length === 1 ? 'conversation' : 'conversations'} ready for reflection.`
-    : 'Record or import a conversation to get your first debrief.';
+    ? `${listItems.length} ${listItems.length === 1 ? 'conversation' : 'conversations'} ready.`
+    : '';
 
   async function handleImport() {
     const debrief = await importAudio();
@@ -168,7 +168,7 @@ export function HomeScreen() {
         </View>
         <ImportButton onPress={handleImport} loading={importing} disabled={busy && !importing} />
       </View>
-      <Body style={styles.greet}>{greeting}</Body>
+      {greeting ? <Body style={styles.greet}>{greeting}</Body> : null}
 
       {/* Record hero */}
       <View style={styles.hero}>
@@ -194,7 +194,7 @@ export function HomeScreen() {
             />
           ))}
           {!loading && !error && listItems.length === 0 && (
-            <SerifItalic style={styles.emptyRecent}>No conversations yet. Start a recording or import audio to create one.</SerifItalic>
+            <SerifItalic style={styles.emptyRecent}>No conversations yet.</SerifItalic>
           )}
           {error && <Body style={styles.errorText}>{error}</Body>}
         </View>

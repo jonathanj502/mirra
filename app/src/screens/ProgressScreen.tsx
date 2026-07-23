@@ -172,33 +172,33 @@ export function ProgressScreen() {
   const visibleWins = usingBackendWeeks
     ? backendWeek?.wins.length
       ? backendWeek.wins
-      : ['No conversation patterns yet. Import or record a conversation to start seeing strengths.']
+      : ['No patterns yet — record a conversation to start.']
     : loading
-      ? ['Loading your conversation patterns.']
+      ? ['Loading...']
       : error
-        ? ['Progress could not be loaded from the backend.']
+        ? ['Could not load progress.']
         : wins.length
           ? wins
-          : ['No conversation patterns yet. Import or record a conversation to start seeing strengths.'];
+          : ['No patterns yet — record a conversation to start.'];
   const visibleNudges = usingBackendWeeks
     ? backendWeek?.nudges.length
       ? backendWeek.nudges
-      : ['Nothing to nudge yet. A first debrief will give Mirra something real to reflect back.']
+      : ['Nothing to nudge yet.']
     : loading
-      ? ['Checking for gentle nudges.']
+      ? ['Loading...']
       : error
         ? [error]
         : nudges.length
           ? nudges
-          : ['Nothing to nudge yet. A first debrief will give Mirra something real to reflect back.'];
+          : ['Nothing to nudge yet.'];
 
   const intro = loading
-    ? 'Loading your weekly patterns.'
+    ? 'Loading...'
     : error
       ? 'Progress is unavailable right now.'
       : w.convs > 0
-        ? `${w.convs} ${w.convs === 1 ? 'conversation' : 'conversations'} from the backend are shaping this week.`
-        : 'Record or import a conversation to start seeing weekly patterns.';
+        ? `${w.convs} ${w.convs === 1 ? 'conversation' : 'conversations'} this week.`
+        : 'Record a conversation to see patterns.';
 
   const todayIdx = weekIdx === 0 ? null : 1;
   const hasConversations = w.convs > 0;
@@ -257,7 +257,7 @@ export function ProgressScreen() {
           eyebrow="Talk / Listen" delta={dTalkListen}
           value={hasConversations ? `${w.talkListen} / ${100 - w.talkListen}` : '—'} unit="you / them"
           summary={hasConversations ? 'Estimated from saved speech duration.' : 'Awaiting conversation data.'} accent={colors.terracotta} chartKind="donut" defaultOpen={weekIdx === 1}
-          blurb={`Last month you spoke 68% of the time. You're creating more room for others — ${w.talkListen}% now, healthy range is 40–60%.`}
+          blurb={prevW ? `${w.talkListen}% this week, ${prevW.talkListen}% last week.` : `${w.talkListen}% of the time this week.`}
         >
           <View style={styles.rowCenter}>
             <Donut size={130} stroke={20} segments={[{ value: w.talkListen, color: colors.terracotta }, { value: 100 - w.talkListen, color: colors.sage }]} centerLabel={`${w.talkListen}%`} centerSub="you" />
@@ -305,7 +305,7 @@ export function ProgressScreen() {
           eyebrow="Turn-floor offset" delta={dOffset}
           value={`+${w.turnOffsetAvg}`} unit="ms · daily avg this week"
           summary={hasConversations ? 'Estimated from saved interruption signals.' : 'Awaiting turn-taking data.'} accent={colors.terracotta} chartKind="line"
-          blurb="Average gap between speakers' turns each day this week. Negative = you overlapped; ~+200 ms = smooth; +500 ms+ = listener formulating a difficult answer. Days without conversations are blank."
+          blurb="Average gap between speakers' turns each day this week. Days without conversations are blank."
         >
           <TurnOffsetChart data={w.turnOffsetTrend} width={300} height={170} />
           <OffsetZoneLegend />
@@ -361,7 +361,6 @@ export function ProgressScreen() {
           eyebrow="Vocabulary" value={`${Math.round(w.ttrAvg * 100)}%`} unit="weekly avg"
           summary={`${comma(w.ttrCounts.unique)} unique across ${comma(w.ttrCounts.total)} words this week.`}
           accent={colors.sand} chartKind="bar"
-          blurb={"Vocabulary richness — how many distinct words you used vs how many you spoke, averaged across this week's conversations. Below: the five most-used lexical paddings — fillers, hedges, and empty qualifiers that buy time without adding meaning."}
         >
           <SerifItalic style={styles.vocabLine}>
             {comma(w.ttrCounts.unique)} unique words across {comma(w.ttrCounts.total)} spoken — dynamic, not loopy.

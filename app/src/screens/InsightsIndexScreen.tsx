@@ -68,10 +68,10 @@ export function InsightsIndexScreen() {
         </Serif>
         <Body style={styles.intro}>
           {loading
-            ? 'Loading your saved conversations.'
+            ? 'Loading...'
             : selectedWeek?.conversationCount
-              ? 'Tap any conversation to see the patterns that shaped it.'
-              : 'Record or import a conversation to start building this week.'}
+              ? 'Tap a conversation to see its patterns.'
+              : 'Record a conversation to get started.'}
         </Body>
       </View>
 

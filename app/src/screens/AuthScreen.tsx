@@ -86,7 +86,7 @@ export function AuthScreen() {
           <SerifItalic style={styles.title}>your conversations.</SerifItalic>
         </Serif>
         <Body style={styles.copy}>
-          Use a username and password, or continue with Google. Your debriefs and monthly usage stay attached to your account.
+          Use a username and password, or continue with Google.
         </Body>
 
         {!isSupabaseConfigured ? (

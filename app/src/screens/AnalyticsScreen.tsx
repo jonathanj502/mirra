@@ -175,7 +175,6 @@ export function AnalyticsScreen() {
         <ExpandableMetric
           eyebrow="Talk / Listen" value={`${talkPct} / ${listenPct}`} unit="you / them"
           summary={talkPct >= 40 && talkPct <= 60 ? 'Within the balanced range.' : 'Outside the balanced range.'} accent={colors.terracotta} chartKind="donut" defaultOpen
-          blurb="Estimated from detected speech duration in this saved debrief."
         >
           <View style={styles.rowCenter}>
             <Donut size={130} stroke={20} segments={[{ value: talkPct, color: colors.terracotta }, { value: listenPct, color: colors.sage }]} centerLabel={`${talkPct}%`} centerSub="you" />
@@ -196,7 +195,6 @@ export function AnalyticsScreen() {
         <ExpandableMetric
           eyebrow="Questions" value={String(questions)} unit="asked"
           summary={questions > 0 ? `${questions} questions detected.` : 'No questions detected.'} accent={colors.sage} chartKind="bar"
-          blurb="Question count comes from the saved transcript analysis."
         >
           <View style={styles.qRow}>
             <View style={styles.qBars}>
@@ -342,7 +340,6 @@ export function AnalyticsScreen() {
         <ExpandableMetric
           eyebrow="Vocabulary" value={`${uniquePct}%`} unit="unique / spoken"
           summary={`${uniqueWords.toLocaleString('en-US')} unique across ${totalWords.toLocaleString('en-US')} words.`} accent={colors.sand} chartKind="bar"
-          blurb="Vocabulary richness — how many distinct words you used vs how many you spoke. Below, the five most-used lexical paddings: fillers, hedges, and empty qualifiers that buy time without adding meaning."
         >
           <SerifItalic style={styles.vocabLine}>{uniqueWords.toLocaleString('en-US')} unique words across {totalWords.toLocaleString('en-US')} spoken.</SerifItalic>
           <View>
