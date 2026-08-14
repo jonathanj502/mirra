@@ -28,7 +28,7 @@ from app.models.debrief import Debrief, SessionResponse
 from app.models.settings import UserSettings, UserSettingsUpdate
 from app.open_model import generate_open_model_reflection
 from app.pipeline import coordinator
-from app.usage import check_and_increment, get_usage
+from app.usage import check_and_increment, get_usage, release
 from app.user_settings import fetch_user_settings, save_user_settings
 
 app = FastAPI(title="Mirra Backend")
@@ -71,7 +71,10 @@ async def catch_unhandled_exceptions(request: Request, call_next):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
+    # Auth is Bearer-token only, never cookies, so there's nothing that needs a credentialed
+    # CORS request; keeping this False means a wildcard origin can't be paired with reflected
+    # credentials (Starlette would otherwise echo the caller's Origin back).
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -291,21 +294,27 @@ def create_session(
     user_id: str = Depends(verify_token),
     db: Client = Depends(get_db),
 ):
-    if audio.content_type and audio.content_type not in SUPPORTED_AUDIO_TYPES:
+    if audio.content_type not in SUPPORTED_AUDIO_TYPES:
         raise HTTPException(status_code=415, detail="Unsupported audio type")
 
     audio_bytes = audio.file.read()
     if len(audio_bytes) > MAX_AUDIO_BYTES:
         raise HTTPException(status_code=413, detail="Audio file is too large")
 
-    if not user_has_pro_access(db, user_id):
-        # ponytail: charged on attempt not success; race window OK at 5/month cap
+    reserved = not user_has_pro_access(db, user_id)
+    if reserved:
         check_and_increment(db, user_id)
     user_settings = fetch_user_settings(db, user_id)
     try:
         result = coordinator.run(audio_bytes, content_type=audio.content_type)
     except ValueError as exc:
+        if reserved:
+            release(db, user_id)
         raise HTTPException(status_code=422, detail="Could not decode audio") from exc
+    except Exception:
+        if reserved:
+            release(db, user_id)
+        raise
     session_id = str(uuid4())
     metadata = {
         "started_at": started_at,
@@ -315,21 +324,26 @@ def create_session(
         "content_type": audio.content_type,
     }
     stats = {**result["stats"], "metadata": {k: v for k, v in metadata.items() if v is not None}}
-    row = (
-        db.table("debriefs")
-        .insert(
-            {
-                "user_id": user_id,
-                "session_id": session_id,
-                "observation": result["observation"],
-                "pattern_to_reduce": result["pattern_to_reduce"],
-                "thing_to_try_next": result["thing_to_try_next"],
-                "stats": stats,
-                "transcript": result["transcript"] if user_settings.save_transcripts else None,
-            }
+    try:
+        row = (
+            db.table("debriefs")
+            .insert(
+                {
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "observation": result["observation"],
+                    "pattern_to_reduce": result["pattern_to_reduce"],
+                    "thing_to_try_next": result["thing_to_try_next"],
+                    "stats": stats,
+                    "transcript": result["transcript"] if user_settings.save_transcripts else None,
+                }
+            )
+            .execute()
         )
-        .execute()
-    )
+    except Exception:
+        if reserved:
+            release(db, user_id)
+        raise
     usage = get_usage(db, user_id)
     return {"debrief": row.data[0], "used_this_month": usage["used_this_month"], "remaining": usage["remaining"]}
 

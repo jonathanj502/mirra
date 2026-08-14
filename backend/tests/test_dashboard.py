@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -7,6 +8,14 @@ from app.auth import verify_token
 from app.dashboard import build_profile_summary, build_progress, conversation_item, fallback_reflection
 from app.db import get_db
 from app.main import app
+
+
+class _FrozenDatetime(datetime):
+    """datetime.now() pinned to the same week as ROW_1/ROW_2, real otherwise."""
+
+    @classmethod
+    def now(cls, tz=None):
+        return datetime(2026, 7, 9, 12, 0, tzinfo=tz or timezone.utc)
 
 
 ROW_1 = {
@@ -152,7 +161,8 @@ def test_conversation_item_uses_metadata_title_and_ratio_conversion():
 
 
 def test_build_progress_groups_daily_minutes_and_fillers():
-    progress = build_progress([ROW_1, ROW_2], max_weeks=1)
+    with patch("app.dashboard.datetime", _FrozenDatetime):
+        progress = build_progress([ROW_1, ROW_2], max_weeks=1)
     week = progress.weeks[0]
     assert week.conversation_count == 2
     assert week.daily_minutes[1] == 20.0
@@ -212,7 +222,8 @@ def test_profile_summary_endpoint():
 
 
 def test_progress_endpoint():
-    r = _client([ROW_1, ROW_2]).get("/analytics/progress?weeks=1")
+    with patch("app.dashboard.datetime", _FrozenDatetime):
+        r = _client([ROW_1, ROW_2]).get("/analytics/progress?weeks=1")
     assert r.status_code == 200
     body = r.json()
     assert body["weeks"][0]["conversation_count"] == 2

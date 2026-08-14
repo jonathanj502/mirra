@@ -230,6 +230,39 @@ def test_checkout_completed_webhook_uses_session_user_id(monkeypatch):
     assert db.billing["user-1"]["stripe_subscription_id"] == "sub_123"
 
 
+def test_webhook_ignores_stale_out_of_order_event(monkeypatch):
+    monkeypatch.setattr(billing.settings, "stripe_secret_key", "sk_test_123")
+    monkeypatch.setattr(billing.settings, "stripe_webhook_secret", "whsec_123")
+    db = _Db(
+        billing_row={
+            "user_id": "user-1",
+            "stripe_customer_id": "cus_123",
+            "stripe_subscription_id": "sub_123",
+            "status": "active",
+            "updated_at": "2026-08-01T00:00:00+00:00",
+        }
+    )
+    event = {
+        "type": "customer.subscription.updated",
+        "created": 1735689600,  # 2025-01-01 — older than the already-applied event above
+        "data": {
+            "object": {
+                "id": "sub_123",
+                "customer": "cus_123",
+                "status": "canceled",
+                "metadata": {"user_id": "user-1"},
+                "items": {"data": []},
+            }
+        },
+    }
+    monkeypatch.setattr(billing.stripe.Webhook, "construct_event", lambda *_args, **_kwargs: event)
+
+    r = _client(db).post("/billing/webhook", content=b"{}", headers={"Stripe-Signature": "sig"})
+
+    assert r.status_code == 200
+    assert db.billing["user-1"]["status"] == "active"  # stale redelivery did not revert live state
+
+
 def test_pro_user_can_create_session_even_at_free_cap(monkeypatch):
     db = _Db(
         used=5,

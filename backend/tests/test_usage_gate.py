@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from app.auth import verify_token
 from app.db import get_db
 from app.main import app
-from app.usage import check_and_increment, get_usage
+from app.usage import check_and_increment, get_usage, release
 
 
 def _db(used: int) -> MagicMock:
@@ -44,6 +44,32 @@ def test_check_and_increment_at_cap():
     with pytest.raises(HTTPException) as exc:
         check_and_increment(_db(5), "user-1")
     assert exc.value.status_code == 402
+
+
+def test_check_and_increment_retries_on_lost_race():
+    db = _db(2)
+    lost = MagicMock(data=None)
+    won = MagicMock(data=[{"count": 3}])
+    db.table.return_value.update.return_value.eq.return_value.eq.return_value.eq.return_value.execute.side_effect = [lost, won]
+
+    check_and_increment(db, "user-1")  # should not raise despite the first CAS attempt losing the race
+
+    assert db.table.return_value.update.return_value.eq.return_value.eq.return_value.eq.return_value.execute.call_count == 2
+
+
+def test_release_decrements_count():
+    db = _db(3)
+    db.table.return_value.update.return_value.eq.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[{"count": 2}])
+
+    release(db, "user-1")
+
+    db.table.return_value.update.assert_called_with({"count": 2})
+
+
+def test_release_is_noop_at_zero():
+    db = _db(0)
+    release(db, "user-1")  # should not raise or attempt an update
+    db.table.return_value.update.assert_not_called()
 
 
 # --- HTTP endpoint test ---

@@ -195,7 +195,17 @@ def create_portal_session(db: Client, user_id: str) -> BillingSessionResponse:
     return BillingSessionResponse(url=url)
 
 
-def _sync_subscription(db: Client, subscription: Any) -> None:
+def _stale_event(db: Client, user_id: str, event_created: datetime | None) -> bool:
+    """Stripe doesn't guarantee webhook delivery order or dedup; drop events older than
+    the last one we already applied so a delayed redelivery can't revert live state."""
+    if not event_created:
+        return False
+    existing = _fetch_subscription_row(db, user_id)
+    existing_ts = _timestamp(existing.get("updated_at")) if existing else None
+    return bool(existing_ts and existing_ts >= event_created)
+
+
+def _sync_subscription(db: Client, subscription: Any, event_created: datetime | None = None) -> None:
     stripe_subscription_id = _field(subscription, "id")
     stripe_customer_id = _field(subscription, "customer")
     metadata = _field(subscription, "metadata", {}) or {}
@@ -204,12 +214,15 @@ def _sync_subscription(db: Client, subscription: Any) -> None:
         stripe_subscription_id=stripe_subscription_id,
         stripe_customer_id=stripe_customer_id,
     )
-    if not user_id:
+    if not user_id or _stale_event(db, user_id, event_created):
         return
-    _upsert_subscription(db, _subscription_payload(subscription, user_id))
+    payload = _subscription_payload(subscription, user_id)
+    if event_created:
+        payload["updated_at"] = event_created.isoformat()
+    _upsert_subscription(db, payload)
 
 
-def _handle_checkout_completed(db: Client, session: Any) -> None:
+def _handle_checkout_completed(db: Client, session: Any, event_created: datetime | None = None) -> None:
     user_id = _field(session, "client_reference_id") or _field(_field(session, "metadata", {}) or {}, "user_id")
     subscription_id = _field(session, "subscription")
     customer_id = _field(session, "customer")
@@ -220,12 +233,17 @@ def _handle_checkout_completed(db: Client, session: Any) -> None:
         except StripeError as exc:
             raise HTTPException(status_code=502, detail="Could not verify Stripe subscription") from exc
         if user_id:
-            _upsert_subscription(db, _subscription_payload(subscription, user_id))
+            if _stale_event(db, user_id, event_created):
+                return
+            payload = _subscription_payload(subscription, user_id)
+            if event_created:
+                payload["updated_at"] = event_created.isoformat()
+            _upsert_subscription(db, payload)
         else:
-            _sync_subscription(db, subscription)
+            _sync_subscription(db, subscription, event_created)
         return
 
-    if user_id and customer_id:
+    if user_id and customer_id and not _stale_event(db, user_id, event_created):
         existing = _fetch_subscription_row(db, user_id) or {}
         _upsert_subscription(
             db,
@@ -238,7 +256,7 @@ def _handle_checkout_completed(db: Client, session: Any) -> None:
                 "current_period_end": existing.get("current_period_end"),
                 "trial_end": existing.get("trial_end"),
                 "cancel_at_period_end": bool(existing.get("cancel_at_period_end", False)),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": (event_created or datetime.now(timezone.utc)).isoformat(),
             },
         )
 
@@ -256,10 +274,11 @@ def handle_stripe_webhook(db: Client, payload: bytes, signature: str | None) -> 
         raise HTTPException(status_code=400, detail="Invalid Stripe webhook signature") from exc
 
     event_type = _field(event, "type")
+    event_created = _timestamp(_field(event, "created"))
     data_object = _field(_field(event, "data", {}), "object")
     if event_type == "checkout.session.completed":
-        _handle_checkout_completed(db, data_object)
+        _handle_checkout_completed(db, data_object, event_created)
     elif event_type in SUBSCRIPTION_EVENTS:
-        _sync_subscription(db, data_object)
+        _sync_subscription(db, data_object, event_created)
 
     return StripeWebhookResponse()

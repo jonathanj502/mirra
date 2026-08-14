@@ -25,11 +25,17 @@ def _get_jwks() -> dict:
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
     try:
+        jwks = _get_jwks()
+    except httpx.HTTPError:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Auth service unavailable")
+
+    try:
         payload = jwt.decode(
             credentials.credentials,
-            _get_jwks(),
+            jwks,
             algorithms=["ES256"],
             audience="authenticated",
+            issuer=f"{settings.supabase_url.rstrip('/')}/auth/v1",
         )
     except ExpiredSignatureError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")

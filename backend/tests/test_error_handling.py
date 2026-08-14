@@ -16,4 +16,6 @@ def test_unhandled_exception_returns_json_with_cors_not_plaintext():
     assert r.json() == {"detail": "Internal server error"}
     # Regression check: ServerErrorMiddleware sits outside CORSMiddleware, so an
     # @app.exception_handler(Exception)-style fix would silently drop this header.
-    assert r.headers.get("access-control-allow-origin") == "http://localhost:8081"
+    # allow_credentials=False + wildcard origin means Starlette returns a literal "*"
+    # rather than reflecting the caller's Origin back.
+    assert r.headers.get("access-control-allow-origin") == "*"

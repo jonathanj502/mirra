@@ -8,6 +8,7 @@ from jose import jwk, jwt
 
 import app.auth
 from app.auth import verify_token
+from app.config import settings
 
 _app = FastAPI()
 
@@ -39,8 +40,11 @@ WRONG_PRIVATE_PEM, _ = _keypair()
 app.auth._jwks = {"keys": [jwk.construct(PUBLIC_PEM, "ES256").to_dict()]}
 
 
+ISSUER = f"{settings.supabase_url.rstrip('/')}/auth/v1"
+
+
 def _token(payload: dict, key: str = PRIVATE_PEM) -> str:
-    return jwt.encode({"aud": "authenticated", **payload}, key, algorithm="ES256")
+    return jwt.encode({"aud": "authenticated", "iss": ISSUER, **payload}, key, algorithm="ES256")
 
 
 def test_valid_token():
@@ -78,5 +82,11 @@ def test_wrong_audience():
 
 def test_missing_sub():
     token = _token({"uid": "user-123"})
+    r = client.get("/me", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 401
+
+
+def test_wrong_issuer():
+    token = jwt.encode({"sub": "user-123", "aud": "authenticated", "iss": "https://evil.example/auth/v1"}, PRIVATE_PEM, algorithm="ES256")
     r = client.get("/me", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 401
