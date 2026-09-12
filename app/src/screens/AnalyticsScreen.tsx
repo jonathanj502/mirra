@@ -16,6 +16,7 @@ import { useDebriefs, toConversationListItem } from '@/hooks/useDebriefs';
 import { useAuth } from '@/auth/AuthContext';
 import { fetchDebrief } from '@/api/client';
 import { DebriefCard } from '@/models/debrief';
+import { talkListenPercent } from '@/utils/talkListen';
 
 const TAB_HREF: Record<TabId, '/' | '/insights' | '/progress' | '/profile'> = {
   home: '/', insights: '/insights', progress: '/progress', profile: '/profile',
@@ -29,12 +30,6 @@ const LSM_AXES = [
   { key: 'quantifiers', label: 'Quantifiers' },
   { key: 'aux_verbs', label: 'Aux. verbs' },
 ];
-
-function talkPercent(raw: number) {
-  if (raw <= 0) return 0;
-  const share = raw <= 1 ? raw : raw / (1 + raw);
-  return Math.max(0, Math.min(100, Math.round(share * 100)));
-}
 
 function words(text?: string | null) {
   return (text?.toLowerCase().match(/[a-z']+/g) ?? []).filter((word) => word.length > 1);
@@ -107,7 +102,7 @@ export function AnalyticsScreen() {
   const observation = selected.observation;
   const pattern = selected.patternToReduce;
   const next = selected.thingToTryNext;
-  const talkPct = talkPercent(selected.stats.talkListenRatio);
+  const talkPct = talkListenPercent(selected.stats.talkListenRatio);
   const listenPct = 100 - talkPct;
   const questions = selected.stats.questionCount;
   const interruptions = selected.stats.interruptionCount;

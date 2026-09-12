@@ -294,37 +294,32 @@ def create_session(
     user_id: str = Depends(verify_token),
     db: Client = Depends(get_db),
 ):
-    if audio.content_type not in SUPPORTED_AUDIO_TYPES:
+    content_type = (audio.content_type or "").split(";", 1)[0].strip().lower()
+    if content_type not in SUPPORTED_AUDIO_TYPES:
         raise HTTPException(status_code=415, detail="Unsupported audio type")
 
-    audio_bytes = audio.file.read()
+    audio_bytes = audio.file.read(MAX_AUDIO_BYTES + 1)
     if len(audio_bytes) > MAX_AUDIO_BYTES:
         raise HTTPException(status_code=413, detail="Audio file is too large")
 
-    reserved = not user_has_pro_access(db, user_id)
-    if reserved:
-        check_and_increment(db, user_id)
-    user_settings = fetch_user_settings(db, user_id)
+    reservation_month = None
+    if not user_has_pro_access(db, user_id):
+        reservation_month = check_and_increment(db, user_id)
     try:
-        result = coordinator.run(audio_bytes, content_type=audio.content_type)
-    except ValueError as exc:
-        if reserved:
-            release(db, user_id)
-        raise HTTPException(status_code=422, detail="Could not decode audio") from exc
-    except Exception:
-        if reserved:
-            release(db, user_id)
-        raise
-    session_id = str(uuid4())
-    metadata = {
-        "started_at": started_at,
-        "client_duration_seconds": client_duration_seconds,
-        "title": title,
-        "original_filename": audio.filename,
-        "content_type": audio.content_type,
-    }
-    stats = {**result["stats"], "metadata": {k: v for k, v in metadata.items() if v is not None}}
-    try:
+        user_settings = fetch_user_settings(db, user_id)
+        try:
+            result = coordinator.run(audio_bytes, content_type=content_type)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Could not decode audio") from exc
+        session_id = str(uuid4())
+        metadata = {
+            "started_at": started_at,
+            "client_duration_seconds": client_duration_seconds,
+            "title": title,
+            "original_filename": audio.filename,
+            "content_type": content_type,
+        }
+        stats = {**result["stats"], "metadata": {k: v for k, v in metadata.items() if v is not None}}
         row = (
             db.table("debriefs")
             .insert(
@@ -341,8 +336,11 @@ def create_session(
             .execute()
         )
     except Exception:
-        if reserved:
-            release(db, user_id)
+        if reservation_month is not None:
+            try:
+                release(db, user_id, reservation_month)
+            except Exception:
+                logger.exception("Could not release debrief reservation for user %s in %s", user_id, reservation_month)
         raise
     usage = get_usage(db, user_id)
     return {"debrief": row.data[0], "used_this_month": usage["used_this_month"], "remaining": usage["remaining"]}

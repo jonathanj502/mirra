@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException
+from postgrest.exceptions import APIError
 from stripe import StripeError
 import stripe
 from supabase import Client
@@ -55,7 +56,7 @@ def _timestamp(value: Any) -> datetime | None:
     if isinstance(value, (int, float)):
         return datetime.fromtimestamp(value, tz=timezone.utc)
     if isinstance(value, str):
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return _timestamp(datetime.fromisoformat(value.replace("Z", "+00:00")))
     return None
 
 
@@ -100,21 +101,47 @@ def _find_subscription_owner(
 def _subscription_payload(subscription: Any, user_id: str) -> dict:
     items = _field(_field(subscription, "items", {}), "data", []) or []
     price_id = _field(_field(items[0], "price", {}), "id") if items else None
+    period_end = _field(subscription, "current_period_end")
+    if period_end is None and items:
+        period_end = _field(items[0], "current_period_end")
     return {
         "user_id": user_id,
         "stripe_customer_id": _field(subscription, "customer"),
         "stripe_subscription_id": _field(subscription, "id"),
         "stripe_price_id": price_id,
         "status": _field(subscription, "status", "free") or "free",
-        "current_period_end": _iso_timestamp(_field(subscription, "current_period_end")),
+        "current_period_end": _iso_timestamp(period_end),
         "trial_end": _iso_timestamp(_field(subscription, "trial_end")),
         "cancel_at_period_end": bool(_field(subscription, "cancel_at_period_end", False)),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
-def _upsert_subscription(db: Client, payload: dict) -> None:
-    db.table("billing_subscriptions").upsert(payload).execute()
+def _write_subscription(db: Client, payload: dict, existing: dict | None) -> bool:
+    """Write only if the row still matches the snapshot read before contacting Stripe."""
+    updated_at = datetime.now(timezone.utc)
+    if existing:
+        previous = _timestamp(existing["updated_at"])
+        # Every write needs a distinct revision, including events in the same second
+        # and workers whose clocks differ slightly.
+        updated_at = max(updated_at, previous + timedelta(microseconds=1))
+    payload = {**payload, "updated_at": updated_at.isoformat()}
+    if existing:
+        result = (
+            db.table("billing_subscriptions")
+            .update(payload)
+            .eq("user_id", payload["user_id"])
+            .eq("updated_at", existing["updated_at"])
+            .execute()
+        )
+        return bool(result.data)
+    try:
+        db.table("billing_subscriptions").insert(payload).execute()
+        return True
+    except APIError as exc:
+        if exc.code != "23505":
+            raise
+        return False
 
 
 def user_has_pro_access(db: Client, user_id: str) -> bool:
@@ -195,70 +222,63 @@ def create_portal_session(db: Client, user_id: str) -> BillingSessionResponse:
     return BillingSessionResponse(url=url)
 
 
-def _stale_event(db: Client, user_id: str, event_created: datetime | None) -> bool:
-    """Stripe doesn't guarantee webhook delivery order or dedup; drop events older than
-    the last one we already applied so a delayed redelivery can't revert live state."""
-    if not event_created:
-        return False
-    existing = _fetch_subscription_row(db, user_id)
-    existing_ts = _timestamp(existing.get("updated_at")) if existing else None
-    return bool(existing_ts and existing_ts >= event_created)
+def _retrieve_subscription(subscription_id: str) -> Any:
+    try:
+        return stripe.Subscription.retrieve(subscription_id)
+    except StripeError as exc:
+        raise HTTPException(status_code=502, detail="Could not verify Stripe subscription") from exc
 
 
-def _sync_subscription(db: Client, subscription: Any, event_created: datetime | None = None) -> None:
+def _sync_subscription(db: Client, subscription: Any, user_id: str | None = None) -> None:
     stripe_subscription_id = _field(subscription, "id")
     stripe_customer_id = _field(subscription, "customer")
     metadata = _field(subscription, "metadata", {}) or {}
-    user_id = _field(metadata, "user_id") or _find_subscription_owner(
+    user_id = user_id or _field(metadata, "user_id") or _find_subscription_owner(
         db,
         stripe_subscription_id=stripe_subscription_id,
         stripe_customer_id=stripe_customer_id,
     )
-    if not user_id or _stale_event(db, user_id, event_created):
+    if not user_id or not stripe_subscription_id:
         return
-    payload = _subscription_payload(subscription, user_id)
-    if event_created:
-        payload["updated_at"] = event_created.isoformat()
-    _upsert_subscription(db, payload)
+    for _ in range(5):
+        existing = _fetch_subscription_row(db, user_id)
+        # Webhooks are notifications: their embedded snapshots can be stale, and
+        # their second-resolution timestamps cannot order all state transitions.
+        current = _retrieve_subscription(stripe_subscription_id)
+        existing_id = existing.get("stripe_subscription_id") if existing else None
+        if existing_id and existing_id != stripe_subscription_id:
+            previous = _retrieve_subscription(existing_id)
+            previous_order = (_field(previous, "created", 0), _field(previous, "status") in PRO_ACCESS_STATUSES)
+            current_order = (_field(current, "created", 0), _field(current, "status") in PRO_ACCESS_STATUSES)
+            if previous_order >= current_order:
+                current = previous
+        if _write_subscription(db, _subscription_payload(current, user_id), existing):
+            return
+        # A concurrent handler won. Re-read both the DB row and Stripe state before
+        # trying again so an older snapshot cannot overwrite its update.
+    raise HTTPException(status_code=503, detail="Billing update conflicted; please retry")
 
 
-def _handle_checkout_completed(db: Client, session: Any, event_created: datetime | None = None) -> None:
+def _handle_checkout_completed(db: Client, session: Any) -> None:
     user_id = _field(session, "client_reference_id") or _field(_field(session, "metadata", {}) or {}, "user_id")
     subscription_id = _field(session, "subscription")
     customer_id = _field(session, "customer")
 
     if subscription_id:
-        try:
-            subscription = stripe.Subscription.retrieve(subscription_id)
-        except StripeError as exc:
-            raise HTTPException(status_code=502, detail="Could not verify Stripe subscription") from exc
-        if user_id:
-            if _stale_event(db, user_id, event_created):
-                return
-            payload = _subscription_payload(subscription, user_id)
-            if event_created:
-                payload["updated_at"] = event_created.isoformat()
-            _upsert_subscription(db, payload)
-        else:
-            _sync_subscription(db, subscription, event_created)
+        subscription = {"id": subscription_id, "customer": customer_id}
+        if not user_id:
+            subscription = _retrieve_subscription(subscription_id)
+        _sync_subscription(db, subscription, user_id=user_id)
         return
 
-    if user_id and customer_id and not _stale_event(db, user_id, event_created):
-        existing = _fetch_subscription_row(db, user_id) or {}
-        _upsert_subscription(
-            db,
-            {
-                "user_id": user_id,
-                "stripe_customer_id": customer_id,
-                "stripe_subscription_id": existing.get("stripe_subscription_id"),
-                "stripe_price_id": existing.get("stripe_price_id"),
-                "status": existing.get("status", "free"),
-                "current_period_end": existing.get("current_period_end"),
-                "trial_end": existing.get("trial_end"),
-                "cancel_at_period_end": bool(existing.get("cancel_at_period_end", False)),
-                "updated_at": (event_created or datetime.now(timezone.utc)).isoformat(),
-            },
-        )
+    if user_id and customer_id:
+        for _ in range(5):
+            existing = _fetch_subscription_row(db, user_id)
+            if existing and existing.get("stripe_customer_id"):
+                return
+            if _write_subscription(db, {"user_id": user_id, "stripe_customer_id": customer_id}, existing):
+                return
+        raise HTTPException(status_code=503, detail="Billing update conflicted; please retry")
 
 
 def handle_stripe_webhook(db: Client, payload: bytes, signature: str | None) -> StripeWebhookResponse:
@@ -274,11 +294,10 @@ def handle_stripe_webhook(db: Client, payload: bytes, signature: str | None) -> 
         raise HTTPException(status_code=400, detail="Invalid Stripe webhook signature") from exc
 
     event_type = _field(event, "type")
-    event_created = _timestamp(_field(event, "created"))
     data_object = _field(_field(event, "data", {}), "object")
     if event_type == "checkout.session.completed":
-        _handle_checkout_completed(db, data_object, event_created)
+        _handle_checkout_completed(db, data_object)
     elif event_type in SUBSCRIPTION_EVENTS:
-        _sync_subscription(db, data_object, event_created)
+        _sync_subscription(db, data_object)
 
     return StripeWebhookResponse()

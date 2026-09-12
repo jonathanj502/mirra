@@ -1,7 +1,9 @@
 from dataclasses import dataclass
 from io import BytesIO
 
+import pytest
 from fastapi.testclient import TestClient
+from postgrest.exceptions import APIError
 
 from app import billing
 from app.auth import verify_token
@@ -22,6 +24,7 @@ class _Table:
         self.selected = "*"
         self._insert: dict | None = None
         self._upsert: dict | None = None
+        self._update: dict | None = None
 
     def select(self, selected="*", *_args, **_kwargs):
         self.selected = selected
@@ -42,6 +45,10 @@ class _Table:
         self._upsert = row
         return self
 
+    def update(self, row: dict):
+        self._update = row
+        return self
+
     def execute(self):
         if self.name == "debrief_usage":
             return _Result({"count": self.db.used} if self.db.used else None)
@@ -59,6 +66,14 @@ class _Table:
             return _Result([row])
 
         if self.name == "billing_subscriptions":
+            if any(row is not None for row in (self._insert, self._upsert, self._update)) and self.db.before_write:
+                callback, self.db.before_write = self.db.before_write, None
+                callback()
+            if self._insert is not None:
+                if self._insert["user_id"] in self.db.billing:
+                    raise APIError({"code": "23505", "message": "duplicate key", "details": None, "hint": None})
+                self.db.billing[self._insert["user_id"]] = dict(self._insert)
+                return _Result([dict(self._insert)])
             if self._upsert is not None:
                 self.db.billing[self._upsert["user_id"]] = self._upsert
                 return _Result([self._upsert])
@@ -66,10 +81,14 @@ class _Table:
             rows = list(self.db.billing.values())
             for key, value in self.filters:
                 rows = [row for row in rows if row.get(key) == value]
+            if self._update is not None:
+                for row in rows:
+                    row.update(self._update)
+                return _Result([dict(row) for row in rows])
             row = rows[0] if rows else None
             if self.selected == "user_id" and row:
                 return _Result({"user_id": row["user_id"]})
-            return _Result(row)
+            return _Result(dict(row) if row else None)
 
         raise AssertionError(f"Unexpected table {self.name}")
 
@@ -79,8 +98,9 @@ class _Db:
         self.used = used
         self.billing = {}
         if billing_row:
-            self.billing[billing_row["user_id"]] = billing_row
+            self.billing[billing_row["user_id"]] = {"updated_at": "2026-07-01T00:00:00+00:00", **billing_row}
         self.debriefs: list[dict] = []
+        self.before_write = None
 
     def table(self, name: str):
         return _Table(self, name)
@@ -186,6 +206,7 @@ def test_webhook_updates_subscription_status(monkeypatch):
         },
     }
     monkeypatch.setattr(billing.stripe.Webhook, "construct_event", lambda *_args, **_kwargs: event)
+    monkeypatch.setattr(billing.stripe.Subscription, "retrieve", lambda *_args, **_kwargs: event["data"]["object"])
 
     r = _client(db).post("/billing/webhook", content=b"{}", headers={"Stripe-Signature": "sig"})
 
@@ -256,6 +277,9 @@ def test_webhook_ignores_stale_out_of_order_event(monkeypatch):
         },
     }
     monkeypatch.setattr(billing.stripe.Webhook, "construct_event", lambda *_args, **_kwargs: event)
+    monkeypatch.setattr(billing.stripe.Subscription, "retrieve", lambda *_args, **_kwargs: {
+        **event["data"]["object"], "status": "active",
+    })
 
     r = _client(db).post("/billing/webhook", content=b"{}", headers={"Stripe-Signature": "sig"})
 
@@ -299,3 +323,104 @@ def test_pro_user_can_create_session_even_at_free_cap(monkeypatch):
     assert r.status_code == 200
     assert r.json()["debrief"]["observation"] == "You made space."
     assert len(db.debriefs) == 1
+
+
+def _subscription(status="active", subscription_id="sub_123", created=1780272000):
+    return {
+        "id": subscription_id, "customer": "cus_123", "status": status,
+        "created": created, "metadata": {"user_id": "user-1"},
+        "items": {"data": [{"price": {"id": "price_mirra_pro"}, "current_period_end": 1783555200}]},
+    }
+
+
+def test_subscription_payload_reads_real_stripe_object():
+    subscription = billing.stripe.Subscription.construct_from(_subscription(), "sk_test_123")
+    payload = billing._subscription_payload(subscription, "user-1")
+    assert payload["stripe_price_id"] == "price_mirra_pro"
+    assert payload["current_period_end"] is not None
+
+
+@pytest.mark.parametrize("updated_at", ["2026-08-01T00:00:00+00:00", "2026-08-01T00:00:00.500000+00:00"])
+def test_same_second_or_delayed_webhook_refreshes_current_state(monkeypatch, updated_at):
+    monkeypatch.setattr(billing.settings, "stripe_secret_key", "sk_test_123")
+    monkeypatch.setattr(billing.settings, "stripe_webhook_secret", "whsec_123")
+    db = _Db(billing_row={
+        "user_id": "user-1", "stripe_subscription_id": "sub_123", "status": "active", "updated_at": updated_at,
+    })
+    event = {
+        "type": "customer.subscription.updated", "created": 1785542400,
+        "data": {"object": _subscription("active")},
+    }
+    monkeypatch.setattr(billing.stripe.Webhook, "construct_event", lambda *_args: event)
+    monkeypatch.setattr(billing.stripe.Subscription, "retrieve", lambda *_args: _subscription("canceled"))
+    r = _client(db).post("/billing/webhook", content=b"{}", headers={"Stripe-Signature": "sig"})
+    assert r.status_code == 200
+    assert db.billing["user-1"]["status"] == "canceled"
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_concurrent_webhook_cannot_overwrite_newer_state(monkeypatch, existing):
+    db = _Db(billing_row={"user_id": "user-1", "stripe_subscription_id": "sub_123", "status": "trialing"} if existing else None)
+    live = _subscription("active")
+    monkeypatch.setattr(billing.stripe.Subscription, "retrieve", lambda *_args: dict(live))
+
+    def concurrent_delivery():
+        live["status"] = "canceled"
+        billing._sync_subscription(db, dict(live))
+
+    db.before_write = concurrent_delivery
+    billing._sync_subscription(db, _subscription("active"))
+    assert db.billing["user-1"]["status"] == "canceled"
+
+
+@pytest.mark.parametrize("new_created", [1, 2])
+def test_old_subscription_event_does_not_replace_new_subscription(monkeypatch, new_created):
+    old = _subscription("canceled", "sub_old", created=1)
+    new = _subscription("active", "sub_new", created=new_created)
+    db = _Db(billing_row={"user_id": "user-1", "stripe_subscription_id": "sub_new", "status": "active"})
+    monkeypatch.setattr(billing.stripe.Subscription, "retrieve", lambda sub_id: {"sub_old": old, "sub_new": new}[sub_id])
+    billing._sync_subscription(db, old)
+    assert db.billing["user-1"]["stripe_subscription_id"] == "sub_new"
+    assert db.billing["user-1"]["status"] == "active"
+
+
+def test_replacement_subscription_can_unlock_pro_in_the_same_second(monkeypatch):
+    old = _subscription("canceled", "sub_old", created=1)
+    new = _subscription("active", "sub_new", created=1)
+    db = _Db(billing_row={"user_id": "user-1", "stripe_subscription_id": "sub_old", "status": "canceled"})
+    monkeypatch.setattr(billing.stripe.Subscription, "retrieve", lambda sub_id: {"sub_old": old, "sub_new": new}[sub_id])
+    billing._sync_subscription(db, new)
+    assert db.billing["user-1"]["stripe_subscription_id"] == "sub_new"
+    assert db.billing["user-1"]["status"] == "active"
+
+
+def test_stripe_refresh_failure_leaves_existing_state_unchanged(monkeypatch):
+    db = _Db(billing_row={"user_id": "user-1", "stripe_subscription_id": "sub_123", "status": "active"})
+
+    def unavailable(*_args):
+        raise billing.StripeError("Stripe unavailable")
+
+    monkeypatch.setattr(billing.stripe.Subscription, "retrieve", unavailable)
+    with pytest.raises(billing.HTTPException) as exc:
+        billing._sync_subscription(db, _subscription("canceled"))
+    assert exc.value.status_code == 502
+    assert db.billing["user-1"]["status"] == "active"
+
+
+def test_customer_only_checkout_preserves_concurrent_subscription(monkeypatch):
+    db = _Db()
+    monkeypatch.setattr(billing.stripe.Subscription, "retrieve", lambda *_args: _subscription("active"))
+    db.before_write = lambda: billing._sync_subscription(db, _subscription("active"))
+    billing._handle_checkout_completed(db, {"client_reference_id": "user-1", "customer": "cus_123"})
+    assert db.billing["user-1"]["status"] == "active"
+    assert db.billing["user-1"]["stripe_subscription_id"] == "sub_123"
+
+
+def test_repeated_write_conflicts_request_webhook_retry(monkeypatch):
+    db = _Db(billing_row={"user_id": "user-1", "stripe_subscription_id": "sub_123", "status": "active"})
+    monkeypatch.setattr(billing.stripe.Subscription, "retrieve", lambda *_args: _subscription("canceled"))
+    monkeypatch.setattr(billing, "_write_subscription", lambda *_args: False)
+    with pytest.raises(billing.HTTPException) as exc:
+        billing._sync_subscription(db, _subscription("canceled"))
+    assert exc.value.status_code == 503
+    assert db.billing["user-1"]["status"] == "active"

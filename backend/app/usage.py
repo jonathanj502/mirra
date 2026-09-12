@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
+from postgrest.exceptions import APIError
 from supabase import Client
 
 from app.config import settings
@@ -34,8 +35,7 @@ def get_usage(db: Client, user_id: str) -> dict:
     }
 
 
-def _adjust_count(db: Client, user_id: str, delta: int, enforce_cap: bool) -> None:
-    month = _month_key()
+def _adjust_count(db: Client, user_id: str, month: str, delta: int, enforce_cap: bool) -> None:
     # ponytail: compare-and-swap retry loop instead of a DB-side atomic increment function;
     # bounded to 5 attempts, fine at this write volume, revisit if usage writes get hot
     for _ in range(5):
@@ -51,6 +51,8 @@ def _adjust_count(db: Client, user_id: str, delta: int, enforce_cap: bool) -> No
         if enforce_cap and used >= settings.free_tier_cap:
             raise HTTPException(status_code=402, detail="Monthly debrief limit reached")
         new_count = max(0, used + delta)
+        if new_count == used:
+            return
         if row and row.data:
             result = (
                 db.table("debrief_usage")
@@ -68,15 +70,20 @@ def _adjust_count(db: Client, user_id: str, delta: int, enforce_cap: bool) -> No
         try:
             db.table("debrief_usage").insert({"user_id": user_id, "month_key": month, "count": new_count}).execute()
             return
-        except Exception:
+        except APIError as exc:
+            if exc.code != "23505":
+                raise
             continue  # someone else inserted the row first; retry as an update
     raise HTTPException(status_code=503, detail="Please try again")
 
 
-def check_and_increment(db: Client, user_id: str) -> None:
-    _adjust_count(db, user_id, delta=1, enforce_cap=True)
+def check_and_increment(db: Client, user_id: str) -> str:
+    """Reserve a debrief and return the month to use if it needs to be refunded."""
+    month = _month_key()
+    _adjust_count(db, user_id, month, delta=1, enforce_cap=True)
+    return month
 
 
-def release(db: Client, user_id: str) -> None:
+def release(db: Client, user_id: str, month: str) -> None:
     """Undo a reservation from check_and_increment when the debrief attempt fails downstream."""
-    _adjust_count(db, user_id, delta=-1, enforce_cap=False)
+    _adjust_count(db, user_id, month, delta=-1, enforce_cap=False)

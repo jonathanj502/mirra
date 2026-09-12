@@ -1,5 +1,7 @@
 import time
 
+import httpx
+import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import Depends, FastAPI
@@ -44,7 +46,7 @@ ISSUER = f"{settings.supabase_url.rstrip('/')}/auth/v1"
 
 
 def _token(payload: dict, key: str = PRIVATE_PEM) -> str:
-    return jwt.encode({"aud": "authenticated", "iss": ISSUER, **payload}, key, algorithm="ES256")
+    return jwt.encode({"aud": "authenticated", "iss": ISSUER, "exp": int(time.time()) + 300, **payload}, key, algorithm="ES256")
 
 
 def test_valid_token():
@@ -75,7 +77,7 @@ def test_wrong_key():
 
 
 def test_wrong_audience():
-    token = jwt.encode({"sub": "user-123", "aud": "anon"}, PRIVATE_PEM, algorithm="ES256")
+    token = _token({"sub": "user-123", "aud": "anon"})
     r = client.get("/me", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 401
 
@@ -87,6 +89,37 @@ def test_missing_sub():
 
 
 def test_wrong_issuer():
-    token = jwt.encode({"sub": "user-123", "aud": "authenticated", "iss": "https://evil.example/auth/v1"}, PRIVATE_PEM, algorithm="ES256")
+    token = _token({"sub": "user-123", "iss": "https://evil.example/auth/v1"})
     r = client.get("/me", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 401
+
+
+@pytest.mark.parametrize("claim", ["aud", "iss", "exp"])
+def test_required_claim_cannot_be_omitted(claim):
+    payload = {"sub": "user-123", "aud": "authenticated", "iss": ISSUER, "exp": int(time.time()) + 300}
+    del payload[claim]
+    token = jwt.encode(payload, PRIVATE_PEM, algorithm="ES256")
+    r = client.get("/me", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 401
+
+
+@pytest.mark.parametrize("body", [b"not json", b"null", b'{"keys": []}', b'{"keys": "invalid"}'])
+def test_unusable_jwks_returns_503_without_caching(monkeypatch, body):
+    monkeypatch.setattr(app.auth, "_jwks", None)
+    monkeypatch.setattr(httpx, "get", lambda *_args, **_kwargs: httpx.Response(
+        200, content=body, request=httpx.Request("GET", "https://test.supabase.co/jwks"),
+    ))
+    r = client.get("/me", headers={"Authorization": f"Bearer {_token({'sub': 'user-123'})}"})
+    assert r.status_code == 503
+    assert app.auth._jwks is None
+
+
+def test_jwks_network_failure_returns_503(monkeypatch):
+    monkeypatch.setattr(app.auth, "_jwks", None)
+
+    def unavailable(*_args, **_kwargs):
+        raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr(httpx, "get", unavailable)
+    r = client.get("/me", headers={"Authorization": f"Bearer {_token({'sub': 'user-123'})}"})
+    assert r.status_code == 503

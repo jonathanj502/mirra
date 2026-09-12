@@ -3,6 +3,7 @@ import { fetchDebriefs } from '@/api/client';
 import { ConversationListItem } from '@/models/conversation';
 import { DebriefCard } from '@/models/debrief';
 import { formatConversationWhen, formatDuration } from '@/utils/timeFormat';
+import { talkListenPercent } from '@/utils/talkListen';
 import { useAuthedFetch } from './useAuthedFetch';
 
 export function titleForDebrief(debrief: DebriefCard) {
@@ -14,8 +15,7 @@ export function titleForDebrief(debrief: DebriefCard) {
 }
 
 function toneForDebrief(debrief: DebriefCard) {
-  const ratio = debrief.stats.talkListenRatio;
-  if (ratio > 0.65) return 'coral';
+  if (talkListenPercent(debrief.stats.talkListenRatio) > 65) return 'coral';
   if (debrief.stats.questionCount >= 8) return 'sage';
   if (debrief.stats.interruptionCount > 2) return 'terracotta';
   return 'lavender';

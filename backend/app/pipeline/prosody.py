@@ -196,7 +196,7 @@ def compute_stats(
 ) -> dict[str, Any]:
     user_speech = sum(s.end - s.start for s in user_segments)
     other_speech = max(0.0, sum(s.end - s.start for s in all_segments) - user_speech)
-    talk_listen_ratio = round(user_speech / other_speech, 3) if other_speech > 0 else 99.0
+    talk_listen_ratio = round(user_speech / other_speech, 3) if other_speech > 0 else (99.0 if user_speech > 0 else 0.0)
     tokenized = _words(transcript)
     question_count, open_question_count, closed_question_count = _question_counts(transcript)
     interruptions, average_turn_offset_ms, turn_offset_series = _turn_offsets(all_segments, user_segments)
@@ -221,7 +221,8 @@ def compute_stats(
 
     estimated_wpm = round(len(tokenized) / (user_speech / 60), 1) if user_speech > 0 else 0.0
     speech_rate_score = _clamp(1.0 - abs(estimated_wpm - 145.0) / 110.0) if estimated_wpm else 0.0
-    talk_share = talk_listen_ratio if talk_listen_ratio <= 1 else talk_listen_ratio / (1 + talk_listen_ratio)
+    total_speech = user_speech + other_speech
+    talk_share = user_speech / total_speech if total_speech > 0 else 0.0
     balance_score = _clamp(1.0 - abs(talk_share - 0.5) / 0.5) if user_speech > 0 and other_speech > 0 else 0.0
     energy_axes = [
         _round_float(volume_match),
