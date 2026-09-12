@@ -2,10 +2,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.auth import verify_token
-from app.dashboard import build_profile_summary, build_progress, conversation_item, fallback_reflection
+from app.dashboard import build_profile_summary, build_progress, conversation_item, fallback_reflection, talk_listen_percent
 from app.db import get_db
 from app.main import app
 
@@ -158,6 +159,18 @@ def test_conversation_item_uses_metadata_title_and_ratio_conversion():
     assert item.title == "You spoke for most of the conversation"
     assert item.talk_listen_percent == 67
     assert item.tone == "coral"
+
+
+@pytest.mark.parametrize("ratio, percent", [(0, 0), (0.5, 33), (1, 50), (2, 67), (99, 99)])
+def test_talk_listen_ratio_converts_to_share(ratio, percent):
+    assert talk_listen_percent({"stats": {"talk_listen_ratio": ratio}}) == percent
+
+
+def test_balanced_conversation_is_not_marked_as_talking_too_much():
+    row = {**ROW_1, "stats": {**ROW_1["stats"], "talk_listen_ratio": 1}}
+    item = conversation_item(row)
+    assert item.talk_listen_percent == 50
+    assert item.tone == "sage"
 
 
 def test_build_progress_groups_daily_minutes_and_fillers():

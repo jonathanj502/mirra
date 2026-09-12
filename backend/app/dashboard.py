@@ -177,7 +177,7 @@ def talk_listen_percent(row: dict) -> int:
     raw = float(_stats(row).get("talk_listen_ratio") or 0)
     if raw <= 0:
         return 0
-    share = raw if raw <= 1 else raw / (1 + raw)
+    share = raw / (1 + raw)
     return max(0, min(100, round(share * 100)))
 
 

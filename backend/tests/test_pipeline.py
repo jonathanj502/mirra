@@ -2,6 +2,7 @@ import io
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 import soundfile as sf
 from fastapi.testclient import TestClient
 
@@ -9,6 +10,7 @@ from app.auth import verify_token
 from app.db import get_db
 from app.main import app
 from app.models.settings import UserSettings
+import app.main as main
 from app.pipeline.vad import Segment
 from app.pipeline.speaker import filter_user_segments
 from app.pipeline.prosody import compute_stats
@@ -94,6 +96,19 @@ def test_compute_stats_no_other_speech():
     segs = [Segment(0, 10, 0.5)]
     stats = compute_stats(segs, segs, "words", 60.0)
     assert stats["talk_listen_ratio"] == 99.0
+
+
+def test_balanced_speaking_time_improves_energy_score():
+    user = Segment(0, 10, 0.5)
+    balanced = compute_stats([user, Segment(10, 20, 0.5)], [user], "same words", 30.0)
+    unbalanced = compute_stats([user, Segment(10, 30, 0.5)], [user], "same words", 30.0)
+    assert balanced["energy_axes"] == unbalanced["energy_axes"]
+    assert balanced["energy_score"] > unbalanced["energy_score"]
+
+
+def test_no_speech_does_not_report_a_high_talk_ratio():
+    stats = compute_stats([], [], "", 60.0)
+    assert stats["talk_listen_ratio"] == 0
 
 
 def test_compute_stats_adds_voice_analysis_from_audio():
@@ -243,3 +258,81 @@ def test_post_sessions_at_cap_returns_402(mock_run):
     r = TestClient(app).post("/sessions", files={"audio": ("test.wav", _fake_wav(), "audio/wav")})
     assert r.status_code == 402
     mock_run.assert_not_called()
+
+
+@pytest.fixture
+def session_io(monkeypatch):
+    db = _db_for_sessions()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[verify_token] = lambda: "user-1"
+    reserve = MagicMock(return_value="2026-08")
+    refund = MagicMock()
+    monkeypatch.setattr(main, "user_has_pro_access", lambda *_args: False)
+    monkeypatch.setattr(main, "check_and_increment", reserve)
+    monkeypatch.setattr(main, "release", refund)
+    monkeypatch.setattr(main, "fetch_user_settings", MagicMock(return_value=UserSettings()))
+    monkeypatch.setattr(main.coordinator, "run", MagicMock(return_value=dict(SAMPLE_DEBRIEF)))
+    monkeypatch.setattr(main, "get_usage", MagicMock(return_value={"used_this_month": 1, "remaining": 4}))
+    return TestClient(app), db, reserve, refund
+
+
+@pytest.mark.parametrize("failure", ["settings", "pipeline", "result", "insert"])
+def test_session_failure_refunds_reservation(session_io, failure):
+    client, db, reserve, refund = session_io
+    if failure == "settings":
+        main.fetch_user_settings.side_effect = RuntimeError("settings unavailable")
+    elif failure == "pipeline":
+        main.coordinator.run.side_effect = RuntimeError("processing failed")
+    elif failure == "result":
+        main.coordinator.run.return_value = {"stats": None}
+    else:
+        db.table.return_value.insert.return_value.execute.side_effect = RuntimeError("insert failed")
+
+    r = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")})
+
+    assert r.status_code == 500
+    reserve.assert_called_once()
+    refund.assert_called_once_with(db, "user-1", "2026-08")
+
+
+def test_refund_failure_preserves_original_audio_error(session_io):
+    client, _db, _reserve, refund = session_io
+    main.coordinator.run.side_effect = ValueError("bad audio")
+    refund.side_effect = RuntimeError("database unavailable")
+    r = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")})
+    assert r.status_code == 422
+    assert r.json()["detail"] == "Could not decode audio"
+
+
+def test_saved_debrief_is_not_refunded_when_usage_read_fails(session_io):
+    client, _db, _reserve, refund = session_io
+    main.get_usage.side_effect = RuntimeError("usage unavailable")
+    r = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")})
+    assert r.status_code == 500
+    refund.assert_not_called()
+
+
+def test_pro_session_failure_does_not_refund_free_usage(session_io, monkeypatch):
+    client, _db, reserve, refund = session_io
+    monkeypatch.setattr(main, "user_has_pro_access", lambda *_args: True)
+    main.coordinator.run.side_effect = ValueError("bad audio")
+    r = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")})
+    assert r.status_code == 422
+    reserve.assert_not_called()
+    refund.assert_not_called()
+
+
+def test_audio_content_type_accepts_parameters_and_case(session_io):
+    client, _db, _reserve, refund = session_io
+    r = client.post("/sessions", files={"audio": ("test.webm", b"audio", "Audio/WebM; codecs=opus")})
+    assert r.status_code == 200
+    assert main.coordinator.run.call_args.kwargs["content_type"] == "audio/webm"
+    refund.assert_not_called()
+
+
+def test_missing_audio_content_type_is_rejected(session_io):
+    client, _db, reserve, _refund = session_io
+    body = b'--test\r\nContent-Disposition: form-data; name="audio"; filename="test.wav"\r\n\r\naudio\r\n--test--\r\n'
+    r = client.post("/sessions", content=body, headers={"Content-Type": "multipart/form-data; boundary=test"})
+    assert r.status_code == 415
+    reserve.assert_not_called()
