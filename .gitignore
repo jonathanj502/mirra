@@ -46,3 +46,6 @@ skills-lock.json
 *.swp
 *.swo
 *.log
+
+# Codex session state
+.codex-scratchpad.md
