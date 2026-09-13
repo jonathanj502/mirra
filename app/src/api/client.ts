@@ -1,7 +1,6 @@
 import { endpoint, parseResponse } from '@/api/http';
 import {
   AccountExport,
-  BillingStatus,
   ConversationSummary,
   DebriefCard,
   FillerCount,
@@ -140,25 +139,11 @@ type RawUserSettings = {
   coaching_depth: UserSettings['coachingDepth'];
 };
 
-type RawBillingStatus = {
-  plan: BillingStatus['plan'];
-  status: string;
-  is_pro: boolean;
-  free_conversations_remaining: number;
-  current_period_end?: string | null;
-  trial_end?: string | null;
-  cancel_at_period_end: boolean;
-  stripe_configured: boolean;
-  checkout_available: boolean;
-  portal_available: boolean;
-};
-
 type RawAccountExport = {
   exported_at: string;
   user_id: string;
   profile: RawProfileSummary;
   settings: RawUserSettings;
-  billing: RawBillingStatus;
   debriefs: RawDebrief[];
 };
 
@@ -289,17 +274,12 @@ function toUserSettings(raw: RawUserSettings): UserSettings {
   return camelizeKeys<UserSettings>(raw);
 }
 
-function toBillingStatus(raw: RawBillingStatus): BillingStatus {
-  return camelizeKeys<BillingStatus>(raw);
-}
-
 function toAccountExport(raw: RawAccountExport): AccountExport {
   return {
     exportedAt: raw.exported_at,
     userId: raw.user_id,
     profile: toProfileSummary(raw.profile),
     settings: toUserSettings(raw.settings),
-    billing: toBillingStatus(raw.billing),
     debriefs: raw.debriefs.map(toDebrief),
   };
 }
@@ -339,6 +319,13 @@ export async function fetchDebrief(token: string, id: string): Promise<DebriefCa
   return toDebrief(raw);
 }
 
+export async function deleteDebrief(token: string, id: string): Promise<void> {
+  await fetch(endpoint(`/debriefs/${encodeURIComponent(id)}`), {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  }).then((r) => parseResponse<void>(r));
+}
+
 export async function fetchProgressSummary(token: string): Promise<ProgressSummary> {
   const raw = await fetch(endpoint('/analytics/progress'), {
     headers: { Authorization: `Bearer ${token}` },
@@ -365,29 +352,6 @@ export async function fetchUserSettings(token: string): Promise<UserSettings> {
     headers: { Authorization: `Bearer ${token}` },
   }).then((r) => parseResponse<RawUserSettings>(r));
   return toUserSettings(raw);
-}
-
-export async function fetchBillingStatus(token: string): Promise<BillingStatus> {
-  const raw = await fetch(endpoint('/billing/status'), {
-    headers: { Authorization: `Bearer ${token}` },
-  }).then((r) => parseResponse<RawBillingStatus>(r));
-  return toBillingStatus(raw);
-}
-
-export async function createBillingCheckoutSession(token: string): Promise<string> {
-  const raw = await fetch(endpoint('/billing/checkout'), {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-  }).then((r) => parseResponse<{ url: string }>(r));
-  return raw.url;
-}
-
-export async function createBillingPortalSession(token: string): Promise<string> {
-  const raw = await fetch(endpoint('/billing/portal'), {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-  }).then((r) => parseResponse<{ url: string }>(r));
-  return raw.url;
 }
 
 export async function updateUserSettings(token: string, patch: Partial<UserSettings>): Promise<UserSettings> {
@@ -418,7 +382,8 @@ export async function sendReflection(
 export async function uploadSession(
   token: string,
   audio: { uri: string; name: string; type: string },
-  metadata: { title?: string; clientDurationSeconds?: number }
+  metadata: { title?: string; clientDurationSeconds?: number; recordingId?: string; startedAt?: string },
+  signal?: AbortSignal
 ): Promise<SessionResponse> {
   const form = new FormData();
   if (audio.uri.startsWith('blob:') || audio.uri.startsWith('data:')) {
@@ -427,27 +392,19 @@ export async function uploadSession(
   } else {
     form.append('audio', audio as unknown as Blob);
   }
-  form.append('started_at', new Date().toISOString());
+  form.append('started_at', metadata.startedAt ?? new Date().toISOString());
+  if (metadata.recordingId) form.append('recording_id', metadata.recordingId);
   if (metadata.title) form.append('title', metadata.title);
   if (metadata.clientDurationSeconds != null) {
     form.append('client_duration_seconds', String(metadata.clientDurationSeconds));
   }
 
-  // Two retries on network-level failure only;
-  // HTTP error responses reach parseResponse unretried — a 4xx won't succeed on retry.
-  let response!: Response;
-  for (let attempt = 0; ; attempt++) {
-    try {
-      response = await fetch(endpoint('/sessions'), {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: form,
-      });
-      break;
-    } catch (error) {
-      if (attempt >= 2) throw error;
-    }
-  }
+  const response = await fetch(endpoint('/sessions'), {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+    signal,
+  });
   const raw = await parseResponse<{ debrief: RawDebrief; used_this_month: number; remaining: number }>(response);
 
   return {

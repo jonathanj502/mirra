@@ -13,6 +13,7 @@ import { Inter_300Light, Inter_400Regular, Inter_500Medium, Inter_600SemiBold } 
 import { colors } from '@/theme/tokens';
 import { AuthProvider, useAuth } from '@/auth/AuthContext';
 import { AuthScreen } from '@/screens/AuthScreen';
+import { RecordingProvider } from '@/hooks/useRecordAudio';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -40,7 +41,9 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <StatusBar style="dark" />
         <AuthProvider>
-          <AuthenticatedStack />
+          <RecordingProvider>
+            <AuthenticatedStack />
+          </RecordingProvider>
         </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

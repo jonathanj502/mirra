@@ -55,6 +55,7 @@ test('OAuth callback removes credentials before session setup, preserves unrelat
   let fail = false;
   const { createSessionFromUrl } = load('auth/AuthContext.tsx', {
     react: React, 'react-native': { Platform: { OS: 'web' } },
+    '@react-native-async-storage/async-storage': {},
     'expo-auth-session': {}, 'expo-web-browser': { maybeCompleteAuthSession() {} },
     'expo-auth-session/build/QueryParams': { getQueryParams(input) {
       const url = new URL(input);
@@ -73,65 +74,67 @@ test('OAuth callback removes credentials before session setup, preserves unrelat
       },
     } } },
   }, window);
-  const callback = 'http://localhost:8081/?checkout=success#access_token=test-access&refresh_token=test-refresh&provider_token=test-provider&expires_in=3600&tab=record';
+  const callback = 'http://localhost:8081/?tab=profile#access_token=test-access&refresh_token=test-refresh&provider_token=test-provider&expires_in=3600&tab=record';
   window.location.href = callback;
   await createSessionFromUrl(callback);
   assert.deepEqual(session, { access_token: 'test-access', refresh_token: 'test-refresh' });
-  assert.equal(window.location.href, 'http://localhost:8081/?checkout=success#tab=record');
-  window.location.href = 'http://localhost:8081/?code=test-code&checkout=success';
+  assert.equal(window.location.href, 'http://localhost:8081/?tab=profile#tab=record');
+  window.location.href = 'http://localhost:8081/?code=test-code&tab=profile';
   await createSessionFromUrl(window.location.href);
-  assert.equal(window.location.href, 'http://localhost:8081/?checkout=success');
+  assert.equal(window.location.href, 'http://localhost:8081/?tab=profile');
   fail = true;
   window.location.href = callback;
   await assert.rejects(createSessionFromUrl(callback), /expired/);
   assert.doesNotMatch(window.location.href, /test-access|test-refresh|test-provider/);
 });
 
-test('a failed recording upload retains the same clip for retry and cannot be overwritten by a new recording', async () => {
+test('recording saves before upload, allows another offline clip, and retains the original if storage fails', async () => {
   const state = hooks();
   let stops = 0;
   let starts = 0;
-  const uploads = [];
-  const debrief = { id: 'saved' };
-  const { useRecordAudio } = load('hooks/useRecordAudio.ts', {
+  const saved = [];
+  let diskFull = true;
+  const { RecordingProvider } = load('hooks/useRecordAudio.ts', {
     react: state.react, 'react-native': { Platform: { OS: 'web' }, NativeModules: {} },
-    '@/auth/AuthContext': auth, '@/api/http': http,
-    '@/api/client': { async uploadSession(_, audio, metadata) {
-      uploads.push({ audio, metadata });
-      if (uploads.length === 1) throw new TypeError('Failed to fetch');
-      return { debrief };
-    } },
+    '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' }, accessToken: null }) }, '@/api/http': http,
+    '@/storage/pendingRecordings': { recordingId: () => `recording-${starts}` },
+    './usePendingRecordings': { usePendingRecordings: () => ({ async enqueue(recording) {
+      saved.push(recording);
+      if (diskFull) throw new Error('Storage full');
+    } }) },
     'expo-av': { InterruptionModeAndroid: {}, InterruptionModeIOS: {}, Audio: {
       requestPermissionsAsync: async () => ({ granted: true }), setAudioModeAsync: async () => {},
       RecordingOptionsPresets: { HIGH_QUALITY: {} }, Recording: { async createAsync() {
         starts++;
         return { status: { durationMillis: 7500 }, recording: {
-          async stopAndUnloadAsync() { stops++; }, getURI: () => 'blob:test-recording',
+          async stopAndUnloadAsync() { stops++; return { durationMillis: 7500 }; }, getURI: () => 'blob:test-recording',
         } };
       } },
     } },
   });
-  let hook = state.render(useRecordAudio);
+  const render = () => state.render(() => RecordingProvider({ children: null })).props.value;
+  let hook = render();
   await Promise.all([hook.startRecording(), hook.startRecording()]);
   assert.equal(starts, 1);
-  hook = state.render(useRecordAudio);
-  assert.equal(await hook.stopRecording(), null);
-  hook = state.render(useRecordAudio);
+  hook = render();
+  await hook.stopRecording();
+  hook = render();
   assert.equal(hook.isRecording, false);
-  assert.equal(hook.hasPendingRecording, true);
-  assert.equal(hook.error, 'Could not reach Mirra. Please try again.');
+  assert.equal(hook.hasUnsavedRecording, true);
+  assert.match(hook.error, /not saved yet/);
   await hook.startRecording();
   assert.equal(starts, 1);
-  const retry = hook.toggleRecording();
-  hook.discardRecording(); // An in-flight retry must retain its clip.
-  assert.equal(state.render(useRecordAudio).hasPendingRecording, true);
-  assert.equal(await retry, debrief);
+  diskFull = false;
+  await hook.toggleRecording();
   assert.equal(stops, 1);
-  assert.deepEqual(uploads[0], uploads[1]);
-  assert.equal(uploads[1].metadata.clientDurationSeconds, 7.5);
-  hook = state.render(useRecordAudio);
-  assert.equal(hook.hasPendingRecording, false);
+  assert.deepEqual(saved[0], saved[1]);
+  assert.equal(saved[1].seconds, 7.5);
+  assert.equal(saved[1].userId, 'owner');
+  hook = render();
+  assert.equal(hook.hasUnsavedRecording, false);
   assert.equal(hook.error, null);
+  await hook.startRecording();
+  assert.equal(starts, 2);
 });
 
 test('import failures are returned as visible error state on web', async () => {
@@ -174,16 +177,15 @@ test('focus refresh recovers a failed tab and an older request cannot overwrite 
   assert.deepEqual(render().data, ['latest']);
 });
 
-test('plan loading needs no manual plan retry and only offers actions for a verified plan', () => {
+test('profile loads account data without a plan request', () => {
   const state = hooks();
-  let billingState = { billing: null, error: 'Offline', loadError: 'Offline' };
+  let summaryState = { summary: null, error: 'Offline' };
   const { ProfileScreen } = load('screens/ProfileScreen.tsx', {
     react: state.react, 'react-native': { StyleSheet: { create: styles => styles } },
     'expo-linear-gradient': {}, 'react-native-svg': {}, '@/components/Screen': {},
     '@/components/ui': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
     '@/theme/tokens': { colors: {}, fonts: {} }, '@/api/client': {}, '@/auth/AuthContext': auth,
-    '@/hooks/useProfileSummary': { useProfileSummary: () => ({ summary: null, error: 'Offline' }) },
-    '@/hooks/useBilling': { useBilling: () => billingState },
+    '@/hooks/useProfileSummary': { useProfileSummary: () => summaryState },
     '@/hooks/useUserSettings': { useUserSettings: () => ({ settings: {}, loadError: 'Offline' }) },
   });
   const tree = state.render(ProfileScreen);
@@ -194,24 +196,86 @@ test('plan loading needs no manual plan retry and only offers actions for a veri
     return [node.props?.value, node.props?.hint, text(node.props?.children)].filter(Boolean).join(' ');
   }
   const rendered = text(tree);
-  assert.match(rendered, /Plan unavailable/);
   assert.match(rendered, /—/);
-  assert.doesNotMatch(rendered, /conversations remaining|Try Pro free|Transcripts saved|Retry plan|Retry to load/);
+  assert.doesNotMatch(rendered, /Current plan|Try Pro|Manage plan|Transcripts saved/);
 
-  billingState = { billing: null, loading: true };
-  const loading = text(state.render(ProfileScreen));
-  assert.match(loading, /Loading plan/);
-  assert.doesNotMatch(loading, /Plan unavailable|Retry plan|Try Pro free/);
+  summaryState = { summary: { totalConversations: 7, usedThisMonth: 2 } };
+  const loaded = text(state.render(ProfileScreen));
+  assert.match(loaded, /7/);
+  assert.match(loaded, /2/);
+  assert.doesNotMatch(loaded, /Current plan|Try Pro|Manage plan/);
+});
 
-  billingState = { billing: { isPro: false, freeConversationsRemaining: 3 } };
-  const free = text(state.render(ProfileScreen));
-  assert.match(free, /3 conversations remaining/);
-  assert.match(free, /Try Pro free for 14 days/);
-  assert.doesNotMatch(free, /Retry plan|Plan unavailable/);
+test('conversation deletion confirms on web and native, retains failures, and navigates only after success', async (t) => {
+  const api = load('api/client.ts', { '@/api/http': http });
+  const state = hooks();
+  let id = 'saved-conversation';
+  let confirmed = false;
+  const requests = [];
+  const destinations = [];
+  const platform = { OS: 'web' };
+  let buttons;
+  t.mock.method(globalThis, 'fetch', (url, options) => new Promise(resolve => requests.push({ url, options, resolve })));
+  const debrief = api.toDebrief({
+    id, session_id: 'session', created_at: '2026-09-13T00:00:00Z',
+    observation: 'A conversation.', pattern_to_reduce: 'Interruptions', thing_to_try_next: 'Pause',
+    stats: { talk_listen_ratio: 1, question_count: 1, interruption_count: 0,
+      session_duration_minutes: 2, user_speech_duration_minutes: 1, estimated_wpm: 120 },
+  });
+  const { AnalyticsScreen } = load('screens/AnalyticsScreen.tsx', {
+    react: state.react,
+    'react-native': { Platform: platform, Alert: { alert: (_title, _message, actions) => { buttons = actions; } },
+      StyleSheet: { create: styles => styles } },
+    'expo-router': { useLocalSearchParams: () => ({ id }), useRouter: () => ({ replace: path => destinations.push(path) }) },
+    '@/auth/AuthContext': auth, '@/api/client': api, '@/api/http': http,
+    '@/hooks/useDebriefs': { useDebriefs: () => ({ debriefs: [debrief], loading: false }),
+      toConversationListItem: () => ({ title: 'A conversation', when: 'Today', duration: '2 min' }) },
+    '@/utils/talkListen': { talkListenPercent: () => 50 },
+    '@/theme/tokens': { colors: {}, fonts: {} }, '@/components/Screen': {},
+    '@/components/ui': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
+    '@/components/FloatingTabBar': {}, '@/components/ExpandableMetric': {},
+    '@/components/ReflectCTA': {}, '@/components/charts': {}, '@/components/meters': {},
+  }, { confirm: () => confirmed });
+  const render = () => state.render(AnalyticsScreen);
+  function deleteButton(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.props?.accessibilityLabel === 'Delete conversation') return node;
+    for (const child of [node.props?.children].flat(Infinity)) {
+      const found = deleteButton(child);
+      if (found) return found;
+    }
+  }
 
-  billingState = { billing: { isPro: true, status: 'active' } };
-  const pro = text(state.render(ProfileScreen));
-  assert.match(pro, /Unlimited conversations/);
-  assert.match(pro, /Manage plan/);
-  assert.doesNotMatch(pro, /Retry plan|Try Pro free/);
+  deleteButton(render()).props.onPress();
+  assert.equal(requests.length, 0);
+  confirmed = true;
+  const button = deleteButton(render());
+  button.props.onPress();
+  button.props.onPress();
+  assert.equal(requests.length, 1);
+  assert.equal(deleteButton(render()).props.disabled, true);
+  assert.equal(requests[0].url, 'http://test.invalid/debriefs/saved-conversation');
+  assert.equal(requests[0].options.method, 'DELETE');
+  assert.equal(requests[0].options.headers.Authorization, 'Bearer test-token');
+  assert.deepEqual(destinations, []);
+  requests[0].resolve(new Response('{"detail":"Could not delete"}', { status: 500 }));
+  await flush();
+  assert.equal(render().props.error, 'Could not delete');
+  assert.equal(deleteButton(render()).props.disabled, false);
+  assert.deepEqual(destinations, []);
+
+  platform.OS = 'ios';
+  deleteButton(render()).props.onPress();
+  assert.equal(requests.length, 1);
+  assert.equal(buttons[0].style, 'cancel');
+  assert.equal(buttons[1].style, 'destructive');
+  buttons[1].onPress();
+  requests[1].resolve(new Response(null, { status: 204 }));
+  await flush();
+  assert.equal(render().props.error, null);
+  assert.deepEqual(destinations, ['/insights']);
+
+  // A missing/deleted ID must never silently select another conversation to delete.
+  id = 'missing-conversation';
+  assert.equal(deleteButton(render()), undefined);
 });

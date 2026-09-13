@@ -64,3 +64,55 @@ def test_debriefs_pagination_params():
     app.dependency_overrides[verify_token] = lambda: "user-1"
     TestClient(app).get("/debriefs?limit=10&offset=20")
     db.table.return_value.select.return_value.eq.return_value.order.return_value.range.assert_called_once_with(20, 29)
+
+
+def test_delete_debrief_is_scoped_idempotent_and_validates_id():
+    own_id = SAMPLE["id"]
+    other_id = "00000000-0000-0000-0000-000000000002"
+    kept_id = "00000000-0000-0000-0000-000000000003"
+    rows = [
+        {"id": own_id, "user_id": "user-1", "transcript": "private transcript"},
+        {"id": other_id, "user_id": "user-2"},
+        {"id": kept_id, "user_id": "user-1"},
+    ]
+    db = MagicMock()
+    query = db.table.return_value.delete.return_value
+    filters = {}
+
+    def eq(key, value):
+        filters[key] = value
+        return query
+
+    def execute():
+        rows[:] = [row for row in rows if not all(row[key] == value for key, value in filters.items())]
+
+    query.eq.side_effect = eq
+    query.execute.side_effect = execute
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[verify_token] = lambda: "user-1"
+    client = TestClient(app)
+
+    assert client.delete(f"/debriefs/{other_id}").status_code == 204
+    assert len(rows) == 3
+    response = client.delete(f"/debriefs/{own_id}")
+    assert response.status_code == 204 and response.content == b""
+    assert rows == [{"id": other_id, "user_id": "user-2"}, {"id": kept_id, "user_id": "user-1"}]
+    assert client.delete(f"/debriefs/{own_id}").status_code == 204
+    assert client.delete("/debriefs/not-a-uuid").status_code == 422
+    assert query.execute.call_count == 3
+    # Deletion never touches usage counters or any other account data.
+    assert all(call.args == ("debriefs",) for call in db.table.call_args_list)
+
+
+def test_delete_requires_auth_and_does_not_report_database_failure_as_success():
+    db = MagicMock()
+    app.dependency_overrides[get_db] = lambda: db
+    client = TestClient(app)
+    assert client.delete(f'/debriefs/{SAMPLE["id"]}').status_code == 401
+    db.table.assert_not_called()
+
+    app.dependency_overrides[verify_token] = lambda: "user-1"
+    db.table.return_value.delete.return_value.eq.return_value.eq.return_value.execute.side_effect = RuntimeError("database unavailable")
+    response = client.delete(f'/debriefs/{SAMPLE["id"]}')
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Internal server error"}

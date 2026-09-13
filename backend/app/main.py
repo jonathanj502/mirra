@@ -1,28 +1,21 @@
 import logging
 from datetime import datetime, timezone
-from uuid import uuid4
+from threading import Lock
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 import httpx
 from jose import JWTError, jwt
 from supabase import Client
 
 from app.auth import verify_token
-from app.billing import (
-    create_checkout_session,
-    create_portal_session,
-    fetch_billing_status,
-    handle_stripe_webhook,
-    user_has_pro_access,
-)
 from app.config import settings
 from app.dashboard import build_profile_summary, build_progress, enrich_debrief_row, fallback_reflection
 from app.db import get_db
 from app.models.account import AccountExport
 from app.models.auth import UsernameAuthRequest, UsernameAuthResponse
-from app.models.billing import BillingSessionResponse, BillingStatus, StripeWebhookResponse
 from app.models.dashboard import ProfileSummary, ProgressResponse, ReflectRequest, ReflectResponse
 from app.models.debrief import Debrief, SessionResponse
 from app.models.settings import UserSettings, UserSettingsUpdate
@@ -49,6 +42,9 @@ SUPPORTED_AUDIO_TYPES = {
 USERNAME_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789_")
 
 logger = logging.getLogger(__name__)
+
+_session_lock = Lock()
+_processing_sessions: set[str] = set()
 
 
 # Starlette's default 500 handler returns a plain-text body, which breaks clients that assume
@@ -232,7 +228,6 @@ def account_export(user_id: str = Depends(verify_token), db: Client = Depends(ge
         user_id=user_id,
         profile=build_profile_summary(rows, get_usage(db, user_id)),
         settings=fetch_user_settings(db, user_id),
-        billing=fetch_billing_status(db, user_id),
         debriefs=rows,
     )
 
@@ -251,31 +246,6 @@ def update_settings(
     return save_user_settings(db, user_id, payload)
 
 
-@app.get("/billing/status", response_model=BillingStatus)
-def billing_status(user_id: str = Depends(verify_token), db: Client = Depends(get_db)):
-    return fetch_billing_status(db, user_id)
-
-
-@app.post("/billing/checkout", response_model=BillingSessionResponse)
-def billing_checkout(user_id: str = Depends(verify_token), db: Client = Depends(get_db)):
-    return create_checkout_session(db, user_id)
-
-
-@app.post("/billing/portal", response_model=BillingSessionResponse)
-def billing_portal(user_id: str = Depends(verify_token), db: Client = Depends(get_db)):
-    return create_portal_session(db, user_id)
-
-
-@app.post("/billing/webhook", response_model=StripeWebhookResponse)
-async def stripe_webhook(
-    request: Request,
-    stripe_signature: str | None = Header(None),
-    db: Client = Depends(get_db),
-):
-    payload = await request.body()
-    return handle_stripe_webhook(db, payload, stripe_signature)
-
-
 @app.get("/analytics/progress", response_model=ProgressResponse)
 def progress_summary(
     weeks: int = Query(8, ge=1, le=26),
@@ -292,9 +262,37 @@ def create_session(
     started_at: str | None = Form(None),
     client_duration_seconds: float | None = Form(None),
     title: str | None = Form(None),
+    recording_id: str | None = Form(None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$"),
     user_id: str = Depends(verify_token),
     db: Client = Depends(get_db),
 ):
+    # Account-scoped deterministic IDs use the existing primary key for durable duplicate protection.
+    debrief_id = str(uuid5(NAMESPACE_URL, f"mirra:{user_id}:{recording_id}")) if recording_id else None
+    if debrief_id:
+        # ponytail: this suppresses duplicate model work within one process. Across workers the DB
+        # primary key still prevents duplicate debriefs; add a DB job lease if scaling workers.
+        with _session_lock:
+            if debrief_id in _processing_sessions:
+                raise HTTPException(status_code=409, detail="This recording is already being processed.")
+            _processing_sessions.add(debrief_id)
+    try:
+        return _process_session(audio, started_at, client_duration_seconds, title, user_id, db, debrief_id)
+    finally:
+        if debrief_id:
+            with _session_lock:
+                _processing_sessions.discard(debrief_id)
+
+
+def _session_response(db: Client, user_id: str, row: dict):
+    usage = get_usage(db, user_id)
+    return {"debrief": row, "used_this_month": usage["used_this_month"], "remaining": usage["remaining"]}
+
+
+def _process_session(audio, started_at, client_duration_seconds, title, user_id, db, debrief_id):
+    if debrief_id:
+        existing = _fetch_debrief_row(db, user_id, debrief_id)
+        if existing:
+            return _session_response(db, user_id, existing)
     content_type = (audio.content_type or "").split(";", 1)[0].strip().lower()
     if content_type not in SUPPORTED_AUDIO_TYPES:
         raise HTTPException(status_code=415, detail="Unsupported audio type")
@@ -303,9 +301,8 @@ def create_session(
     if len(audio_bytes) > MAX_AUDIO_BYTES:
         raise HTTPException(status_code=413, detail="Audio file is too large")
 
-    reservation_month = None
-    if not user_has_pro_access(db, user_id):
-        reservation_month = check_and_increment(db, user_id)
+    reservation_month = check_and_increment(db, user_id)
+    inserting = False
     try:
         user_settings = fetch_user_settings(db, user_id)
         try:
@@ -326,10 +323,12 @@ def create_session(
             **result["stats"].get("metadata", {}),
             **{k: v for k, v in metadata.items() if v is not None},
         }}
+        inserting = True
         row = (
             db.table("debriefs")
             .insert(
                 {
+                    **({"id": debrief_id} if debrief_id else {}),
                     "user_id": user_id,
                     "session_id": session_id,
                     "observation": result["observation"],
@@ -341,15 +340,22 @@ def create_session(
             )
             .execute()
         )
-    except Exception:
+    except Exception as exc:
+        existing = None
+        if debrief_id and inserting:
+            existing = _fetch_debrief_row(db, user_id, debrief_id)
+            # The insert may have committed even though its HTTP response was lost.
+            if existing and getattr(exc, "code", None) != "23505":
+                return _session_response(db, user_id, existing)
         if reservation_month is not None:
             try:
                 release(db, user_id, reservation_month)
             except Exception:
                 logger.exception("Could not release debrief reservation for user %s in %s", user_id, reservation_month)
+        if existing:
+            return _session_response(db, user_id, existing)
         raise
-    usage = get_usage(db, user_id)
-    return {"debrief": row.data[0], "used_this_month": usage["used_this_month"], "remaining": usage["remaining"]}
+    return _session_response(db, user_id, row.data[0])
 
 
 @app.get("/debriefs", response_model=list[Debrief])
@@ -372,6 +378,17 @@ def debrief_detail(
     if not row:
         raise HTTPException(status_code=404, detail="Debrief not found")
     return row
+
+
+@app.delete("/debriefs/{debrief_id}", status_code=204)
+def delete_debrief(
+    debrief_id: UUID,
+    user_id: str = Depends(verify_token),
+    db: Client = Depends(get_db),
+):
+    # Scope the mutation itself: service-role access bypasses database RLS.
+    db.table("debriefs").delete().eq("user_id", user_id).eq("id", str(debrief_id)).execute()
+    return Response(status_code=204)
 
 
 @app.post("/reflect", response_model=ReflectResponse)
