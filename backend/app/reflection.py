@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import httpx
+from openai import OpenAI, OpenAIError
 
 from app.config import settings
 from app.dashboard import talk_listen_percent, title_for
@@ -93,71 +93,14 @@ def build_reflection_messages(
     return messages
 
 
-def _extract_reply(data: dict) -> str | None:
-    try:
-        text = data["choices"][0]["message"]["content"]
-    except Exception:
-        return None
-
-    return text.strip() if isinstance(text, str) and text.strip() else None
-
-
-def _post_chat_completion(
-    url: str,
-    model: str,
-    messages: list[dict[str, str]],
-    token: str = "",
-) -> str | None:
-    headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    try:
-        response = httpx.post(
-            url,
-            headers=headers,
-            json={
-                "model": model,
-                "messages": messages,
-                "max_tokens": settings.open_model_max_tokens,
-                "temperature": settings.open_model_temperature,
-                "stream": False,
-            },
-            timeout=settings.open_model_timeout_seconds,
-        )
-        if response.status_code >= 400:
-            return None
-        return _extract_reply(response.json())
-    except Exception:
-        return None
-
-
-def generate_open_model_reflection(
+def generate_reflection(
     rows: list[dict],
     payload: ReflectRequest,
     coaching_tone: str = "warm_reflective",
     coaching_depth: str = "balanced",
     include_transcript: bool = False,
 ) -> str | None:
-    token = settings.open_model_token
-    if token:
-        messages = build_reflection_messages(
-            rows,
-            payload,
-            include_transcript=settings.open_model_include_transcript or include_transcript,
-            coaching_tone=coaching_tone,
-            coaching_depth=coaching_depth,
-        )
-        text = _post_chat_completion(
-            f"{settings.open_model_base_url.rstrip('/')}/chat/completions",
-            settings.open_model_name,
-            messages,
-            token,
-        )
-        if text:
-            return text
-
-    if not settings.open_model_allow_anonymous:
+    if not settings.openai_api_key:
         return None
 
     messages = build_reflection_messages(
@@ -167,9 +110,14 @@ def generate_open_model_reflection(
         coaching_tone=coaching_tone,
         coaching_depth=coaching_depth,
     )
-    return _post_chat_completion(
-        f"{settings.anonymous_open_model_base_url.rstrip('/')}/openai",
-        settings.anonymous_open_model_name,
-        messages,
-        settings.anonymous_open_model_api_key,
-    )
+    try:
+        with OpenAI(api_key=settings.openai_api_key, timeout=30.0, max_retries=2) as client:
+            response = client.responses.create(
+                model=settings.openai_reflect_model,
+                input=messages,
+                max_output_tokens=350,
+                store=False,
+            )
+        return (response.output_text.strip() or None) if response.status == "completed" else None
+    except OpenAIError:
+        return None

@@ -28,7 +28,7 @@ function ConvRow({ item, isLast, onPress }: { item: ConvListItem; isLast: boolea
 export function InsightsIndexScreen() {
   const router = useRouter();
   const [weekIdx, setWeekIdx] = useState(0);
-  const { progress, loading, error } = useProgressSummary();
+  const { progress, loading, error, refresh } = useProgressSummary();
   const weeks = progress?.weeks ?? [];
   const weekTabs = weeks.length > 0 ? weeks.map((week) => ({ label: week.label, upcoming: week.label === 'This week' })) : [{ label: 'This week' }];
   const selectedWeek = weeks[weekIdx] ?? weeks[0] ?? null;
@@ -53,7 +53,7 @@ export function InsightsIndexScreen() {
   const mins = totalDuration % 60;
 
   return (
-    <Screen topOffset={50}>
+    <Screen topOffset={50} error={error} onRefresh={refresh} refreshing={loading}>
       <View style={{ paddingTop: 4 }}>
         <WeekPaginator weeks={weekTabs} idx={Math.min(weekIdx, weekTabs.length - 1)} onChange={setWeekIdx} />
       </View>
@@ -61,22 +61,21 @@ export function InsightsIndexScreen() {
       <View style={styles.titleBlock}>
         <Eyebrow>Conversations</Eyebrow>
         <Serif style={styles.bigTitle}>
-          {convs.length} {convs.length === 1 ? 'conversation' : 'conversations'},{'\n'}
+          {error ? 'Conversations unavailable' : `${convs.length} ${convs.length === 1 ? 'conversation' : 'conversations'},`}{'\n'}
           <SerifItalic style={styles.bigTitle}>
-            {hours > 0 ? `${hours}h ` : ''}{mins} min total.
+            {error ? 'Please try again.' : `${hours > 0 ? `${hours}h ` : ''}${mins} min total.`}
           </SerifItalic>
         </Serif>
         <Body style={styles.intro}>
           {loading
             ? 'Loading...'
-            : selectedWeek?.conversationCount
+            : error ? '' : selectedWeek?.conversationCount
               ? 'Tap a conversation to see its patterns.'
               : 'Record a conversation to get started.'}
         </Body>
       </View>
 
       <View style={styles.list}>
-        {error && <Body style={styles.errorText}>{error}</Body>}
         {grouped.map((group, gi) => (
           <View key={group.day} style={{ marginBottom: gi === grouped.length - 1 ? 0 : 14 }}>
             <View style={styles.groupHead}>
@@ -112,7 +111,6 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: 24, paddingTop: 18 },
   groupHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: colors.hairline2, paddingBottom: 4, marginBottom: 2 },
   groupCount: { fontSize: 10.5, color: colors.muted },
-  errorText: { textAlign: 'center', paddingVertical: 30, color: colors.coral, fontSize: 13, lineHeight: 19 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14 },
   rowBorder: { borderBottomWidth: 1, borderBottomColor: colors.hairline2 },
   dot: { width: 8, height: 8, borderRadius: 4 },

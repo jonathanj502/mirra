@@ -8,7 +8,7 @@ This is a greenfield project — the current repo contains only a `README.md` pl
 
 **Key decisions:**
 - **Frontend:** React Native (cross-platform iOS + Android from one TS codebase)
-- **Backend:** Python FastAPI proxy (Whisper + Claude live behind it; user never sees API keys; server-side usage enforcement)
+- **Backend:** Python FastAPI proxy (OpenAI transcription and coaching live behind it; user never sees API keys; server-side usage enforcement)
 - **DB + Auth:** Supabase (Postgres + Auth — Python backend verifies Supabase JWTs)
 - **VAD runs server-side** in Python (cross-platform simplicity; on-device VAD would require separate CoreML and TFLite native modules per platform — defer to v2)
 - **Android file upload:** Android's `ACTION_SEND` intent system lets the main activity receive audio files directly — no separate extension process. Register `audio/*` MIME type in the manifest and handle the incoming URI via `react-native-receive-sharing-intent`. Ships in Phase 4 alongside Polish.
@@ -48,7 +48,7 @@ flowchart TB
     POST1["POST /sessions<br/>↓ JWT verify ↓ usage gate"] --> VAD[silero-vad<br/>+ energy speaker<br/>classification]
     VAD --> WHISP[OpenAI Whisper API<br/>transcribe user segments]
     VAD --> PROS[ProsodyAnalyzer<br/>pitch / RMS / WPM<br/>librosa]
-    WHISP --> CL[Claude API<br/>claude-sonnet-4-6<br/>tool_use → DebriefCard]
+    WHISP --> CL[OpenAI Responses API<br/>gpt-4.1<br/>structured output → DebriefCard]
     PROS --> CL
     CL --> WRITE[(Supabase Postgres<br/>debriefs +<br/>debrief_usage++)]
   end
@@ -58,7 +58,7 @@ flowchart TB
   SQL --> DV[DebriefScreen<br/>HistoryScreen]
 ```
 
-The diagram shows four things that matter for review: (1) on-device the app only captures audio to a local file — no VAD, no streaming; (2) the backend does all heavy lifting in one synchronous pipeline (VAD → Whisper → prosody → Claude → DB write) per session; (3) iOS-only trigger surfaces communicate through App Group IPC into the RN runtime via a custom native module; (4) Android supports uploading existing voice recording files via the system share sheet (`ACTION_SEND` intent) — no separate extension process needed, the main activity handles it directly via `react-native-receive-sharing-intent`.
+The diagram shows four things that matter for review: (1) on-device the app only captures audio to a local file — no VAD, no streaming; (2) the backend does all heavy lifting in one synchronous pipeline (VAD → transcription → prosody → OpenAI coaching → DB write) per session; (3) iOS-only trigger surfaces communicate through App Group IPC into the RN runtime via a custom native module; (4) audio import uses `expo-document-picker` on both platforms and the same upload endpoint as live recordings.
 
 ---
 
@@ -72,10 +72,10 @@ The diagram shows four things that matter for review: (1) on-device the app only
 | Networking | `fetch` + `@tanstack/react-query` |
 | Auth | Supabase Auth (`@supabase/supabase-js`) — Sign in with Apple + Google |
 | Backend | FastAPI (Python 3.11+) |
-| Backend deps | `fastapi`, `uvicorn`, `supabase` (py), `openai`, `anthropic`, `silero-vad`, `librosa`, `numpy`, `pydantic` |
+| Backend deps | `fastapi`, `uvicorn`, `supabase` (py), `openai`, `silero-vad`, `librosa`, `numpy`, `pydantic` |
 | VAD | `silero-vad` (Python package) — runs server-side per request |
 | Transcription | OpenAI Whisper API |
-| Analysis | Anthropic Claude API, `claude-sonnet-4-6` with `tool_use` for structured output |
+| Analysis | OpenAI Responses API, `gpt-4.1` with Pydantic structured output |
 | Storage | Supabase Postgres (mirror of all debriefs + usage counters) |
 | Backend hosting | Render / Fly.io / Railway (single web service, autoscaling) |
 
@@ -133,12 +133,12 @@ Monorepo with the app and backend side-by-side:
 │   │   │   ├── sessions.py             — POST /sessions
 │   │   │   └── debriefs.py             — GET /debriefs
 │   │   ├── pipeline/
-│   │   │   ├── coordinator.py          — chains vad → whisper → prosody → claude
+│   │   │   ├── coordinator.py          — chains vad → transcription → prosody → coaching
 │   │   │   ├── vad.py                  — silero-vad wrapper + segment extraction
 │   │   │   ├── speaker.py              — energy-based user/other heuristic
 │   │   │   ├── prosody.py              — librosa pitch/energy/WPM
 │   │   │   ├── whisper.py              — OpenAI API client
-│   │   │   └── claude.py               — Anthropic API client (tool_use)
+│   │   │   └── coaching.py             — OpenAI structured debrief client
 │   │   ├── db/
 │   │   │   ├── supabase.py             — service-role Supabase client
 │   │   │   ├── usage.py                — monthly count read/increment
@@ -167,7 +167,7 @@ All endpoints require a valid Supabase JWT (verified by `app/auth.py` dependency
   2. `speaker.classify(segments)` → label each as user/other (energy threshold tuned on top-quartile = user)
   3. `whisper.transcribe(concat_user_segments_with_pads)` → transcript
   4. `prosody.analyze(user_pcm)` → pitch/energy/WPM
-  5. `claude.analyze(transcript, prosody, duration)` → `DebriefCard`
+  5. `coaching.analyze(transcript, stats)` → structured coaching fields
   6. Insert into `debriefs` table; increment `debrief_usage`
 - Returns: `{ debrief: DebriefCard, usedThisMonth: int, remaining: int }`
 
@@ -211,7 +211,7 @@ Each phase produces something runnable.
 - `backend/app/pipeline/speaker.py` — energy-percentile heuristic: top quartile = user, rest = other (document limitation: requires user to be closer to mic)
 - `backend/app/pipeline/whisper.py` — OpenAI Whisper client; concat user segments with 200ms silence pads
 - `backend/app/pipeline/prosody.py` — librosa pitch detection (yin), RMS, estimated WPM from transcript / user duration
-- `backend/app/pipeline/claude.py` — Anthropic SDK call with `tool_use` for structured `DebriefCard` output (2-retry on schema mismatch). Implement prompt caching on the system prompt + tool definition.
+- `backend/app/pipeline/coaching.py` — OpenAI `responses.parse` with the `CoachingOutput` schema (two retries on invalid output). Keep stable instructions and schema before varying conversation content for automatic prompt caching.
 - `backend/app/pipeline/coordinator.py` — orchestrates the chain
 - `backend/app/routes/sessions.py` — `POST /sessions` wires multipart upload → pipeline → DB write → response
 - `backend/tests/test_pipeline.py` — fixture WAV through coordinator, assert DebriefCard JSON shape
@@ -226,7 +226,7 @@ Each phase produces something runnable.
 - **Validate end-to-end:** fresh install → sign in → record 2 min → see debrief card → kill app → relaunch → card still in history → check Supabase dashboard for matching rows.
 
 ### Phase 4 — Polish + Beta (Days 15–18)
-- Error handling: network failures with retry; Whisper file size limit (chunk if >25MB); Claude decode retry already in Phase 2
+- Error handling: network failures with retry; transcription file size limit (use the original compressed recording when possible, otherwise return 413); structured debrief retries already in Phase 2
 - iOS audio-session interruption (phone call) — pause + resume or surface recoverable error
 - `OnboardingScreen` — value prop + legal consent gate before first recording
 - App icon, launch screen, App Store / Play Store screenshots
@@ -308,7 +308,7 @@ Pydantic models serialize to `snake_case` in the API; the RN client converts to 
 
 2. **iOS background audio** — needs `UIBackgroundModes: ["audio"]` in `app.config.ts` and an active `AVAudioSession` category. Verify recording continues when phone is locked and in pocket.
 
-3. **Claude structured output** — use `tool_use` (not free-text JSON parsing) to guarantee shape. Add 2-retry loop before surfacing error. Validate the prompt + tool schema produce sensible debriefs against 3–5 fixture WAVs before any UI work in Phase 3.
+3. **OpenAI structured output** — use `responses.parse` with the `CoachingOutput` Pydantic schema. Keep two retries for invalid output before surfacing an error. Validate coaching quality against representative recordings before release.
 
 4. **Whisper size limit (25MB)** — a 2-minute WAV at 16kHz mono is ~3.8MB, so MVP is safe. If allowing longer sessions, chunk on the backend at 20-min boundaries.
 
@@ -320,7 +320,7 @@ Pydantic models serialize to `snake_case` in the API; the RN client converts to 
 
 8. **Supabase JWT verification in Python** — use Supabase's JWKS endpoint with `python-jose`. Cache the JWKS for the configured TTL; do not fetch on every request.
 
-9. **Prompt caching on Claude calls** — the system prompt + tool definition are stable across requests. Mark them as `cache_control: ephemeral` so they hit cache after the first call. Track cache hit rate from `usage.cache_read_input_tokens` in Anthropic SDK responses.
+9. **OpenAI prompt caching** — keep stable instructions and schema before varying conversation content. Eligible prompt prefixes are cached automatically. Transcription, debriefs, and Reflect all use the same `OPENAI_API_KEY`.
 
 ---
 
@@ -342,8 +342,7 @@ Pydantic models serialize to `snake_case` in the API; the RN client converts to 
 | `pydantic`, `pydantic-settings` | Models + env config |
 | `supabase` | DB client + storage |
 | `python-jose[cryptography]` | JWT verification against Supabase JWKS |
-| `openai` | Whisper |
-| `anthropic` | Claude (`claude-sonnet-4-6` with `tool_use` + prompt caching) |
+| `openai` | Transcription, structured debrief coaching, and Reflect chat |
 | `silero-vad` | Server-side VAD |
 | `librosa`, `numpy`, `soundfile` | Prosody analysis |
 | `pytest`, `httpx` | Tests |

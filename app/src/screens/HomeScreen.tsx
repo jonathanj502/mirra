@@ -1,6 +1,6 @@
 // Home / Record screen.
 import React, { useEffect, useRef } from 'react';
-import { View, Pressable, StyleSheet, Animated, Easing, ActivityIndicator } from 'react-native';
+import { View, Pressable, StyleSheet, Animated, Easing, ActivityIndicator, Alert, Platform } from 'react-native';
 import Svg, { Defs, RadialGradient, Stop, Circle, Rect, Path } from 'react-native-svg';
 import { useRouter } from 'expo-router';
 import { Screen } from '@/components/Screen';
@@ -46,24 +46,26 @@ function RecordButton({
   size = 172,
   recording,
   loading,
+  disabled,
   onPress,
 }: {
   size?: number;
   recording: boolean;
   loading: boolean;
+  disabled?: boolean;
   onPress: () => void;
 }) {
   return (
     <Pressable
       onPress={onPress}
-      disabled={loading}
+      disabled={loading || disabled}
       style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}
       accessibilityRole="button"
       accessibilityLabel={recording ? 'Stop recording' : 'Start recording'}
     >
       <BreathingRing inset={-28} delay={0} />
       <BreathingRing inset={-14} delay={600} />
-      <View style={[styles.recordBtn, recording && styles.recordBtnActive, loading && styles.recordBtnDisabled, { width: size, height: size, borderRadius: size / 2 }]}>
+      <View style={[styles.recordBtn, recording && styles.recordBtnActive, (loading || disabled) && styles.recordBtnDisabled, { width: size, height: size, borderRadius: size / 2 }]}>
         <Svg width={size} height={size} style={{ position: 'absolute' }}>
           <Defs>
             <RadialGradient id="rec" cx="35%" cy="30%" r="75%">
@@ -130,17 +132,18 @@ function ImportButton({ onPress, loading, disabled }: { onPress: () => void; loa
 export function HomeScreen() {
   const router = useRouter();
   const { user } = useAuth();
-  const { listItems, loading, error, setDebriefs } = useDebriefs();
-  const { importAudio, importing } = useImportAudio();
-  const { isRecording, isUploadingRecording, recordingSeconds, toggleRecording } = useRecordAudio();
-  const busy = importing || isRecording || isUploadingRecording;
+  const { listItems, loading, error, setDebriefs, refresh } = useDebriefs();
+  const { importAudio, importing, error: importError } = useImportAudio();
+  const { isRecording, isUploadingRecording, isStartingRecording, hasPendingRecording, recordingSeconds,
+    toggleRecording, discardRecording, error: recordingError } = useRecordAudio();
+  const busy = importing || isRecording || isUploadingRecording || isStartingRecording || hasPendingRecording;
   const today = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
   const name = displayName(user?.email, user?.user_metadata?.username);
   const heroHint = isUploadingRecording
     ? 'Analyzing...'
     : isRecording
       ? `${Math.floor(recordingSeconds / 60)}:${String(Math.floor(recordingSeconds % 60)).padStart(2, '0')} · tap to stop`
-      : 'Tap to record';
+      : isStartingRecording ? 'Starting microphone…' : hasPendingRecording ? 'Recording waiting to upload' : 'Tap to record';
   const greeting = listItems.length > 0
     ? `${listItems.length} ${listItems.length === 1 ? 'conversation' : 'conversations'} ready.`
     : '';
@@ -155,8 +158,20 @@ export function HomeScreen() {
     if (debrief) setDebriefs((items) => [debrief, ...items.filter((item) => item.id !== debrief.id)]);
   }
 
+  function confirmDiscard() {
+    const message = 'This recording has not been saved to Mirra. Discard it?';
+    if (Platform.OS === 'web') {
+      if (window.confirm(message)) discardRecording();
+    } else {
+      Alert.alert('Discard recording?', message, [
+        { text: 'Keep recording', style: 'cancel' },
+        { text: 'Discard', style: 'destructive', onPress: discardRecording },
+      ]);
+    }
+  }
+
   return (
-    <Screen topOffset={56}>
+    <Screen topOffset={56} error={error} onRefresh={refresh} refreshing={loading}>
       {/* Header */}
       <View style={styles.header}>
         <View style={{ flex: 1, minWidth: 0 }}>
@@ -172,8 +187,22 @@ export function HomeScreen() {
 
       {/* Record hero */}
       <View style={styles.hero}>
-        <RecordButton size={172} recording={isRecording} loading={isUploadingRecording} onPress={handleRecord} />
+        <RecordButton size={172} recording={isRecording} loading={isUploadingRecording || isStartingRecording}
+          disabled={importing || hasPendingRecording} onPress={handleRecord} />
         <Body style={styles.heroHint}>{heroHint}</Body>
+        {recordingError ? <Body accessibilityRole="alert" style={styles.audioError}>{recordingError}</Body> : null}
+        {importError ? <Body accessibilityRole="alert" style={styles.audioError}>{importError}</Body> : null}
+        {hasPendingRecording && !isUploadingRecording ? (
+          <View style={styles.pending}>
+            <Body style={styles.pendingHint}>Keep Mirra open until your recording uploads.</Body>
+            <Pressable accessibilityRole="button" onPress={handleRecord} style={styles.recoveryButton}>
+              <Body>Retry upload</Body>
+            </Pressable>
+            <Pressable accessibilityRole="button" onPress={confirmDiscard} style={styles.recoveryButton}>
+              <Body>Discard recording</Body>
+            </Pressable>
+          </View>
+        ) : null}
       </View>
 
       {/* Recent */}
@@ -181,7 +210,7 @@ export function HomeScreen() {
         <View style={styles.recentHead}>
           <Eyebrow>Recent conversations</Eyebrow>
           <Body style={styles.recentCount}>
-            {loading ? 'Loading' : `${listItems.length} saved`}
+            {loading ? 'Loading' : error ? 'Unavailable' : `${listItems.length} saved`}
           </Body>
         </View>
         <View style={{ marginTop: 6 }}>
@@ -196,7 +225,6 @@ export function HomeScreen() {
           {!loading && !error && listItems.length === 0 && (
             <SerifItalic style={styles.emptyRecent}>No conversations yet.</SerifItalic>
           )}
-          {error && <Body style={styles.errorText}>{error}</Body>}
         </View>
       </View>
     </Screen>
@@ -233,5 +261,8 @@ const styles = StyleSheet.create({
   recentMeta: { fontSize: 11.5, color: colors.muted, marginTop: 4, letterSpacing: 0.2 },
   recentNote: { fontSize: 13, color: colors.muted },
   emptyRecent: { textAlign: 'center', paddingVertical: 34, color: colors.muted, fontSize: 13, lineHeight: 20 },
-  errorText: { textAlign: 'center', paddingVertical: 30, color: colors.coral, fontSize: 13, lineHeight: 19 },
+  audioError: { textAlign: 'center', paddingHorizontal: 24, color: colors.coral, fontSize: 13, lineHeight: 19 },
+  pending: { padding: 16, marginHorizontal: 24, borderRadius: 16, backgroundColor: colors.card, alignSelf: 'stretch' },
+  pendingHint: { fontSize: 13, lineHeight: 19, textAlign: 'center', color: colors.muted },
+  recoveryButton: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
 });

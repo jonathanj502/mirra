@@ -1,9 +1,12 @@
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
+from openai import OpenAI
 
 from app.auth import verify_token
 from app.dashboard import build_profile_summary, build_progress, conversation_item, fallback_reflection, talk_listen_percent
@@ -77,13 +80,25 @@ class _Result:
     data: object
 
 
-class _HttpResponse:
-    def __init__(self, status_code: int, payload: dict):
-        self.status_code = status_code
-        self.payload = payload
+@pytest.fixture
+def reflection_api(monkeypatch):
+    monkeypatch.setattr("app.reflection.settings.openai_api_key", "test-openai-key")
+    response = httpx.Response(200, json={
+        "id": "resp_test", "object": "response", "created_at": 1,
+        "model": "gpt-4.1-mini", "status": "completed", "parallel_tool_calls": True,
+        "tool_choice": "auto", "tools": [],
+        "output": [{"id": "msg_test", "type": "message", "role": "assistant", "status": "completed",
+                    "content": [{"type": "output_text", "text": "A focused reply.", "annotations": []}]}],
+    })
+    handler = MagicMock(return_value=response)
 
-    def json(self):
-        return self.payload
+    def client(**kwargs):
+        assert kwargs["api_key"] == "test-openai-key"
+        assert kwargs["max_retries"] == 2
+        return OpenAI(**kwargs, http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    monkeypatch.setattr("app.reflection.OpenAI", client)
+    return handler
 
 
 class _Table:
@@ -243,107 +258,75 @@ def test_progress_endpoint():
     assert body["weeks"][0]["conversations"][0]["id"] == ROW_2["id"]
 
 
-def test_reflect_fallback_without_model(monkeypatch):
-    monkeypatch.setattr("app.open_model.settings.open_model_api_key", "")
-    monkeypatch.setattr("app.open_model.settings.hf_token", "")
-    monkeypatch.setattr("app.open_model.settings.huggingface_api_key", "")
-    monkeypatch.setattr("app.open_model.settings.open_model_allow_anonymous", False)
+def test_reflect_fallback_without_model(monkeypatch, reflection_api):
+    monkeypatch.setattr("app.reflection.settings.openai_api_key", "")
     r = _client([ROW_1]).post("/reflect", json={"conversation_id": ROW_1["id"], "prompt": "How were my questions?"})
     assert r.status_code == 200
     assert r.json()["used_model"] is False
     assert "9 questions" in r.json()["reply"]
+    reflection_api.assert_not_called()
 
 
-def test_reflect_uses_open_model_when_configured(monkeypatch):
-    monkeypatch.setattr("app.open_model.settings.open_model_api_key", "hf-test")
-    monkeypatch.setattr("app.open_model.settings.hf_token", "")
-    monkeypatch.setattr("app.open_model.settings.huggingface_api_key", "")
-    monkeypatch.setattr("app.open_model.settings.open_model_name", "Qwen/Qwen2.5-7B-Instruct-1M:fastest")
-    monkeypatch.setattr("app.open_model.settings.open_model_allow_anonymous", False)
-    response = _HttpResponse(
-        200,
-        {"choices": [{"message": {"content": "An open model reply."}}]},
+def test_reflect_uses_openai_when_configured(reflection_api):
+    r = _client([ROW_1]).post(
+        "/reflect",
+        json={
+            "conversation_id": ROW_1["id"],
+            "prompt": "What worked?",
+            "messages": [{"role": "user", "content": "Can you help me reflect?"}],
+        },
     )
-    with patch("app.open_model.httpx.post", return_value=response) as post:
-        r = _client([ROW_1]).post(
-            "/reflect",
-            json={
-                "conversation_id": ROW_1["id"],
-                "prompt": "What worked?",
-                "messages": [{"role": "user", "content": "Can you help me reflect?"}],
-            },
-        )
 
     assert r.status_code == 200
-    assert r.json() == {"reply": "An open model reply.", "used_model": True}
-    _args, kwargs = post.call_args
-    assert kwargs["headers"]["Authorization"] == "Bearer hf-test"
-    assert kwargs["json"]["model"] == "Qwen/Qwen2.5-7B-Instruct-1M:fastest"
-    assert kwargs["json"]["messages"][0]["role"] == "system"
-    assert "Coffee with Maya" in kwargs["json"]["messages"][-1]["content"]
-    assert "Honestly, what was that like?" not in kwargs["json"]["messages"][-1]["content"]
+    assert r.json() == {"reply": "A focused reply.", "used_model": True}
+    reflection_api.assert_called_once()
+    request = reflection_api.call_args.args[0]
+    assert str(request.url) == "https://api.openai.com/v1/responses"
+    assert request.headers["Authorization"] == "Bearer test-openai-key"
+    body = json.loads(request.content)
+    assert body["model"] == "gpt-4.1-mini"
+    assert body["store"] is False
+    assert body["input"][0]["role"] == "system"
+    assert body["input"][1]["content"] == "Can you help me reflect?"
+    assert "Coffee with Maya" in body["input"][-1]["content"]
+    assert "Honestly, what was that like?" not in body["input"][-1]["content"]
 
 
-def test_reflect_uses_saved_coaching_and_privacy_settings(monkeypatch):
-    monkeypatch.setattr("app.open_model.settings.open_model_api_key", "hf-test")
-    monkeypatch.setattr("app.open_model.settings.hf_token", "")
-    monkeypatch.setattr("app.open_model.settings.huggingface_api_key", "")
-    monkeypatch.setattr("app.open_model.settings.open_model_allow_anonymous", False)
-    response = _HttpResponse(
-        200,
-        {"choices": [{"message": {"content": "A focused reply."}}]},
-    )
+def test_reflect_uses_saved_coaching_and_privacy_settings(reflection_api):
     settings_row = {
         "coaching_tone": "direct_practical",
         "coaching_depth": "quick",
         "include_transcript_in_reflect": True,
     }
-    with patch("app.open_model.httpx.post", return_value=response) as post:
-        r = _client([ROW_1], settings_row=settings_row).post(
-            "/reflect",
-            json={"conversation_id": ROW_1["id"], "prompt": "What should I do next?"},
-        )
-
-    assert r.status_code == 200
-    _args, kwargs = post.call_args
-    assert "direct, practical" in kwargs["json"]["messages"][0]["content"]
-    assert "one short sentence" in kwargs["json"]["messages"][0]["content"]
-    assert "Honestly, what was that like?" in kwargs["json"]["messages"][-1]["content"]
-
-
-def test_reflect_uses_anonymous_open_model_without_key(monkeypatch):
-    monkeypatch.setattr("app.open_model.settings.open_model_api_key", "")
-    monkeypatch.setattr("app.open_model.settings.hf_token", "")
-    monkeypatch.setattr("app.open_model.settings.huggingface_api_key", "")
-    monkeypatch.setattr("app.open_model.settings.open_model_allow_anonymous", True)
-    monkeypatch.setattr("app.open_model.settings.anonymous_open_model_base_url", "https://text.pollinations.ai")
-    monkeypatch.setattr("app.open_model.settings.anonymous_open_model_name", "openai-fast")
-    response = _HttpResponse(
-        200,
-        {"choices": [{"message": {"content": "A keyless open model reply."}}]},
+    r = _client([ROW_1], settings_row=settings_row).post(
+        "/reflect",
+        json={"conversation_id": ROW_1["id"], "prompt": "What should I do next?"},
     )
-    with patch("app.open_model.httpx.post", return_value=response) as post:
-        r = _client([ROW_1]).post("/reflect", json={"conversation_id": ROW_1["id"], "prompt": "What worked?"})
 
     assert r.status_code == 200
-    assert r.json() == {"reply": "A keyless open model reply.", "used_model": True}
-    args, kwargs = post.call_args
-    assert args[0] == "https://text.pollinations.ai/openai"
-    assert "Authorization" not in kwargs["headers"]
-    assert kwargs["json"]["model"] == "openai-fast"
+    body = json.loads(reflection_api.call_args.args[0].content)
+    assert "direct, practical" in body["input"][0]["content"]
+    assert "one short sentence" in body["input"][0]["content"]
+    assert "Honestly, what was that like?" in body["input"][-1]["content"]
 
 
-def test_reflect_falls_back_when_open_model_errors(monkeypatch):
-    monkeypatch.setattr("app.open_model.settings.open_model_api_key", "hf-test")
-    monkeypatch.setattr("app.open_model.settings.hf_token", "")
-    monkeypatch.setattr("app.open_model.settings.huggingface_api_key", "")
-    monkeypatch.setattr("app.open_model.settings.open_model_allow_anonymous", False)
-    with patch("app.open_model.httpx.post", return_value=_HttpResponse(500, {})):
-        r = _client([ROW_1]).post("/reflect", json={"conversation_id": ROW_1["id"], "prompt": "How were my questions?"})
+@pytest.mark.parametrize("failure", ["server_error", "empty", "incomplete"])
+def test_reflect_falls_back_when_openai_cannot_reply(reflection_api, failure):
+    if failure == "server_error":
+        reflection_api.return_value = httpx.Response(500, json={"error": {"message": "Unavailable"}})
+    else:
+        body = reflection_api.return_value.json()
+        if failure == "empty":
+            body["output"] = []
+        else:
+            body["status"] = "incomplete"
+        reflection_api.return_value = httpx.Response(200, json=body)
+    r = _client([ROW_1]).post("/reflect", json={"conversation_id": ROW_1["id"], "prompt": "How were my questions?"})
 
     assert r.status_code == 200
     assert r.json()["used_model"] is False
     assert "9 questions" in r.json()["reply"]
+    assert reflection_api.call_count == (3 if failure == "server_error" else 1)
 
 
 def test_fallback_reflection_handles_empty_context():

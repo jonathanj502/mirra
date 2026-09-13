@@ -6,7 +6,7 @@ import librosa
 import numpy as np
 import soundfile as sf
 
-from app.pipeline.claude import analyze
+from app.pipeline.coaching import analyze
 from app.pipeline.prosody import compute_stats
 from app.pipeline.speaker import audio_segments, select_user_speaker
 from app.pipeline.transcription import TRANSCRIPTION_MODEL, transcribe

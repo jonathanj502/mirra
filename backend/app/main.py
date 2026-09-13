@@ -26,7 +26,7 @@ from app.models.billing import BillingSessionResponse, BillingStatus, StripeWebh
 from app.models.dashboard import ProfileSummary, ProgressResponse, ReflectRequest, ReflectResponse
 from app.models.debrief import Debrief, SessionResponse
 from app.models.settings import UserSettings, UserSettingsUpdate
-from app.open_model import generate_open_model_reflection
+from app.reflection import generate_reflection
 from app.pipeline import coordinator
 from app.pipeline.transcription import TranscriptionInputTooLarge
 from app.usage import check_and_increment, get_usage, release
@@ -389,7 +389,7 @@ def reflect(
         rows = _fetch_debrief_rows(db, user_id, limit=1)
 
     user_settings = fetch_user_settings(db, user_id)
-    text = generate_open_model_reflection(
+    text = generate_reflection(
         rows,
         payload,
         coaching_tone=user_settings.coaching_tone,

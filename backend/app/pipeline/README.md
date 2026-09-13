@@ -2,7 +2,10 @@
 
 The default transcription model is `gpt-4o-transcribe-diarize`, using the existing
 `OPENAI_API_KEY` in `backend/.env`. The backend requires OpenAI Python SDK 2.44.0
-or newer; the lockfile already resolves that version.
+or newer; the lockfile already resolves that version. The same key also powers
+debrief coaching (`gpt-4.1`) and Reflect chat (`gpt-4.1-mini`). Optional model
+overrides are `OPENAI_DEBRIEF_MODEL` and `OPENAI_REFLECT_MODEL`. Supabase still
+requires its own server-side credential for database access.
 
 1. Decode the recording and prepare mono 16 kHz audio for acoustic analysis.
    M4A/AAC decoding uses librosa's fallback and needs a supported decoder such as
@@ -22,8 +25,12 @@ or newer; the lockfile already resolves that version.
    counts are only a heuristic for overlap initiated by the selected speaker;
    rapid responses after another speaker finishes are not counted.
 6. Send the complete speaker-labeled transcript and selected-speaker statistics
-   to Claude. Its coaching instructions explicitly describe identity and timing
-   uncertainty. Empty speech returns a neutral debrief without calling Claude.
+   to OpenAI using `responses.parse` and the `CoachingOutput` Pydantic schema.
+   Coaching instructions explicitly describe identity and timing uncertainty.
+   Invalid or missing output gets two retries before failing and refunding usage;
+   the SDK handles transient API errors with two retries. Empty speech returns a
+   neutral debrief without calling the coaching model. Text requests set
+   `store=False`; Reflect includes transcripts only when enabled by the user.
 
 The saved `transcript` now contains the full labeled conversation, for example
 `Speaker A: Hello.`. `stats.metadata.diarization` records the model, speaker count,
@@ -48,3 +55,5 @@ Run validation from `backend`:
 
 Request options and limits follow the
 [OpenAI file-transcription documentation](https://developers.openai.com/api/docs/guides/speech-to-text#speaker-diarization).
+
+Coaching uses [OpenAI structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs).

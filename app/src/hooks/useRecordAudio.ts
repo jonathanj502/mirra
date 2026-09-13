@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { Alert, NativeModules, Platform } from 'react-native';
+import { NativeModules, Platform } from 'react-native';
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 import { friendlyErrorMessage } from '@/api/http';
 import { uploadSession } from '@/api/client';
@@ -29,21 +29,33 @@ export function useRecordAudio() {
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordingMs, setRecordingMs] = useState(0);
   const [uploading, setUploading] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // ponytail: one pending clip survives tab switches, not app restarts; use a persisted outbox for restart recovery.
+  const [pendingRecording, setPendingRecording] = useState<{
+    audio: { uri: string; name: string; type: string };
+    seconds: number;
+  } | null>(null);
+  const operationInProgress = useRef(false);
   const startedAt = useRef<number | null>(null);
   // Null until createAsync fully resolves, so mid-creation status updates
   // (canRecord && !isRecording) can't trigger a spurious resume; cleared again on stop.
   const liveRecording = useRef<Audio.Recording | null>(null);
 
   const startRecording = useCallback(async () => {
+    if (operationInProgress.current || recording || pendingRecording) return;
+    setError(null);
     if (!accessToken) {
-      Alert.alert('Sign in required', 'Please sign in before recording a conversation.');
+      setError('Please sign in before recording a conversation.');
       return;
     }
 
+    operationInProgress.current = true;
+    setStarting(true);
     try {
       const permission = await Audio.requestPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Microphone needed', 'Allow microphone access to record a conversation.');
+        setError('Allow microphone access to record a conversation.');
         return;
       }
 
@@ -76,58 +88,78 @@ export function useRecordAudio() {
       setRecording(created.recording);
     } catch {
       setForegroundService(false);
-      Alert.alert('Recording failed', 'Could not start the microphone recording.');
+      setError('Could not start the microphone recording.');
+    } finally {
+      operationInProgress.current = false;
+      setStarting(false);
     }
-  }, [accessToken]);
+  }, [accessToken, recording, pendingRecording]);
 
   const stopRecording = useCallback(async (): Promise<DebriefCard | null> => {
-    if (!recording || !accessToken) return null;
+    if (operationInProgress.current || (!recording && !pendingRecording) || !accessToken) return null;
 
+    operationInProgress.current = true;
     setUploading(true);
-    const current = recording;
-    setRecording(null);
-    liveRecording.current = null;
+    setError(null);
     try {
-      await current.stopAndUnloadAsync();
-      const uri = current.getURI();
-      if (!uri) throw new Error('Missing recording URI');
+      let pending = pendingRecording;
+      if (!pending && recording) {
+        liveRecording.current = null;
+        await recording.stopAndUnloadAsync();
+        setRecording(null);
+        const uri = recording.getURI();
+        if (!uri) throw new Error('Missing recording URI');
 
-      const elapsedSeconds =
-        recordingMs > 0
-          ? recordingMs / 1000
-          : startedAt.current
-            ? (Date.now() - startedAt.current) / 1000
-            : 0;
-      const name = recordingName();
+        pending = {
+          audio: { uri, name: recordingName(), type: recordingMimeType() },
+          seconds: recordingMs > 0 ? recordingMs / 1000 : startedAt.current ? (Date.now() - startedAt.current) / 1000 : 0,
+        };
+        setPendingRecording(pending);
+        setForegroundService(false);
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
+      }
+      if (!pending) return null;
       const response = await uploadSession(
         accessToken,
-        { uri, name, type: recordingMimeType() },
-        { title: 'Recorded conversation', clientDurationSeconds: elapsedSeconds }
+        pending.audio,
+        { title: 'Recorded conversation', clientDurationSeconds: pending.seconds }
       );
+      setPendingRecording(null);
       return response.debrief;
     } catch (err) {
       const message = friendlyErrorMessage(
         err,
-        'Could not analyze that recording. Try a shorter recording or import an audio file.'
+        'Could not analyze that recording. Please try uploading it again.'
       );
-      Alert.alert('Recording failed', message);
+      setError(message);
       return null;
     } finally {
       setForegroundService(false);
       setRecordingMs(0);
       startedAt.current = null;
-      setUploading(false);
       await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
+      setUploading(false);
+      operationInProgress.current = false;
     }
-  }, [accessToken, recording, recordingMs]);
+  }, [accessToken, recording, recordingMs, pendingRecording]);
+
+  const discardRecording = useCallback(() => {
+    if (operationInProgress.current || recording) return;
+    setPendingRecording(null);
+    setError(null);
+  }, [recording]);
 
   const toggleRecording = useCallback(async () => {
-    return recording ? stopRecording() : startRecording().then(() => null);
-  }, [recording, startRecording, stopRecording]);
+    return recording || pendingRecording ? stopRecording() : startRecording().then(() => null);
+  }, [recording, pendingRecording, startRecording, stopRecording]);
 
   return {
     isRecording: !!recording,
     isUploadingRecording: uploading,
+    isStartingRecording: starting,
+    hasPendingRecording: !!pendingRecording,
+    error,
+    discardRecording,
     recordingSeconds: recordingMs / 1000,
     startRecording,
     stopRecording,

@@ -87,10 +87,12 @@ function StatPill({ value, label, accent }: { value: string; label: string; acce
   );
 }
 
-function SettingRow({ label, hint, isLast, onPress }: { label: string; hint?: string; isLast?: boolean; onPress: () => void }) {
+function SettingRow({ label, hint, isLast, onPress, disabled }: { label: string; hint?: string; isLast?: boolean; onPress: () => void; disabled?: boolean }) {
   return (
     <Pressable
       onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
       style={({ pressed }) => [styles.settingRow, !isLast && styles.settingBorder, pressed && styles.settingPressed]}
     >
       <View style={{ flex: 1 }}>
@@ -517,7 +519,7 @@ function AccountMenu({
   error: string | null;
   onClose: () => void;
   onExport: () => void;
-  onBilling: () => void;
+  onBilling?: () => void;
   onHelp: () => void;
   onSignOut: () => void;
 }) {
@@ -544,12 +546,12 @@ function AccountMenu({
               loading={busy === 'export'}
               onPress={onExport}
             />
-            <AccountActionRow
+            {onBilling ? <AccountActionRow
               label="Manage plan"
               hint="Open billing or start Mirra Pro."
               loading={busy === 'billing'}
               onPress={onBilling}
-            />
+            /> : null}
             <AccountActionRow
               label="Help & feedback"
               hint="Contact, issue reports, and privacy questions."
@@ -577,9 +579,11 @@ function AccountMenu({
 
 export function ProfileScreen() {
   const { user, accessToken, signOut } = useAuth();
-  const { summary } = useProfileSummary();
-  const { settings, loading: settingsLoading, saving: settingsSaving, error: settingsError, updateSettings } = useUserSettings(accessToken);
-  const { billing, loading: billingLoading, opening: billingOpening, error: billingError, startCheckout, openPortal } = useBilling(accessToken);
+  const { summary, loading: summaryLoading, error: summaryError, refresh: refreshSummary } = useProfileSummary();
+  const { settings, loading: settingsLoading, saving: settingsSaving, error: settingsError, loadError: settingsLoadError,
+    refresh: refreshSettings, updateSettings } = useUserSettings(accessToken);
+  const { billing, loading: billingLoading, opening: billingOpening, error: billingError, loadError: billingLoadError,
+    refresh: refreshBilling, startCheckout, openPortal } = useBilling(accessToken);
   const [activePanel, setActivePanel] = useState<SettingsPanelId | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [accountBusy, setAccountBusy] = useState<AccountActionId | null>(null);
@@ -591,23 +595,27 @@ export function ProfileScreen() {
   const memberSince = user?.created_at
     ? new Date(user.created_at).toLocaleDateString(undefined, { month: 'short', year: '2-digit' })
     : 'Now';
-  const used = summary?.usedThisMonth ?? 0;
-  const remaining = summary?.remaining ?? 5;
-  const isPro = billing?.isPro ?? false;
-  const freeRemaining = billing?.freeConversationsRemaining ?? remaining;
+  const summaryReady = summary !== null && !summaryError;
+  const settingsReady = !settingsLoading && !settingsLoadError;
+  const settingsHint = settingsLoading ? 'Loading settings…' : 'Settings unavailable';
+  const billingReady = billing !== null && !billingLoadError;
+  const used = summaryReady ? String(summary.usedThisMonth) : '—';
+  const isPro = billingReady && billing.isPro;
+  const freeRemaining = billingReady ? billing.freeConversationsRemaining : null;
   const trialEnd = shortBillingDate(billing?.trialEnd);
   const periodEnd = shortBillingDate(billing?.currentPeriodEnd);
-  const planDescription = isPro
+  const planDescription = !billingReady ? 'Your plan is unavailable right now.' : isPro
     ? billing?.status === 'trialing' && trialEnd
       ? `Trial ends ${trialEnd} · unlimited conversations`
       : billing?.cancelAtPeriodEnd && periodEnd
         ? `Active until ${periodEnd} · unlimited conversations`
         : 'Unlimited conversations · full history · Pro metrics'
     : `${freeRemaining} conversations remaining this month · 7-day history · core metrics`;
-  const billingNote = billingError ?? (isPro ? 'Manage billing, invoices, and cancellation in Stripe' : 'Cancel anytime · No charge until day 15');
+  const billingNote = billingReady ? billingError ?? (isPro ? 'Manage billing, invoices, and cancellation in Stripe' : 'Cancel anytime · No charge until day 15') : null;
   const billingCta = billingOpening ? 'Opening…' : isPro ? 'Manage plan' : 'Try Pro free for 14 days';
-  const planLabel = isPro ? 'Mirra Pro' : 'Mirra Free';
+  const planLabel = !billingReady ? 'Plan unavailable' : isPro ? 'Mirra Pro' : 'Mirra Free';
   const handleBillingPress = async () => {
+    if (!billingReady) return;
     const url = isPro ? await openPortal() : await startCheckout();
     if (url) {
       void Linking.openURL(url);
@@ -630,6 +638,7 @@ export function ProfileScreen() {
     }
   };
   const handleAccountBilling = async () => {
+    if (!billingReady) return;
     setAccountBusy('billing');
     setAccountError(null);
     setAccountNote(null);
@@ -659,7 +668,8 @@ export function ProfileScreen() {
   };
 
   return (
-    <Screen topOffset={50}>
+    <Screen topOffset={50} error={summaryError || billingLoadError || settingsLoadError}
+      onRefresh={() => { void refreshSummary(); void refreshBilling(); void refreshSettings(); }} refreshing={summaryLoading || billingLoading || settingsLoading}>
       {/* Header */}
       <View style={styles.header}>
         <Eyebrow>You</Eyebrow>
@@ -692,8 +702,8 @@ export function ProfileScreen() {
 
       {/* Stats */}
       <View style={styles.stats}>
-        <StatPill value={String(summary?.totalConversations ?? 0)} label="Conversations" accent={colors.terracotta} />
-        <StatPill value={String(used)} label="Used this month" accent={colors.sage} />
+        <StatPill value={summaryReady ? String(summary.totalConversations) : '—'} label="Conversations" accent={colors.terracotta} />
+        <StatPill value={used} label="Used this month" accent={colors.sage} />
         <StatPill value={memberSince} label="Member since" accent={colors.lavender} />
       </View>
 
@@ -706,11 +716,11 @@ export function ProfileScreen() {
 
           <Body style={styles.subEyebrow}>Current plan</Body>
           <Serif style={styles.subPlan}>
-            Mirra <SerifItalic style={styles.subPlan}>{isPro ? 'Pro' : 'Free'}</SerifItalic>
+            {billingReady ? <>Mirra <SerifItalic style={styles.subPlan}>{isPro ? 'Pro' : 'Free'}</SerifItalic></> : billingLoading ? 'Loading plan…' : 'Plan unavailable'}
           </Serif>
           <Body style={styles.subDesc}>{billingLoading ? 'Checking plan…' : planDescription}</Body>
 
-          {!isPro && (
+          {billingReady && !isPro && (
             <>
               <View style={styles.subDivider} />
 
@@ -736,14 +746,15 @@ export function ProfileScreen() {
             </>
           )}
 
-          <Pressable
+          {billingReady ? <Pressable
             onPress={handleBillingPress}
-            disabled={billingOpening}
+            accessibilityRole="button"
+            disabled={billingOpening || billingLoading}
             style={({ pressed }) => [styles.tryBtn, pressed && styles.tryBtnPressed, billingOpening && styles.tryBtnDisabled]}
           >
             {billingOpening ? <ActivityIndicator size="small" color="#2A2520" /> : <Body style={styles.tryBtnText}>{billingCta}</Body>}
-          </Pressable>
-          <Body style={[styles.tryNote, billingError && styles.tryNoteError]}>{billingNote}</Body>
+          </Pressable> : null}
+          {billingNote ? <Body style={[styles.tryNote, billingError && styles.tryNoteError]}>{billingNote}</Body> : null}
         </LinearGradient>
       </View>
 
@@ -751,9 +762,9 @@ export function ProfileScreen() {
       <View style={styles.settingsWrap}>
         <Eyebrow style={{ marginBottom: 6 }}>Settings</Eyebrow>
         <Card style={styles.settingsCard}>
-          <SettingRow label="Notifications" hint={notificationsHint(settings)} onPress={() => setActivePanel('notifications')} />
-          <SettingRow label="Voice & privacy" hint={privacyHint(settings)} onPress={() => setActivePanel('privacy')} />
-          <SettingRow label="Coaching tone" hint={toneLabel[settings.coachingTone]} onPress={() => setActivePanel('coaching')} />
+          <SettingRow label="Notifications" disabled={!settingsReady} hint={settingsReady ? notificationsHint(settings) : settingsHint} onPress={() => setActivePanel('notifications')} />
+          <SettingRow label="Voice & privacy" disabled={!settingsReady} hint={settingsReady ? privacyHint(settings) : settingsHint} onPress={() => setActivePanel('privacy')} />
+          <SettingRow label="Coaching tone" disabled={!settingsReady} hint={settingsReady ? toneLabel[settings.coachingTone] : settingsHint} onPress={() => setActivePanel('coaching')} />
           <SettingRow label="Help & feedback" hint="Contact, issues, privacy" onPress={() => setActivePanel('help')} isLast />
         </Card>
       </View>
@@ -781,9 +792,9 @@ export function ProfileScreen() {
         onExport={() => {
           void handleAccountExport();
         }}
-        onBilling={() => {
+        onBilling={billingReady ? () => {
           void handleAccountBilling();
-        }}
+        } : undefined}
         onHelp={handleAccountHelp}
         onSignOut={() => {
           void handleAccountSignOut();
