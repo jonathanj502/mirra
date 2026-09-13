@@ -40,13 +40,15 @@ pytest tests/test_usage_gate.py
 
 All audio capture happens on-device via `expo-av` (`useRecordAudio.ts`), encoded as `.m4a` (`.webm` on web) — not WAV; no streaming or on-device VAD. On stop, the app uploads the file to `POST /sessions`. The backend accepts several container formats (`SUPPORTED_AUDIO_TYPES` in `main.py`: aac, mp4/m4a, mpeg, ogg, wav, webm) and decodes with `soundfile`, falling back to `librosa.load` for formats it can't parse (`coordinator.py`). The backend runs a synchronous pipeline in order:
 
-1. `pipeline/vad.py` — Silero VAD extracts speech segments with timestamps and energy levels
-2. `pipeline/speaker.py` — Adaptive energy-clustering heuristic (2-means over segment log-energy, not a fixed percentile): splits segments into a loud and a soft group and keeps the louder group as the user. Backs off and keeps everything if the two groups aren't well-separated (single-speaker guard). **User segments only** are passed forward; other-party audio is discarded.
-3. `pipeline/whisper.py` — Concatenates user segments with 200ms silence pads → OpenAI Whisper API → transcript
-4. `pipeline/prosody.py` — librosa: pitch (yin), RMS energy, WPM from transcript/duration
-5. `pipeline/claude.py` — Anthropic `claude-sonnet-4-6` with `tool_use` for structured `DebriefCard` output. 2-retry on schema mismatch. System prompt + tool definition use `cache_control: ephemeral` (prompt caching).
-6. `pipeline/coordinator.py` — orchestrates steps 1–5
-7. Writes to Supabase `debriefs` table, increments `debrief_usage`
+1. `pipeline/vad.py` — Silero VAD checks whether any speech is present; it does not filter the audio sent to transcription.
+2. `pipeline/transcription.py` — Sends the complete recording to `gpt-4o-transcribe-diarize` with `diarized_json` output and automatic server chunking. Speaker labels and timestamps refer to the original timeline.
+3. `pipeline/speaker.py` — Merges overlapping intervals of the same speaker and estimates the user as the speaker with the highest duration-weighted RMS. Keeps every turn with that label, including quieter turns. This remains an unconfirmed microphone-placement assumption.
+4. `pipeline/prosody.py` — Computes acoustic, word, question, filler, and speaking-rate statistics for the selected speaker. Other-speaker labels supply comparison durations. Interruption counts estimate overlap initiated by the user.
+5. `pipeline/claude.py` — Sends the full labeled conversation and selected-speaker stats to Anthropic `claude-sonnet-4-6` with `tool_use` for structured `DebriefCard` output. The prompt explains identity and timing uncertainty. Retains the 2-retry loop and `cache_control: ephemeral`.
+6. `pipeline/coordinator.py` — Orchestrates these stages; returns a neutral debrief without calling Claude when no speech is found.
+7. `POST /sessions` reserves free usage before processing, saves the debrief and diarization metadata, and refunds failed processing. The full labeled transcript is stored only when transcript saving is enabled.
+
+See `backend/app/pipeline/README.md` for request limits, timing caveats, and validation.
 
 ### Auth & JWT
 
@@ -91,9 +93,9 @@ Note: the original plan called for `react-native-receive-sharing-intent` handlin
 
 - **Claude structured output** — always use `tool_use`, never free-text JSON parsing. The 2-retry loop in `claude.py` is mandatory before surfacing an error to the user.
 
-- **Speaker classification accuracy** — the energy heuristic requires the user to be consistently closer to the mic. Document this constraint in onboarding. The 2-means split in `speaker.py` was kept deliberately over a simpler max-gap split: max-gap picks the single widest adjacent gap in sorted energy values, so one loud transient VAD segment (a laugh, a door, a mic bump) can hijack the split point and discard nearly all real user audio for that session. 2-means clusters by group mean, so the same outlier gets absorbed into the correct cluster instead. A dedicated speaker diarization model is planned for v2.
+- **Speaker classification accuracy** — diarization groups voices but does not identify the recording owner. `speaker.py` still assumes the user is closer to the mic and chooses the loudest speaker by duration-weighted RMS. Document this constraint in onboarding. All turns of the chosen label are retained; speaker splitting and mixed-voice overlap can still affect metrics. `stats.metadata.diarization.user_speaker_confirmed` is false; there is no voice enrollment or speaker-correction UI.
 
-- **Whisper 25MB limit** — recordings are compressed (`.m4a`/`.webm`, not WAV), so 25MB covers well over 20 minutes in practice; `main.py` enforces the cap directly (`MAX_AUDIO_BYTES`, 413 if exceeded) before the pipeline runs. Chunk at 20-minute boundaries if allowing longer sessions.
+- **Transcription 25MB limit** — `main.py` limits uploaded bytes before processing. `transcription.py` separately checks encoded PCM against the API's 25,000,000-byte limit and uses the original supported compressed recording when PCM is too large. If neither fits, return 413 and refund reserved usage. Do not split into independent requests without a strategy to reconcile speaker IDs; labels are local to each request.
 
 - **JWT verification is ES256/JWKS, not a shared secret** — this Supabase project signs tokens with asymmetric keys, so an HS256 `SUPABASE_JWT_SECRET` can never verify them (this once silently broke every authenticated request). `app/auth.py` fetches the public JWKS once and caches it for the process lifetime; restart the backend if Supabase signing keys are ever rotated.
 

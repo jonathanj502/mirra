@@ -10,7 +10,7 @@ import numpy as np
 
 from app.pipeline.vad import Segment
 
-FILLER_PHRASES = ("you know", "i mean", "kind of", "sort of", "like", "honestly", "actually", "right")
+FILLER_PHRASES = ("you know", "i mean", "kind of", "sort of", "like", "honestly", "actually", "right", "um", "uh")
 OPEN_QUESTION_STARTS = ("what", "how", "why", "when", "where", "who", "which", "tell", "describe", "walk")
 QUESTION_LEAD_INS = {"honestly", "actually", "like", "so", "okay", "well", "um", "uh"}
 FUNCTION_WORD_GROUPS = {
@@ -137,26 +137,33 @@ def _energy_series(audio: np.ndarray, sample_rate: int, segments: list[Segment],
     return _normalize_series(values)
 
 
+def _segment_key(segment: Segment) -> tuple[float, float, str | None]:
+    # Different speakers can share start/end timestamps during overlap.
+    return round(segment.start, 3), round(segment.end, 3), segment.speaker
+
+
 def _turn_offsets(segments: list[Segment], user_segments: list[Segment]) -> tuple[int, int, list[dict[str, float | str]]]:
     if len(segments) < 2:
         return 0, 0, []
-    user_keys = {(round(segment.start, 3), round(segment.end, 3)) for segment in user_segments}
+    user_keys = {_segment_key(segment) for segment in user_segments}
     labeled = []
     for segment in sorted(segments, key=lambda item: item.start):
-        key = (round(segment.start, 3), round(segment.end, 3))
-        labeled.append((segment, "user" if key in user_keys else "other"))
+        is_user = _segment_key(segment) in user_keys
+        labeled.append((segment, segment.speaker or ("user" if is_user else "other"), is_user))
 
     offsets: list[float] = []
     series: list[dict[str, float | str]] = []
     interruptions = 0
     for previous, current in zip(labeled, labeled[1:]):
-        prev_segment, prev_speaker = previous
-        curr_segment, curr_speaker = current
-        if prev_speaker == curr_speaker:
+        prev_segment, prev_speaker, prev_is_user = previous
+        curr_segment, curr_speaker, curr_is_user = current
+        if prev_speaker == curr_speaker or not (prev_is_user or curr_is_user):
             continue
         gap_ms = (curr_segment.start - prev_segment.end) * 1000.0
         offsets.append(gap_ms)
-        if gap_ms <= 150:
+        # A quick response after someone finishes is not an interruption. Count
+        # only estimated overlap initiated by the selected speaker.
+        if curr_is_user and not prev_is_user and curr_segment.start > prev_segment.start and gap_ms < 0:
             interruptions += 1
         label_seconds = max(0, curr_segment.start)
         minutes = int(label_seconds // 60)
@@ -204,8 +211,7 @@ def compute_stats(
     user_energy = _mean_energy(user_segments)
     other_segments = [
         segment for segment in all_segments
-        if (round(segment.start, 3), round(segment.end, 3))
-        not in {(round(user.start, 3), round(user.end, 3)) for user in user_segments}
+        if _segment_key(segment) not in {_segment_key(user) for user in user_segments}
     ]
     other_energy = _mean_energy(other_segments)
     volume_match = _match_ratio(user_energy, other_energy)

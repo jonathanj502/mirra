@@ -28,6 +28,7 @@ from app.models.debrief import Debrief, SessionResponse
 from app.models.settings import UserSettings, UserSettingsUpdate
 from app.open_model import generate_open_model_reflection
 from app.pipeline import coordinator
+from app.pipeline.transcription import TranscriptionInputTooLarge
 from app.usage import check_and_increment, get_usage, release
 from app.user_settings import fetch_user_settings, save_user_settings
 
@@ -309,6 +310,8 @@ def create_session(
         user_settings = fetch_user_settings(db, user_id)
         try:
             result = coordinator.run(audio_bytes, content_type=content_type)
+        except TranscriptionInputTooLarge as exc:
+            raise HTTPException(status_code=413, detail="Recording is too large to transcribe. Use a shorter recording or upload M4A, MP3, or WebM.") from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="Could not decode audio") from exc
         session_id = str(uuid4())
@@ -319,7 +322,10 @@ def create_session(
             "original_filename": audio.filename,
             "content_type": content_type,
         }
-        stats = {**result["stats"], "metadata": {k: v for k, v in metadata.items() if v is not None}}
+        stats = {**result["stats"], "metadata": {
+            **result["stats"].get("metadata", {}),
+            **{k: v for k, v in metadata.items() if v is not None},
+        }}
         row = (
             db.table("debriefs")
             .insert(
