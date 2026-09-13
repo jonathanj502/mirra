@@ -1,10 +1,10 @@
-import { useCallback, useRef, useState } from 'react';
+import { createContext, createElement, useContext, useRef, useState, ReactNode } from 'react';
 import { NativeModules, Platform } from 'react-native';
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 import { friendlyErrorMessage } from '@/api/http';
-import { uploadSession } from '@/api/client';
 import { useAuth } from '@/auth/AuthContext';
-import { DebriefCard } from '@/models/debrief';
+import { PendingRecording, recordingId } from '@/storage/pendingRecordings';
+import { usePendingRecordings } from './usePendingRecordings';
 
 // Android needs a foreground service holding the mic open once the app backgrounds;
 // optional so web/iOS (and stale native builds) just no-op.
@@ -24,28 +24,27 @@ function recordingMimeType() {
   return Platform.OS === 'web' ? 'audio/webm' : 'audio/mp4';
 }
 
-export function useRecordAudio() {
-  const { accessToken } = useAuth();
+function useRecorderState() {
+  const { user } = useAuth();
+  const queue = usePendingRecordings();
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordingMs, setRecordingMs] = useState(0);
-  const [uploading, setUploading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // ponytail: one pending clip survives tab switches, not app restarts; use a persisted outbox for restart recovery.
-  const [pendingRecording, setPendingRecording] = useState<{
-    audio: { uri: string; name: string; type: string };
-    seconds: number;
-  } | null>(null);
+  // Keep the original if device storage is full; do not allow another capture to overwrite it.
+  const unsaved = useRef<PendingRecording | null>(null);
+  const owner = useRef<string | null>(null);
   const operationInProgress = useRef(false);
   const startedAt = useRef<number | null>(null);
   // Null until createAsync fully resolves, so mid-creation status updates
   // (canRecord && !isRecording) can't trigger a spurious resume; cleared again on stop.
   const liveRecording = useRef<Audio.Recording | null>(null);
 
-  const startRecording = useCallback(async () => {
-    if (operationInProgress.current || recording || pendingRecording) return;
+  const startRecording = async () => {
+    if (operationInProgress.current || recording || unsaved.current) return;
     setError(null);
-    if (!accessToken) {
+    if (!user) {
       setError('Please sign in before recording a conversation.');
       return;
     }
@@ -83,6 +82,7 @@ export function useRecordAudio() {
         500
       );
       liveRecording.current = created.recording;
+      owner.current = user.id;
       startedAt.current = Date.now();
       setRecordingMs(created.status.durationMillis ?? 0);
       setRecording(created.recording);
@@ -93,76 +93,74 @@ export function useRecordAudio() {
       operationInProgress.current = false;
       setStarting(false);
     }
-  }, [accessToken, recording, pendingRecording]);
+  };
 
-  const stopRecording = useCallback(async (): Promise<DebriefCard | null> => {
-    if (operationInProgress.current || (!recording && !pendingRecording) || !accessToken) return null;
+  const stopRecording = async () => {
+    if (operationInProgress.current || (!recording && !unsaved.current)) return;
 
     operationInProgress.current = true;
-    setUploading(true);
+    setSaving(true);
     setError(null);
     try {
-      let pending = pendingRecording;
-      if (!pending && recording) {
+      if (!unsaved.current && recording) {
         liveRecording.current = null;
-        await recording.stopAndUnloadAsync();
+        const status = await recording.stopAndUnloadAsync();
         setRecording(null);
         const uri = recording.getURI();
         if (!uri) throw new Error('Missing recording URI');
 
-        pending = {
+        if (!owner.current) throw new Error('Missing recording owner');
+        unsaved.current = {
+          id: recordingId(), userId: owner.current,
+          startedAt: new Date(startedAt.current ?? Date.now()).toISOString(),
           audio: { uri, name: recordingName(), type: recordingMimeType() },
-          seconds: recordingMs > 0 ? recordingMs / 1000 : startedAt.current ? (Date.now() - startedAt.current) / 1000 : 0,
+          seconds: (status.durationMillis || recordingMs) / 1000,
         };
-        setPendingRecording(pending);
         setForegroundService(false);
         await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
       }
-      if (!pending) return null;
-      const response = await uploadSession(
-        accessToken,
-        pending.audio,
-        { title: 'Recorded conversation', clientDurationSeconds: pending.seconds }
-      );
-      setPendingRecording(null);
-      return response.debrief;
+      if (!unsaved.current) return;
+      await queue.enqueue(unsaved.current);
+      if (Platform.OS === 'web') URL.revokeObjectURL(unsaved.current.audio.uri);
+      unsaved.current = null;
     } catch (err) {
-      const message = friendlyErrorMessage(
-        err,
-        'Could not analyze that recording. Please try uploading it again.'
-      );
-      setError(message);
-      return null;
+      setError(unsaved.current
+        ? 'Recording is not saved yet. Keep Mirra open, free some device storage, then save again.'
+        : friendlyErrorMessage(err, 'Could not finish recording. Please try stopping it again.'));
     } finally {
       setForegroundService(false);
       setRecordingMs(0);
       startedAt.current = null;
       await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
-      setUploading(false);
+      setSaving(false);
       operationInProgress.current = false;
     }
-  }, [accessToken, recording, recordingMs, pendingRecording]);
+  };
 
-  const discardRecording = useCallback(() => {
-    if (operationInProgress.current || recording) return;
-    setPendingRecording(null);
-    setError(null);
-  }, [recording]);
-
-  const toggleRecording = useCallback(async () => {
-    return recording || pendingRecording ? stopRecording() : startRecording().then(() => null);
-  }, [recording, pendingRecording, startRecording, stopRecording]);
+  const toggleRecording = () => recording || unsaved.current ? stopRecording() : startRecording();
 
   return {
     isRecording: !!recording,
-    isUploadingRecording: uploading,
+    ...queue,
+    isSavingRecording: saving,
     isStartingRecording: starting,
-    hasPendingRecording: !!pendingRecording,
+    hasUnsavedRecording: !!unsaved.current,
     error,
-    discardRecording,
     recordingSeconds: recordingMs / 1000,
     startRecording,
     stopRecording,
     toggleRecording,
   };
+}
+
+const RecordingContext = createContext<ReturnType<typeof useRecorderState> | null>(null);
+
+export function RecordingProvider({ children }: { children: ReactNode }) {
+  return createElement(RecordingContext.Provider, { value: useRecorderState() }, children);
+}
+
+export function useRecordAudio() {
+  const value = useContext(RecordingContext);
+  if (!value) throw new Error('useRecordAudio must be used within RecordingProvider');
+  return value;
 }

@@ -79,6 +79,12 @@ interface ConversationStats {
 
 Control Center widget, Back Tap, and Lock Screen Shortcut all fire `ToggleRecordingIntent` (Swift AppIntents extension). The intent writes a command to a shared `UserDefaults` App Group container and posts a Darwin notification. A native `RCTEventEmitter` module in the main app listens for that Darwin notification and emits an event into RN, where `useRecorder.toggle()` is called. All four targets share App Group `group.com.<yourname>.mirra`.
 
+### Offline recording queue
+
+`RecordingProvider` (`app/src/hooks/useRecordAudio.ts`) sits under AuthProvider and above the routes. Stopped recordings are saved before upload, using `src/storage/pendingRecordings.ts` (native documents directory) or `.web.ts` (IndexedDB blobs and metadata). `usePendingRecordings.ts` restores the per-account queue and uploads serially on launch, foreground/online events, and a 15-second foreground poll. Each upload refreshes auth and checks account identity. Only acknowledged uploads or explicit discards remove queued audio. Storage failures retain the original clip and block another capture until saving succeeds.
+
+The optional `recording_id` form field on `POST /sessions` produces an account-scoped deterministic debrief primary key. Replays return the existing debrief before reserving usage. A process-local in-flight guard returns 409 for simultaneous retries; across processes the database primary key prevents duplicate rows and duplicate-insert reservations are refunded. No schema migration is required. The queue survives restarts after Stop/save completes; uploads resume when the app is foregrounded, not while force-quit. Browser offline app-shell loading and OS background upload jobs are not implemented.
+
 ### Audio file import
 
 `useImportAudio.ts` uses `expo-document-picker` (not an OS share-sheet intent) to let the user pick an existing audio file on either platform. Client-side guards: 25MB cap, MIME sniffed from the file extension when the picker returns `application/octet-stream`. Duration is read via a throwaway `Audio.Sound.createAsync`/`unloadAsync` before upload. Goes through the same `uploadSession()` → `POST /sessions` path as a live recording, wired into `HomeScreen.tsx` alongside `useRecordAudio`.
@@ -109,11 +115,10 @@ Note: the original plan called for `react-native-receive-sharing-intent` handlin
 - `debrief_usage(user_id, month_key UNIQUE WITH user_id, count int)` — monthly usage counter
 - `debriefs(id uuid, user_id, created_at, observation, pattern_to_reduce, thing_to_try_next, stats jsonb, transcript text)`
 - `user_settings(user_id, notifications_enabled, weekly_summary_day, weekly_summary_time, reflection_reminders, product_updates, save_transcripts, include_transcript_in_reflect, coaching_tone, coaching_depth)` — one row per user, backend-managed (`app/user_settings.py`)
-- `billing_subscriptions(user_id, stripe_customer_id, stripe_subscription_id, stripe_price_id, status, current_period_end, trial_end, cancel_at_period_end)` — Stripe subscription state, mutated by the backend service role and Stripe webhooks (`app/billing.py`)
 
 All tables have RLS enabled with `(select auth.uid()) = user_id` read policies; writes go through the backend's service-role key, not the client directly.
 
-Free tier cap: 5 debriefs/month. Enforced server-side — `POST /sessions` returns 402 when at cap.
+Monthly cap: 5 debriefs per user, configured by `FREE_TIER_CAP`. Enforced server-side — `POST /sessions` returns 402 when at cap. There are no paid tiers or subscription bypasses.
 
 ## Backend API
 
@@ -121,24 +126,23 @@ Free tier cap: 5 debriefs/month. Enforced server-side — `POST /sessions` retur
 |---|---|
 | `POST /sessions` | multipart `audio` (WAV/M4A ≤25MB) + JSON metadata → runs pipeline → returns `{ debrief, usedThisMonth, remaining }` |
 | `GET /debriefs`, `GET /debriefs/{id}` | paginated debrief history / single debrief for the authenticated user |
+| `DELETE /debriefs/{id}` | permanently delete an owned debrief and its saved transcript; returns 204 even if already absent; does not refund usage |
 | `GET /usage` | `{ usedThisMonth, remaining, resetsAt }` |
 | `GET /auth/status` | which sign-in methods are currently available (username/password, Google, email) |
 | `POST /auth/username/sign-up`, `POST /auth/username/sign-in` | username+password auth, backed by Supabase email/password under the hood |
 | `GET /profile/summary` | profile stats for ProfileScreen |
 | `GET /account/export` | account data export |
 | `GET /settings`, `PATCH /settings` | notification/coaching-tone user settings |
-| `GET /billing/status`, `POST /billing/checkout`, `POST /billing/portal`, `POST /billing/webhook` | Stripe subscription status, checkout/portal session creation, webhook receiver |
 | `GET /analytics/progress` | weekly aggregated stats for ProgressScreen/InsightsIndexScreen |
 | `POST /reflect` | Reflect chat — calls OpenAI through `reflection.py` |
 
 ## Backend Integration Status
 
-The frontend is fully wired to the backend — no more mock data. `src/data/recents.ts` and `src/data/weeks.ts` (the old static mocks) are deleted. Every screen fetches through a hook in `src/hooks/` (`useDebriefs`, `useUsage`, `useBilling`, `useUserSettings`, `useProfileSummary`, `useProgressSummary`, `useRecordAudio`, `useImportAudio`), which goes through `app/src/api/client.ts`.
+The frontend is fully wired to the backend — no more mock data. `src/data/recents.ts` and `src/data/weeks.ts` (the old static mocks) are deleted. Every screen fetches through a hook in `src/hooks/` (`useDebriefs`, `useUsage`, `useUserSettings`, `useProfileSummary`, `useProgressSummary`, `useRecordAudio`, `useImportAudio`), which goes through `app/src/api/client.ts`.
 
 **API boundary:** all fetch calls go through `app/src/api/client.ts`, which handles snake_case → camelCase conversion. New hooks should use this file.
 
 - Auth (username/password + Google, via Supabase) — `src/auth/AuthContext.tsx`, `src/api/auth.ts`, `backend/app/auth.py` / `main.py`'s `/auth/*` routes.
-- Billing (Stripe) — `useBilling`, `backend/app/billing.py`, `/billing/*` routes.
 - User settings (notifications, coaching tone) — `useUserSettings`, `backend/app/user_settings.py`, `/settings` routes.
 - Dashboard/analytics — `useProgressSummary`, `backend/app/dashboard.py`, `/analytics/progress`.
 - Reflect chat — `useDebriefs` + `api/client.ts`'s reflect call, `backend/app/reflection.py`, `/reflect`. Uses the same OpenAI key as transcription and debriefs, with a local fallback when no model reply is available. `src/data/reflect.ts` still exists but only for seed/starter-prompt copy and canned replies used if the live call fails — not conversation data.

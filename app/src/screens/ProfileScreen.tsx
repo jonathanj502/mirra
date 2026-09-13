@@ -1,4 +1,4 @@
-// You · profile — identity, stats, subscription, settings.
+// You · profile — identity, stats, settings.
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Linking, Modal, Pressable, Switch, View, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -10,13 +10,12 @@ import { Icon } from '@/components/Icon';
 import { colors, fonts } from '@/theme/tokens';
 import { exportAccountData } from '@/api/client';
 import { useAuth } from '@/auth/AuthContext';
-import { useBilling } from '@/hooks/useBilling';
 import { useProfileSummary } from '@/hooks/useProfileSummary';
 import { useUserSettings } from '@/hooks/useUserSettings';
 import { CoachingDepth, CoachingTone, UserSettings, WeeklySummaryDay, WeeklySummaryTime } from '@/models/debrief';
 
 type SettingsPanelId = 'notifications' | 'privacy' | 'coaching' | 'help';
-type AccountActionId = 'export' | 'billing' | 'signOut';
+type AccountActionId = 'export' | 'signOut';
 type SchedulePickerId = 'day' | 'time';
 
 const DAY_OPTIONS: { value: WeeklySummaryDay; label: string }[] = [
@@ -253,13 +252,6 @@ function summaryTimeValue(value: WeeklySummaryTime) {
 function privacyHint(settings: UserSettings) {
   if (!settings.saveTranscripts) return 'Transcripts off · audio discarded';
   return settings.includeTranscriptInReflect ? 'Transcripts saved · Reflect can use excerpts' : 'Transcripts saved · Reflect uses summaries';
-}
-
-function shortBillingDate(value?: string | null) {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 function saveJsonDownload(filename: string, value: unknown) {
@@ -501,25 +493,21 @@ function AccountActionRow({
 function AccountMenu({
   visible,
   label,
-  planLabel,
   busy,
   note,
   error,
   onClose,
   onExport,
-  onBilling,
   onHelp,
   onSignOut,
 }: {
   visible: boolean;
   label: string;
-  planLabel: string;
   busy: AccountActionId | null;
   note: string | null;
   error: string | null;
   onClose: () => void;
   onExport: () => void;
-  onBilling?: () => void;
   onHelp: () => void;
   onSignOut: () => void;
 }) {
@@ -532,7 +520,7 @@ function AccountMenu({
             <View style={{ flex: 1, minWidth: 0 }}>
               <Eyebrow>Account</Eyebrow>
               <Serif style={styles.sheetTitle}>Mirra Member</Serif>
-              <Body style={styles.accountMenuSubtext}>{label} · {planLabel}</Body>
+              <Body style={styles.accountMenuSubtext}>{label}</Body>
             </View>
             <Pressable onPress={onClose} hitSlop={10} style={styles.closeButton}>
               <Body style={styles.closeText}>Done</Body>
@@ -542,16 +530,10 @@ function AccountMenu({
           <View style={styles.accountActionList}>
             <AccountActionRow
               label="Download my data"
-              hint="Conversations, settings, and plan details."
+              hint="Conversations and settings."
               loading={busy === 'export'}
               onPress={onExport}
             />
-            {onBilling ? <AccountActionRow
-              label="Manage plan"
-              hint="Open billing or start Mirra Pro."
-              loading={busy === 'billing'}
-              onPress={onBilling}
-            /> : null}
             <AccountActionRow
               label="Help & feedback"
               hint="Contact, issue reports, and privacy questions."
@@ -582,8 +564,6 @@ export function ProfileScreen() {
   const { summary, loading: summaryLoading, error: summaryError, refresh: refreshSummary } = useProfileSummary();
   const { settings, loading: settingsLoading, saving: settingsSaving, error: settingsError, loadError: settingsLoadError,
     refresh: refreshSettings, updateSettings } = useUserSettings(accessToken);
-  const { billing, loading: billingLoading, opening: billingOpening, error: billingError, loadError: billingLoadError,
-    refresh: refreshBilling, startCheckout, openPortal } = useBilling(accessToken);
   const [activePanel, setActivePanel] = useState<SettingsPanelId | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [accountBusy, setAccountBusy] = useState<AccountActionId | null>(null);
@@ -598,29 +578,7 @@ export function ProfileScreen() {
   const summaryReady = summary !== null && !summaryError;
   const settingsReady = !settingsLoading && !settingsLoadError;
   const settingsHint = settingsLoading ? 'Loading settings…' : 'Settings unavailable';
-  const billingReady = billing !== null && !billingLoadError;
   const used = summaryReady ? String(summary.usedThisMonth) : '—';
-  const isPro = billingReady && billing.isPro;
-  const freeRemaining = billingReady ? billing.freeConversationsRemaining : null;
-  const trialEnd = shortBillingDate(billing?.trialEnd);
-  const periodEnd = shortBillingDate(billing?.currentPeriodEnd);
-  const planDescription = !billingReady ? 'Your plan is unavailable right now.' : isPro
-    ? billing?.status === 'trialing' && trialEnd
-      ? `Trial ends ${trialEnd} · unlimited conversations`
-      : billing?.cancelAtPeriodEnd && periodEnd
-        ? `Active until ${periodEnd} · unlimited conversations`
-        : 'Unlimited conversations · full history · Pro metrics'
-    : `${freeRemaining} conversations remaining this month · 7-day history · core metrics`;
-  const billingNote = billingReady ? billingError ?? (isPro ? 'Manage billing, invoices, and cancellation in Stripe' : 'Cancel anytime · No charge until day 15') : null;
-  const billingCta = billingOpening ? 'Opening…' : isPro ? 'Manage plan' : 'Try Pro free for 14 days';
-  const planLabel = !billingReady ? 'Plan unavailable' : isPro ? 'Mirra Pro' : 'Mirra Free';
-  const handleBillingPress = async () => {
-    if (!billingReady) return;
-    const url = isPro ? await openPortal() : await startCheckout();
-    if (url) {
-      void Linking.openURL(url);
-    }
-  };
   const handleAccountExport = async () => {
     if (!accessToken) return;
     setAccountBusy('export');
@@ -635,19 +593,6 @@ export function ProfileScreen() {
       setAccountError(err instanceof Error ? err.message : 'Could not export data');
     } finally {
       setAccountBusy(null);
-    }
-  };
-  const handleAccountBilling = async () => {
-    if (!billingReady) return;
-    setAccountBusy('billing');
-    setAccountError(null);
-    setAccountNote(null);
-    const url = isPro ? await openPortal() : await startCheckout();
-    setAccountBusy(null);
-    if (url) {
-      void Linking.openURL(url);
-    } else {
-      setAccountError('Could not open billing');
     }
   };
   const handleAccountHelp = () => {
@@ -668,8 +613,8 @@ export function ProfileScreen() {
   };
 
   return (
-    <Screen topOffset={50} error={summaryError || billingLoadError || settingsLoadError}
-      onRefresh={() => { void refreshSummary(); void refreshBilling(); void refreshSettings(); }} refreshing={summaryLoading || billingLoading || settingsLoading}>
+    <Screen topOffset={50} error={summaryError || settingsLoadError}
+      onRefresh={() => { void refreshSummary(); void refreshSettings(); }} refreshing={summaryLoading || settingsLoading}>
       {/* Header */}
       <View style={styles.header}>
         <Eyebrow>You</Eyebrow>
@@ -707,57 +652,6 @@ export function ProfileScreen() {
         <StatPill value={memberSince} label="Member since" accent={colors.lavender} />
       </View>
 
-      {/* Subscription */}
-      <View style={styles.subWrap}>
-        <LinearGradient colors={['#2E2A26', '#3D332B'] as const} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.subCard}>
-          <Svg viewBox="0 0 200 200" width={180} height={180} style={styles.blob}>
-            <Path d="M100,20 C140,20 180,60 180,100 C180,150 130,180 90,170 C50,160 20,130 25,90 C30,50 60,20 100,20Z" fill="#D08866" opacity={0.18} />
-          </Svg>
-
-          <Body style={styles.subEyebrow}>Current plan</Body>
-          <Serif style={styles.subPlan}>
-            {billingReady ? <>Mirra <SerifItalic style={styles.subPlan}>{isPro ? 'Pro' : 'Free'}</SerifItalic></> : billingLoading ? 'Loading plan…' : 'Plan unavailable'}
-          </Serif>
-          <Body style={styles.subDesc}>{billingLoading ? 'Checking plan…' : planDescription}</Body>
-
-          {billingReady && !isPro && (
-            <>
-              <View style={styles.subDivider} />
-
-              <View style={styles.subUpgradeRow}>
-                <View style={{ flex: 1 }}>
-                  <Body style={styles.subEyebrow}>Upgrade to</Body>
-                  <Serif style={styles.subPlan}>Mirra <SerifItalic style={[styles.subPlan, { color: colors.terracottaSoft }]}>Pro</SerifItalic></Serif>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Serif style={{ fontSize: 24, lineHeight: 24, color: '#F6EFE0' }}>$8</Serif>
-                  <Body style={styles.subPerMonth}>per month</Body>
-                </View>
-              </View>
-
-              <View style={{ gap: 8, marginTop: 14 }}>
-                {['Unlimited conversations', 'Full history & weekly themes', 'Energy & vocabulary deep-dives', 'Custom goals + gentle nudges'].map((f, i) => (
-                  <View key={i} style={styles.featureRow}>
-                    <Check color={colors.terracottaSoft} />
-                    <Body style={styles.featureText}>{f}</Body>
-                  </View>
-                ))}
-              </View>
-            </>
-          )}
-
-          {billingReady ? <Pressable
-            onPress={handleBillingPress}
-            accessibilityRole="button"
-            disabled={billingOpening || billingLoading}
-            style={({ pressed }) => [styles.tryBtn, pressed && styles.tryBtnPressed, billingOpening && styles.tryBtnDisabled]}
-          >
-            {billingOpening ? <ActivityIndicator size="small" color="#2A2520" /> : <Body style={styles.tryBtnText}>{billingCta}</Body>}
-          </Pressable> : null}
-          {billingNote ? <Body style={[styles.tryNote, billingError && styles.tryNoteError]}>{billingNote}</Body> : null}
-        </LinearGradient>
-      </View>
-
       {/* Settings */}
       <View style={styles.settingsWrap}>
         <Eyebrow style={{ marginBottom: 6 }}>Settings</Eyebrow>
@@ -784,7 +678,6 @@ export function ProfileScreen() {
       <AccountMenu
         visible={accountMenuOpen}
         label={label}
-        planLabel={planLabel}
         busy={accountBusy}
         note={accountNote}
         error={accountError}
@@ -792,9 +685,6 @@ export function ProfileScreen() {
         onExport={() => {
           void handleAccountExport();
         }}
-        onBilling={billingReady ? () => {
-          void handleAccountBilling();
-        } : undefined}
         onHelp={handleAccountHelp}
         onSignOut={() => {
           void handleAccountSignOut();
@@ -825,24 +715,6 @@ const styles = StyleSheet.create({
   stats: { paddingHorizontal: 22, paddingTop: 18, flexDirection: 'row', gap: 10 },
   statPill: { flex: 1, paddingVertical: 14, paddingHorizontal: 12, backgroundColor: colors.card, borderRadius: 16, alignItems: 'center' },
   statLabel: { fontSize: 10.5, color: colors.muted, letterSpacing: 0.8, textTransform: 'uppercase', marginTop: 6 },
-
-  subWrap: { paddingHorizontal: 22, paddingTop: 18 },
-  subCard: { borderRadius: 22, padding: 20, overflow: 'hidden' },
-  blob: { position: 'absolute', right: -40, top: -30 },
-  subEyebrow: { fontSize: 11, letterSpacing: 1.8, textTransform: 'uppercase', color: 'rgba(246,239,224,0.55)', fontFamily: fonts.bodyMedium },
-  subPlan: { fontSize: 26, lineHeight: 28, marginTop: 6, color: '#F6EFE0' },
-  subDesc: { fontSize: 12.5, color: 'rgba(246,239,224,0.7)', marginTop: 6, lineHeight: 19, maxWidth: 240 },
-  subDivider: { height: 1, backgroundColor: 'rgba(246,239,224,0.15)', marginVertical: 18 },
-  subUpgradeRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
-  subPerMonth: { fontSize: 10.5, color: 'rgba(246,239,224,0.55)', letterSpacing: 0.6, textTransform: 'uppercase', marginTop: 4 },
-  featureRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  featureText: { fontSize: 13, color: 'rgba(246,239,224,0.92)' },
-  tryBtn: { marginTop: 18, paddingVertical: 14, borderRadius: 14, backgroundColor: '#F6EFE0', alignItems: 'center' },
-  tryBtnPressed: { opacity: 0.82 },
-  tryBtnDisabled: { opacity: 0.72 },
-  tryBtnText: { color: '#2A2520', fontFamily: fonts.bodySemibold, fontSize: 14, letterSpacing: 0.3 },
-  tryNote: { fontSize: 10.5, color: 'rgba(246,239,224,0.5)', marginTop: 10, textAlign: 'center', letterSpacing: 0.4 },
-  tryNoteError: { color: colors.terracottaSoft, opacity: 1 },
 
   settingsWrap: { paddingHorizontal: 22, paddingTop: 20 },
   settingsCard: { paddingVertical: 4, paddingHorizontal: 16 },

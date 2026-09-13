@@ -67,8 +67,6 @@ class _Table:
             return _Result({"count": self.db.used})
         if self.name == "user_settings":
             return _Result(self.db.settings_row)
-        if self.name == "billing_subscriptions":
-            return _Result(None)
 
         rows = self.db.rows
         for key, value in self.filters:
@@ -108,6 +106,6 @@ def test_account_export_returns_user_data_bundle():
     assert body["user_id"] == "user-1"
     assert body["profile"]["total_conversations"] == 1
     assert body["settings"]["coaching_tone"] == "curious_gentle"
-    assert body["billing"]["plan"] == "free"
+    assert set(body) == {"exported_at", "user_id", "profile", "settings", "debriefs"}
     assert body["debriefs"][0]["id"] == ROW["id"]
     assert body["debriefs"][0]["transcript"] == ROW["transcript"]

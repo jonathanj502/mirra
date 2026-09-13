@@ -12,6 +12,7 @@ import { useAuth } from '@/auth/AuthContext';
 import { useDebriefs } from '@/hooks/useDebriefs';
 import { useImportAudio } from '@/hooks/useImportAudio';
 import { useRecordAudio } from '@/hooks/useRecordAudio';
+import { PendingRecording } from '@/storage/pendingRecordings';
 
 function displayName(email?: string | null, username?: unknown) {
   if (typeof username === 'string' && username.trim()) return username.trim();
@@ -134,16 +135,23 @@ export function HomeScreen() {
   const { user } = useAuth();
   const { listItems, loading, error, setDebriefs, refresh } = useDebriefs();
   const { importAudio, importing, error: importError } = useImportAudio();
-  const { isRecording, isUploadingRecording, isStartingRecording, hasPendingRecording, recordingSeconds,
-    toggleRecording, discardRecording, error: recordingError } = useRecordAudio();
-  const busy = importing || isRecording || isUploadingRecording || isStartingRecording || hasPendingRecording;
+  const { isRecording, isSavingRecording, isStartingRecording, hasUnsavedRecording, recordingSeconds,
+    pendingRecordings, uploadingId, latestDebrief, queueError, discard,
+    toggleRecording, error: recordingError } = useRecordAudio();
+  const busy = importing || isRecording || isSavingRecording || isStartingRecording || hasUnsavedRecording;
+  useEffect(() => {
+    if (latestDebrief) {
+      setDebriefs(items => [latestDebrief, ...items.filter(item => item.id !== latestDebrief.id)]);
+      void refresh();
+    }
+  }, [latestDebrief, setDebriefs, refresh]);
   const today = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
   const name = displayName(user?.email, user?.user_metadata?.username);
-  const heroHint = isUploadingRecording
-    ? 'Analyzing...'
+  const heroHint = isSavingRecording
+    ? 'Saving on this device…'
     : isRecording
       ? `${Math.floor(recordingSeconds / 60)}:${String(Math.floor(recordingSeconds % 60)).padStart(2, '0')} · tap to stop`
-      : isStartingRecording ? 'Starting microphone…' : hasPendingRecording ? 'Recording waiting to upload' : 'Tap to record';
+      : isStartingRecording ? 'Starting microphone…' : hasUnsavedRecording ? 'Tap to save recording' : 'Tap to record · works offline';
   const greeting = listItems.length > 0
     ? `${listItems.length} ${listItems.length === 1 ? 'conversation' : 'conversations'} ready.`
     : '';
@@ -154,18 +162,17 @@ export function HomeScreen() {
   }
 
   async function handleRecord() {
-    const debrief = await toggleRecording();
-    if (debrief) setDebriefs((items) => [debrief, ...items.filter((item) => item.id !== debrief.id)]);
+    await toggleRecording();
   }
 
-  function confirmDiscard() {
-    const message = 'This recording has not been saved to Mirra. Discard it?';
+  function confirmDiscard(recording: PendingRecording) {
+    const message = 'This permanently deletes the recording saved on this device. Discard it?';
     if (Platform.OS === 'web') {
-      if (window.confirm(message)) discardRecording();
+      if (window.confirm(message)) void discard(recording);
     } else {
       Alert.alert('Discard recording?', message, [
         { text: 'Keep recording', style: 'cancel' },
-        { text: 'Discard', style: 'destructive', onPress: discardRecording },
+        { text: 'Discard', style: 'destructive', onPress: () => { void discard(recording); } },
       ]);
     }
   }
@@ -187,20 +194,31 @@ export function HomeScreen() {
 
       {/* Record hero */}
       <View style={styles.hero}>
-        <RecordButton size={172} recording={isRecording} loading={isUploadingRecording || isStartingRecording}
-          disabled={importing || hasPendingRecording} onPress={handleRecord} />
+        <RecordButton size={172} recording={isRecording} loading={isSavingRecording || isStartingRecording}
+          disabled={importing} onPress={handleRecord} />
         <Body style={styles.heroHint}>{heroHint}</Body>
         {recordingError ? <Body accessibilityRole="alert" style={styles.audioError}>{recordingError}</Body> : null}
         {importError ? <Body accessibilityRole="alert" style={styles.audioError}>{importError}</Body> : null}
-        {hasPendingRecording && !isUploadingRecording ? (
+        {queueError ? <Body accessibilityRole="alert" style={styles.audioError}>{queueError}</Body> : null}
+        {pendingRecordings.length > 0 ? (
           <View style={styles.pending}>
-            <Body style={styles.pendingHint}>Keep Mirra open until your recording uploads.</Body>
-            <Pressable accessibilityRole="button" onPress={handleRecord} style={styles.recoveryButton}>
-              <Body>Retry upload</Body>
-            </Pressable>
-            <Pressable accessibilityRole="button" onPress={confirmDiscard} style={styles.recoveryButton}>
-              <Body>Discard recording</Body>
-            </Pressable>
+            <Body style={styles.pendingHint} accessibilityLiveRegion="polite">
+              {pendingRecordings.length} {pendingRecordings.length === 1 ? 'recording' : 'recordings'} saved on this device.
+              {'\n'}Uploads automatically when Mirra is open and connected. You can keep recording.
+            </Body>
+            {pendingRecordings.map(recording => (
+              <View key={recording.id} style={styles.pendingItem}>
+                <Body style={styles.pendingHint}>
+                  {new Date(recording.startedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                  {' · '}{Math.ceil(recording.seconds)}s
+                  {'\n'}{uploadingId === recording.id ? 'Uploading and analyzing…' : recording.error || 'Waiting to upload'}
+                </Body>
+                <Pressable accessibilityRole="button" accessibilityLabel="Discard saved recording"
+                  disabled={uploadingId === recording.id} onPress={() => confirmDiscard(recording)} style={styles.recoveryButton}>
+                  <Body style={{ opacity: uploadingId === recording.id ? 0.4 : 1 }}>Discard recording</Body>
+                </Pressable>
+              </View>
+            ))}
           </View>
         ) : null}
       </View>
@@ -232,6 +250,7 @@ export function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
+  pendingItem: { borderTopWidth: 1, borderTopColor: colors.hairline, paddingTop: 12, width: '100%' },
   header: { paddingHorizontal: 24, flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
   greetingTitle: { fontSize: 34, lineHeight: 36, marginTop: 8, color: colors.ink },
   greet: { fontSize: 13.5, color: colors.muted, marginTop: 10, lineHeight: 20, maxWidth: 300, paddingHorizontal: 24 },

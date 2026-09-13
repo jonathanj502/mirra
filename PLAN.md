@@ -13,7 +13,7 @@ This is a greenfield project — the current repo contains only a `README.md` pl
 - **VAD runs server-side** in Python (cross-platform simplicity; on-device VAD would require separate CoreML and TFLite native modules per platform — defer to v2)
 - **Android file upload:** Android's `ACTION_SEND` intent system lets the main activity receive audio files directly — no separate extension process. Register `audio/*` MIME type in the manifest and handle the incoming URI via `react-native-receive-sharing-intent`. Ships in Phase 4 alongside Polish.
 - **iOS gets extras in a later phase:** Control Center widget, AppIntents (Back Tap / Lock Screen Shortcut trigger), Share extension. Android gets file upload in Phase 4.
-- Freemium: 5 debriefs/month free, unlimited paid (subscription out of scope for MVP — usage cap enforced server-side)
+- Usage cap: 5 debriefs per user per month, enforced server-side; no paid tiers.
 
 ---
 

@@ -10,7 +10,6 @@ import urllib.request
 
 BASE_URL = os.environ.get("MIRRA_BACKEND_URL", "http://localhost:8000").rstrip("/")
 REQUIRE_MODEL = os.environ.get("MIRRA_REQUIRE_MODEL", "").lower() in {"1", "true", "yes"}
-REQUIRE_STRIPE = os.environ.get("MIRRA_REQUIRE_STRIPE", "").lower() in {"1", "true", "yes"}
 
 
 def request(
@@ -123,26 +122,6 @@ def main() -> int:
         or patched_settings.get("weekly_summary_time") != "night"
     ):
         return 1
-
-    billing_code, billing = request("/billing/status", headers=auth_headers)
-    print(
-        "billing_status",
-        billing_code,
-        {"plan": billing.get("plan"), "stripe_configured": billing.get("stripe_configured")},
-    )
-    if billing_code != 200:
-        return 1
-
-    if billing.get("stripe_configured"):
-        checkout_code, checkout = request("/billing/checkout", "POST", headers=auth_headers)
-        print("billing_checkout", checkout_code, {"has_url": bool(checkout.get("url"))})
-        if checkout_code != 200 or not checkout.get("url"):
-            return 1
-    elif REQUIRE_STRIPE:
-        print("billing smoke failed: configure STRIPE_SECRET_KEY and STRIPE_PRO_PRICE_ID")
-        return 1
-    else:
-        print("billing checkout skipped: configure Stripe keys to create a checkout session")
 
     reflect_code, reflect = request(
         "/reflect",

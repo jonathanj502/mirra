@@ -4,8 +4,9 @@ import { makeRedirectUri } from 'expo-auth-session';
 import * as QueryParams from 'expo-auth-session/build/QueryParams';
 import * as WebBrowser from 'expo-web-browser';
 import { Session, User } from '@supabase/supabase-js';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { usernameSignIn, usernameSignUp } from '@/api/auth';
-import { supabase } from '@/api/supabase';
+import { authStorageKey, supabase } from '@/api/supabase';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -76,13 +77,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let mounted = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (!mounted) return;
-      setSession(data.session);
-      setInitializing(false);
+    let authChanged = false;
+    // Let a previously signed-in user record offline even when their access token has expired.
+    // Uploads still require a refreshed, server-verified session for this same account.
+    AsyncStorage.getItem(authStorageKey).then(raw => {
+      if (!mounted || authChanged || !raw) return;
+      const cached = JSON.parse(raw) as Session;
+      if (cached.user?.id && cached.access_token && cached.refresh_token) setSession(cached);
+    }).catch(() => {}).finally(() => {
+      if (mounted) setInitializing(false);
     });
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!mounted) return;
+      if (!error && !authChanged) {
+        authChanged = true;
+        setSession(data.session);
+      }
+      setInitializing(false);
+    }).catch(() => { if (mounted) setInitializing(false); });
 
-    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (!mounted || (event === 'INITIAL_SESSION' && !nextSession)) return;
+      authChanged = true;
       if (nextSession) setAuthError(null);
       setSession(nextSession);
       setInitializing(false);

@@ -1,6 +1,6 @@
 // Insights · single conversation deep-dive.
-import React, { useEffect, useState } from 'react';
-import { View, Pressable, StyleSheet } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Alert, Platform, View, Pressable, StyleSheet } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Screen } from '@/components/Screen';
 import { Card, Pip } from '@/components/ui';
@@ -14,7 +14,8 @@ import { FillerBars, SyncBars, OffsetZoneLegend } from '@/components/meters';
 import { colors, fonts } from '@/theme/tokens';
 import { useDebriefs, toConversationListItem } from '@/hooks/useDebriefs';
 import { useAuth } from '@/auth/AuthContext';
-import { fetchDebrief } from '@/api/client';
+import { deleteDebrief, fetchDebrief } from '@/api/client';
+import { friendlyErrorMessage } from '@/api/http';
 import { DebriefCard } from '@/models/debrief';
 import { talkListenPercent } from '@/utils/talkListen';
 
@@ -57,6 +58,9 @@ export function AnalyticsScreen() {
   const { accessToken } = useAuth();
   const { debriefs, loading } = useDebriefs();
   const [remoteDebrief, setRemoteDebrief] = useState<DebriefCard | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteInFlight = useRef(false);
   const localDebrief = debriefs.find((d) => d.id === id) ?? null;
 
   useEffect(() => {
@@ -77,14 +81,47 @@ export function AnalyticsScreen() {
     };
   }, [accessToken, id, localDebrief]);
 
-  const selected = localDebrief ?? remoteDebrief ?? debriefs[0] ?? null;
+  const selected = id
+    ? localDebrief ?? (remoteDebrief?.id === id ? remoteDebrief : null)
+    : debriefs[0] ?? null;
+
+  async function removeConversation(conversationId: string) {
+    if (deleteInFlight.current || !accessToken) return;
+    deleteInFlight.current = true;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteDebrief(accessToken, conversationId);
+      router.replace('/insights');
+    } catch (err) {
+      setDeleteError(friendlyErrorMessage(err, 'Could not delete conversation. Please try again.'));
+    } finally {
+      deleteInFlight.current = false;
+      setDeleting(false);
+    }
+  }
+
+  function confirmDelete() {
+    if (!selected || deleting) return;
+    const conversationId = selected.id;
+    const message = 'Permanently delete this conversation, including its debrief and saved transcript? This cannot be undone.';
+    if (Platform.OS === 'web') {
+      if (window.confirm(message)) void removeConversation(conversationId);
+    } else {
+      Alert.alert('Delete conversation?', message, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => { void removeConversation(conversationId); } },
+      ]);
+    }
+  }
+
   if (!selected) {
     return (
       <Screen topOffset={50}>
         <View style={styles.header}>
           <Pressable onPress={() => router.back()} hitSlop={8}><Icon.back color={colors.muted} /></Pressable>
           <Eyebrow>Conversation</Eyebrow>
-          <Icon.dots color={colors.muted} />
+          <View style={{ width: 44 }} />
         </View>
         <View style={styles.emptyState}>
           <SerifItalic style={styles.emptyTitle}>{loading ? 'Loading conversation.' : 'No conversation selected.'}</SerifItalic>
@@ -131,12 +168,21 @@ export function AnalyticsScreen() {
   const goTab = (id: TabId) => router.navigate(TAB_HREF[id]);
 
   return (
-    <Screen topOffset={50} tabBar={<FloatingTabBar active="insights" onPress={goTab} />}>
+    <Screen topOffset={50} error={deleteError} tabBar={<FloatingTabBar active="insights" onPress={goTab} />}>
       {/* Header */}
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} hitSlop={8}><Icon.back color={colors.muted} /></Pressable>
         <Eyebrow>Conversation</Eyebrow>
-        <Icon.dots color={colors.muted} />
+        <Pressable
+          onPress={confirmDelete}
+          disabled={deleting || !accessToken}
+          accessibilityRole="button"
+          accessibilityLabel="Delete conversation"
+          accessibilityState={{ disabled: deleting || !accessToken, busy: deleting }}
+          style={{ minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'center' }}
+        >
+          <Body style={{ color: colors.coral, fontSize: 13 }}>{deleting ? 'Deleting…' : 'Delete'}</Body>
+        </Pressable>
       </View>
 
       <View style={styles.titleBlock}>

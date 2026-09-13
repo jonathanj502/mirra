@@ -297,7 +297,6 @@ def session_io(monkeypatch):
     app.dependency_overrides[verify_token] = lambda: "user-1"
     reserve = MagicMock(return_value="2026-08")
     refund = MagicMock()
-    monkeypatch.setattr(main, "user_has_pro_access", lambda *_args: False)
     monkeypatch.setattr(main, "check_and_increment", reserve)
     monkeypatch.setattr(main, "release", refund)
     monkeypatch.setattr(main, "fetch_user_settings", MagicMock(return_value=UserSettings()))
@@ -342,14 +341,13 @@ def test_saved_debrief_is_not_refunded_when_usage_read_fails(session_io):
     refund.assert_not_called()
 
 
-def test_pro_session_failure_does_not_refund_free_usage(session_io, monkeypatch):
+def test_session_failure_refunds_reserved_usage(session_io):
     client, _db, reserve, refund = session_io
-    monkeypatch.setattr(main, "user_has_pro_access", lambda *_args: True)
     main.coordinator.run.side_effect = ValueError("bad audio")
     r = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")})
     assert r.status_code == 422
-    reserve.assert_not_called()
-    refund.assert_not_called()
+    reserve.assert_called_once_with(_db, "user-1")
+    refund.assert_called_once_with(_db, "user-1", "2026-08")
 
 
 def test_audio_content_type_accepts_parameters_and_case(session_io):
@@ -392,3 +390,64 @@ def test_transcription_upload_limit_returns_413_and_refunds_usage(session_io):
     assert r.status_code == 413
     assert "too large to transcribe" in r.json()["detail"]
     refund.assert_called_once_with(_db, "user-1", "2026-08")
+
+
+def test_offline_recording_replay_is_account_scoped_and_does_not_use_quota_twice(session_io, monkeypatch):
+    client, db, reserve, refund = session_io
+    saved = {}
+    monkeypatch.setattr(main, "_fetch_debrief_row", lambda _db, user, key: saved.get((user, key)))
+
+    def insert():
+        payload = db.table.return_value.insert.call_args.args[0]
+        row = {**SAMPLE_DEBRIEF, **payload}
+        saved[(row["user_id"], row["id"])] = row
+        return MagicMock(data=[row])
+
+    db.table.return_value.insert.return_value.execute.side_effect = insert
+    request = {"files": {"audio": ("test.wav", b"audio", "audio/wav")},
+               "data": {"recording_id": "saved-offline-1", "started_at": "2026-08-31T23:00:00Z"}}
+    first = client.post("/sessions", **request)
+    replay = client.post("/sessions", **request)
+    assert first.status_code == replay.status_code == 200
+    assert first.json()["debrief"]["id"] == replay.json()["debrief"]["id"]
+    assert first.json()["debrief"]["stats"]["metadata"]["started_at"] == request["data"]["started_at"]
+    reserve.assert_called_once()
+    main.coordinator.run.assert_called_once()
+    refund.assert_not_called()
+    app.dependency_overrides[verify_token] = lambda: "another-user"
+    other = client.post("/sessions", **request)
+    assert other.status_code == 200
+    assert other.json()["debrief"]["id"] != first.json()["debrief"]["id"]
+    assert reserve.call_count == 2
+
+
+def test_concurrent_recovery_waits_for_the_original_upload(session_io, monkeypatch):
+    client, _db, reserve, _refund = session_io
+    monkeypatch.setattr(main, "_fetch_debrief_row", lambda *_args: None)
+    request = {"files": {"audio": ("test.wav", b"audio", "audio/wav")}, "data": {"recording_id": "same-recording"}}
+
+    def processing(*_args, **_kwargs):
+        assert client.post("/sessions", **request).status_code == 409
+        return dict(SAMPLE_DEBRIEF)
+
+    main.coordinator.run.side_effect = processing
+    assert client.post("/sessions", **request).status_code == 200
+    reserve.assert_called_once()
+    assert not main._processing_sessions
+
+
+@pytest.mark.parametrize("duplicate", [False, True])
+def test_committed_upload_recovery_and_duplicate_reservation_refund(session_io, monkeypatch, duplicate):
+    from postgrest.exceptions import APIError
+
+    client, db, _reserve, refund = session_io
+    monkeypatch.setattr(main, "_fetch_debrief_row", MagicMock(side_effect=[None, dict(SAMPLE_DEBRIEF)]))
+    db.table.return_value.insert.return_value.execute.side_effect = (
+        APIError({"code": "23505", "message": "duplicate key", "details": "", "hint": ""})
+        if duplicate else httpx.ReadError("response lost after commit")
+    )
+    response = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")}, data={"recording_id": "recover-commit"})
+    assert response.status_code == 200
+    assert response.json()["debrief"]["id"] == SAMPLE_DEBRIEF["id"]
+    assert refund.call_count == int(duplicate)
+    assert not main._processing_sessions

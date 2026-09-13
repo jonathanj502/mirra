@@ -4,6 +4,12 @@ export function endpoint(path: string) {
   return `${env.backendUrl.replace(/\/$/, '')}${path}`;
 }
 
+export class ApiError extends Error {
+  constructor(message: string, public status: number) {
+    super(message);
+  }
+}
+
 export async function parseResponse<T>(response: Response): Promise<T> {
   const text = await response.text();
   let body: unknown = null;
@@ -12,13 +18,13 @@ export async function parseResponse<T>(response: Response): Promise<T> {
       body = JSON.parse(text);
     } catch {
       // Non-JSON body (e.g. an unhandled backend exception returns plain-text "Internal Server Error").
-      if (!response.ok) throw new Error(`Request failed (${response.status})`);
+      if (!response.ok) throw new ApiError(`Request failed (${response.status})`, response.status);
       throw new Error('Invalid response from server');
     }
   }
   if (!response.ok) {
     const detail = (body as { detail?: unknown })?.detail ?? 'Request failed';
-    throw new Error(typeof detail === 'string' ? detail : 'Request failed');
+    throw new ApiError(typeof detail === 'string' ? detail : 'Request failed', response.status);
   }
   return body as T;
 }
