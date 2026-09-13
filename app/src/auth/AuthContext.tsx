@@ -11,6 +11,7 @@ WebBrowser.maybeCompleteAuthSession();
 
 interface AuthContextValue {
   initializing: boolean;
+  authError: string | null;
   session: Session | null;
   user: User | null;
   accessToken: string | null;
@@ -30,11 +31,24 @@ function authRedirectUrl() {
   return makeRedirectUri({ scheme: 'mirra', path: 'auth' });
 }
 
-async function createSessionFromUrl(url: string | null) {
+export async function createSessionFromUrl(url: string | null) {
   if (!url) return;
 
   const { params, errorCode } = QueryParams.getQueryParams(url);
+  if (Platform.OS === 'web' && typeof window !== 'undefined' &&
+      (params.access_token || params.refresh_token || params.code || params.error || errorCode)) {
+    const cleanUrl = new URL(window.location.href);
+    const hash = new URLSearchParams(cleanUrl.hash.slice(1));
+    for (const key of ['access_token', 'refresh_token', 'provider_token', 'provider_refresh_token',
+      'expires_at', 'expires_in', 'token_type', 'code', 'type', 'error', 'error_code', 'error_description', 'errorCode', 'sb']) {
+      cleanUrl.searchParams.delete(key);
+      hash.delete(key);
+    }
+    cleanUrl.hash = hash.toString();
+    window.history.replaceState(window.history.state, '', cleanUrl.toString());
+  }
   if (errorCode) throw new Error(errorCode);
+  if (params.error) throw new Error(params.error_description || params.error);
 
   const accessToken = params.access_token;
   const refreshToken = params.refresh_token;
@@ -57,6 +71,7 @@ async function createSessionFromUrl(url: string | null) {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [initializing, setInitializing] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
 
   useEffect(() => {
@@ -68,6 +83,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (nextSession) setAuthError(null);
       setSession(nextSession);
       setInitializing(false);
     });
@@ -79,8 +95,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    Linking.getInitialURL().then(createSessionFromUrl);
-    const sub = Linking.addEventListener('url', ({ url }) => createSessionFromUrl(url));
+    const onError = (error: unknown) => setAuthError(error instanceof Error ? error.message : 'Could not complete sign-in. Please try again.');
+    Linking.getInitialURL().then(createSessionFromUrl).catch(onError);
+    const sub = Linking.addEventListener('url', ({ url }) => { void createSessionFromUrl(url).catch(onError); });
     return () => sub.remove();
   }, []);
 
@@ -135,6 +152,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<AuthContextValue>(
     () => ({
       initializing,
+      authError,
       session,
       user: session?.user ?? null,
       accessToken: session?.access_token ?? null,
@@ -144,7 +162,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       sendMagicLink,
       signOut,
     }),
-    [initializing, session, signInWithPassword, signUpWithPassword, signInWithGoogle, sendMagicLink, signOut]
+    [initializing, authError, session, signInWithPassword, signUpWithPassword, signInWithGoogle, sendMagicLink, signOut]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -17,7 +17,7 @@ import { AuthStatus, fetchAuthStatus } from '@/api/status';
 type Mode = 'sign-in' | 'sign-up';
 
 export function AuthScreen() {
-  const { signInWithPassword, signUpWithPassword, signInWithGoogle } = useAuth();
+  const { signInWithPassword, signUpWithPassword, signInWithGoogle, authError } = useAuth();
   const [mode, setMode] = useState<Mode>('sign-in');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -156,7 +156,7 @@ export function AuthScreen() {
           </>
         )}
 
-        {message ? <Body style={styles.message}>{message}</Body> : null}
+        {message || authError ? <Body accessibilityRole="alert" style={styles.message}>{message || authError}</Body> : null}
       </View>
     </KeyboardAvoidingView>
   );

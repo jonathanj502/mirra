@@ -1,10 +1,9 @@
 # Mirra — App
 
 React Native (Expo + TypeScript) implementation of the Mirra mobile design.
-This is the UI layer: all six screens from the Claude Design handoff, rebuilt
-pixel-faithfully as native components. Data is mocked in `src/data/` (the
-prototype's `RECENTS` / `WEEKS` / reflect seed) — wire it to the backend
-(`POST /sessions`, `GET /debriefs`, `GET /usage`) when that lands.
+The six screens use native components and fetch live data through the FastAPI
+backend. Transcription, debrief coaching, and Reflect use one server-side
+`OPENAI_API_KEY`; this key never belongs in the app's public environment.
 
 ## Run
 
@@ -26,7 +25,7 @@ npx expo start          # then press i (iOS), a (Android), or scan in Expo Go
 | `/progress` (tab) | `ProgressScreen` | Daily-minutes bars + 6 expandable weekly metric cards + strengths/nudges |
 | `/profile` (tab) | `ProfileScreen` | Identity, stats, subscription card, settings |
 | `/conversation` | `AnalyticsScreen` | Single-conversation deep-dive (Talk/Listen, Questions, Turn-floor offset, Energy, LSM radar, Vocabulary) |
-| `/reflect` | `ReflectScreen` | AI reflection chat (canned replies stand in for the Claude call) |
+| `/reflect` | `ReflectScreen` | OpenAI reflection chat with a local fallback when unavailable |
 
 ## Layout
 
@@ -37,7 +36,7 @@ app/                    expo-router routes (thin wrappers)
   reflect.tsx
 src/
   theme/tokens.ts       dawn palette, fonts, radii, shadows (from tokens.css)
-  data/                 RECENTS, WEEKS, reflect seed
+  data/                 Reflect starter prompts and fallback copy
   components/           Typography, Icon, ui (Card/Pip/Chip), Screen,
                         FloatingTabBar, charts (react-native-svg port),
                         meters (FillerBars/SyncBars/OffsetZoneLegend),

@@ -433,7 +433,7 @@ export async function uploadSession(
     form.append('client_duration_seconds', String(metadata.clientDurationSeconds));
   }
 
-  // 2-retry on network-level failure only (mirrors the backend's claude.py convention);
+  // Two retries on network-level failure only;
   // HTTP error responses reach parseResponse unretried — a 4xx won't succeed on retry.
   let response!: Response;
   for (let attempt = 0; ; attempt++) {

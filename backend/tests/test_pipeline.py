@@ -1,7 +1,9 @@
 import io
+import json
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import httpx
 import pytest
 import soundfile as sf
 from fastapi.testclient import TestClient
@@ -15,6 +17,8 @@ from app.pipeline.vad import Segment
 from app.pipeline.speaker import select_user_speaker
 from app.pipeline.transcription import TranscribedTurn, TranscriptionInputTooLarge
 from app.pipeline.prosody import compute_stats
+from app.pipeline import coaching
+from openai import OpenAI
 
 SAMPLE_DEBRIEF = {
     "id": "00000000-0000-0000-0000-000000000001",
@@ -151,16 +155,55 @@ def test_coordinator_resamples_stereo_audio_for_voice_analysis(mock_detect, mock
 
 # --- mocked I/O tests ---
 
-@patch("app.pipeline.claude.anthropic.Anthropic")
-def test_analyze(mock_anthropic):
-    block = MagicMock()
-    block.type = "tool_use"
-    block.name = "debrief_card"
-    block.input = {"observation": "x", "pattern_to_reduce": "y", "thing_to_try_next": "z"}
-    mock_anthropic.return_value.messages.create.return_value.content = [block]
-    from app.pipeline.claude import analyze
-    result = analyze("transcript", {})
-    assert result == {"observation": "x", "pattern_to_reduce": "y", "thing_to_try_next": "z"}
+@pytest.mark.parametrize("invalid_attempts", [0, 2, 3])
+def test_analyze_validates_openai_output_and_bounds_retries(monkeypatch, invalid_attempts):
+    expected = {"observation": "x", "pattern_to_reduce": "y", "thing_to_try_next": "z"}
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        content = {"observation": ""} if len(requests) <= invalid_attempts else expected
+        return httpx.Response(200, json={
+            "id": "resp_test", "object": "response", "created_at": 1,
+            "model": "gpt-4.1", "status": "completed", "parallel_tool_calls": True,
+            "tool_choice": "auto", "tools": [],
+            "output": [{"id": "msg_test", "type": "message", "role": "assistant", "status": "completed",
+                        "content": [{"type": "output_text", "text": json.dumps(content), "annotations": []}]}],
+        })
+
+    def client(**kwargs):
+        assert kwargs["api_key"] == coaching.settings.openai_api_key
+        assert kwargs["max_retries"] == 2
+        return OpenAI(**kwargs, http_client=httpx.Client(transport=httpx.MockTransport(respond)))
+
+    monkeypatch.setattr(coaching, "OpenAI", client)
+    if invalid_attempts == 3:
+        with pytest.raises(RuntimeError, match="valid debrief"):
+            coaching.analyze("Speaker A: Hello. Speaker B: Hi.", {"question_count": 1})
+    else:
+        assert coaching.analyze("Speaker A: Hello. Speaker B: Hi.", {"question_count": 1}) == expected
+    assert len(requests) == min(invalid_attempts + 1, 3)
+    assert str(requests[0].url) == "https://api.openai.com/v1/responses"
+    body = json.loads(requests[0].content)
+    assert body["model"] == coaching.settings.openai_debrief_model
+    assert body["store"] is False
+    assert "Speaker B: Hi." in body["input"] and "question_count" in body["input"]
+    assert "not verified voice recognition" in body["instructions"]
+    assert body["text"]["format"]["strict"] is True
+    assert set(body["text"]["format"]["schema"]["required"]) == set(expected)
+
+
+@pytest.mark.parametrize("status", ["completed", "incomplete"])
+@patch("app.pipeline.coaching.OpenAI")
+def test_analyze_does_not_accept_missing_or_incomplete_output(factory, status):
+    parse = factory.return_value.__enter__.return_value.responses.parse
+    parse.return_value.status = status
+    parse.return_value.output_parsed = coaching.CoachingOutput(
+        observation="x", pattern_to_reduce="y", thing_to_try_next="z",
+    ) if status == "incomplete" else None
+    with pytest.raises(RuntimeError, match="valid debrief"):
+        coaching.analyze("transcript", {})
+    assert parse.call_count == 3
 
 
 # --- endpoint tests ---

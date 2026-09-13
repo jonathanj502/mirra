@@ -113,7 +113,7 @@ function toWeek(summary: ProgressWeekSummary): Week {
 export function ProgressScreen() {
   const router = useRouter();
   const [weekIdx, setWeekIdx] = useState(1);
-  const { progress, loading, error } = useProgressSummary();
+  const { progress, loading, error, refresh } = useProgressSummary();
   const backendWeeks = useMemo(() => progress?.weeks.map(toWeek) ?? [], [progress]);
   const weeks = backendWeeks.length > 0 ? backendWeeks : [EMPTY_WEEK];
   const usingBackendWeeks = backendWeeks.length > 0;
@@ -205,7 +205,7 @@ export function ProgressScreen() {
   const reflectSubject = w.short.toLowerCase() === 'this week' ? 'this week' : `your ${w.short.toLowerCase()}`;
 
   return (
-    <Screen topOffset={50}>
+    <Screen topOffset={50} error={error} onRefresh={refresh} refreshing={loading}>
       <View style={{ paddingTop: 4 }}>
         <WeekPaginator weeks={weeks} idx={weekIdx} onChange={setWeekIdx} />
       </View>

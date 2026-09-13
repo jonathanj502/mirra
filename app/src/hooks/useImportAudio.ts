@@ -1,5 +1,4 @@
 import { useCallback, useState } from 'react';
-import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
 import { friendlyErrorMessage } from '@/api/http';
@@ -46,12 +45,14 @@ function mimeTypeFor(name: string, provided?: string | null): string {
 export function useImportAudio() {
   const { accessToken } = useAuth();
   const [importing, setImporting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const importAudio = useCallback(async (): Promise<DebriefCard | null> => {
     setImporting(true);
+    setError(null);
     try {
       if (!accessToken) {
-        Alert.alert('Sign in required', 'Please sign in before uploading a conversation.');
+        setError('Please sign in before uploading a conversation.');
         return null;
       }
 
@@ -66,10 +67,7 @@ export function useImportAudio() {
       const asset = result.assets[0];
       const size = asset.size ?? 0;
       if (size > MAX_BYTES) {
-        Alert.alert(
-          'File too large',
-          'Please choose an audio file under 25 MB.'
-        );
+        setError('Please choose an audio file under 25 MB.');
         return null;
       }
 
@@ -86,12 +84,12 @@ export function useImportAudio() {
         err,
         'Could not analyze that audio file. Try another format or a shorter recording.'
       );
-      Alert.alert('Import failed', message);
+      setError(message);
       return null;
     } finally {
       setImporting(false);
     }
   }, [accessToken]);
 
-  return { importAudio, importing };
+  return { importAudio, importing, error };
 }

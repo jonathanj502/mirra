@@ -154,7 +154,7 @@ def main() -> int:
     if reflect_code != 200 or not reflect.get("reply"):
         return 1
     if REQUIRE_MODEL and not reflect.get("used_model"):
-        print("reflect model smoke failed: configure OPEN_MODEL_API_KEY or HF_TOKEN")
+        print("reflect model smoke failed: configure OPENAI_API_KEY")
         return 1
 
     if not status.get("google_enabled"):

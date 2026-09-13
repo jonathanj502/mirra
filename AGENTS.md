@@ -2,7 +2,7 @@
 
 This file provides project-specific guidance to Codex when working in this repository.
 
-Adapted from CLAUDE.md. Keep shared project facts and conventions aligned between these files when updating either. Verify implementation details against the code before relying on descriptions of current status.
+Verify implementation details against the code before relying on descriptions of current status.
 
 ## Project Overview
 
@@ -44,8 +44,8 @@ All audio capture happens on-device via `expo-av` (`useRecordAudio.ts`), encoded
 2. `pipeline/transcription.py` — Sends the complete recording to `gpt-4o-transcribe-diarize` with `diarized_json` output and automatic server chunking. Speaker labels and timestamps refer to the original timeline.
 3. `pipeline/speaker.py` — Merges overlapping intervals of the same speaker and estimates the user as the speaker with the highest duration-weighted RMS. Keeps every turn with that label, including quieter turns. This remains an unconfirmed microphone-placement assumption.
 4. `pipeline/prosody.py` — Computes acoustic, word, question, filler, and speaking-rate statistics for the selected speaker. Other-speaker labels supply comparison durations. Interruption counts estimate overlap initiated by the user.
-5. `pipeline/claude.py` — Sends the full labeled conversation and selected-speaker stats to Anthropic `claude-sonnet-4-6` with `tool_use` for structured `DebriefCard` output. The prompt explains identity and timing uncertainty. Retains the 2-retry loop and `cache_control: ephemeral`.
-6. `pipeline/coordinator.py` — Orchestrates these stages; returns a neutral debrief without calling Claude when no speech is found.
+5. `pipeline/coaching.py` — Sends the full labeled conversation and selected-speaker stats to OpenAI `gpt-4.1` using Responses API structured outputs validated by Pydantic. The prompt explains identity and timing uncertainty. Retains two retries for invalid output; the SDK retries transient API errors twice.
+6. `pipeline/coordinator.py` — Orchestrates these stages; returns a neutral debrief without calling the coaching model when no speech is found.
 7. `POST /sessions` reserves free usage before processing, saves the debrief and diarization metadata, and refunds failed processing. The full labeled transcript is stored only when transcript saving is enabled.
 
 See `backend/app/pipeline/README.md` for request limits, timing caveats, and validation.
@@ -91,7 +91,7 @@ Note: the original plan called for `react-native-receive-sharing-intent` handlin
 
 - **Background recording** — iOS requires `UIBackgroundModes: ["audio"]` in `app.config.ts` and an active `AVAudioSession`. Android requires a foreground service with a persistent notification. Validate on real devices, not simulators, with screen locked for 5+ minutes.
 
-- **Claude structured output** — always use `tool_use`, never free-text JSON parsing. The 2-retry loop in `claude.py` is mandatory before surfacing an error to the user.
+- **OpenAI structured output** — use `responses.parse` with the `CoachingOutput` Pydantic schema, never free-text JSON parsing. Keep two retries for invalid output in `coaching.py`; reject missing or incomplete output rather than saving an invalid debrief.
 
 - **Speaker classification accuracy** — diarization groups voices but does not identify the recording owner. `speaker.py` still assumes the user is closer to the mic and chooses the loudest speaker by duration-weighted RMS. Document this constraint in onboarding. All turns of the chosen label are retained; speaker splitting and mixed-voice overlap can still affect metrics. `stats.metadata.diarization.user_speaker_confirmed` is false; there is no voice enrollment or speaker-correction UI.
 
@@ -99,7 +99,9 @@ Note: the original plan called for `react-native-receive-sharing-intent` handlin
 
 - **JWT verification is ES256/JWKS, not a shared secret** — this Supabase project signs tokens with asymmetric keys, so an HS256 `SUPABASE_JWT_SECRET` can never verify them (this once silently broke every authenticated request). `app/auth.py` fetches the public JWKS once and caches it for the process lifetime; restart the backend if Supabase signing keys are ever rotated.
 
-- **Prompt caching** — mark the Claude system prompt and tool definition as `cache_control: ephemeral`. Track hit rate via `usage.cache_read_input_tokens` in SDK responses.
+- **One AI credential** — `OPENAI_API_KEY` powers transcription, debriefs, and Reflect. Optional `OPENAI_DEBRIEF_MODEL` / `OPENAI_REFLECT_MODEL` overrides default to `gpt-4.1` / `gpt-4.1-mini`. Text requests use `store=False`; Reflect includes transcripts only when the user's settings allow it.
+
+- **Prompt caching** — keep stable instructions and the output schema before varying conversation content. OpenAI caches eligible prompt prefixes automatically; no provider-specific cache-control fields are needed.
 
 ## Supabase Schema
 
@@ -127,7 +129,7 @@ Free tier cap: 5 debriefs/month. Enforced server-side — `POST /sessions` retur
 | `GET /settings`, `PATCH /settings` | notification/coaching-tone user settings |
 | `GET /billing/status`, `POST /billing/checkout`, `POST /billing/portal`, `POST /billing/webhook` | Stripe subscription status, checkout/portal session creation, webhook receiver |
 | `GET /analytics/progress` | weekly aggregated stats for ProgressScreen/InsightsIndexScreen |
-| `POST /reflect` | Reflect chat — calls `open_model.py`, not the Claude debrief pipeline |
+| `POST /reflect` | Reflect chat — calls OpenAI through `reflection.py` |
 
 ## Backend Integration Status
 
@@ -139,6 +141,6 @@ The frontend is fully wired to the backend — no more mock data. `src/data/rece
 - Billing (Stripe) — `useBilling`, `backend/app/billing.py`, `/billing/*` routes.
 - User settings (notifications, coaching tone) — `useUserSettings`, `backend/app/user_settings.py`, `/settings` routes.
 - Dashboard/analytics — `useProgressSummary`, `backend/app/dashboard.py`, `/analytics/progress`.
-- Reflect chat — `useDebriefs` + `api/client.ts`'s reflect call, `backend/app/open_model.py`, `/reflect`. `src/data/reflect.ts` still exists but only for seed/starter-prompt copy and canned replies used if the live call fails — not conversation data.
+- Reflect chat — `useDebriefs` + `api/client.ts`'s reflect call, `backend/app/reflection.py`, `/reflect`. Uses the same OpenAI key as transcription and debriefs, with a local fallback when no model reply is available. `src/data/reflect.ts` still exists but only for seed/starter-prompt copy and canned replies used if the live call fails — not conversation data.
 
 **Data models are already aligned** — `backend/app/models/debrief.py` matches the TypeScript `DebriefCard`/`ConversationStats` interfaces in `app/src/models/`.
