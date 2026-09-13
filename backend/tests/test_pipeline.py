@@ -12,7 +12,8 @@ from app.main import app
 from app.models.settings import UserSettings
 import app.main as main
 from app.pipeline.vad import Segment
-from app.pipeline.speaker import filter_user_segments
+from app.pipeline.speaker import select_user_speaker
+from app.pipeline.transcription import TranscribedTurn, TranscriptionInputTooLarge
 from app.pipeline.prosody import compute_stats
 
 SAMPLE_DEBRIEF = {
@@ -60,21 +61,18 @@ def teardown_function():
 
 # --- pure function tests ---
 
-def test_filter_user_segments_uses_high_energy_cluster():
-    energies = [0.10, 0.12, 0.80, 0.90]
-    segs = [Segment(start=float(i), end=float(i + 1), energy=energy) for i, energy in enumerate(energies)]
-    result = filter_user_segments(segs)
-    assert [s.energy for s in result] == [0.8, 0.9]
+def test_select_user_speaker_weights_energy_by_duration():
+    # A brief loud turn should not outweigh the rest of that speaker's quiet speech.
+    segs = [Segment(0, 9, 0.1, "A"), Segment(9, 10, 0.9, "A"), Segment(10, 20, 0.4, "B")]
+    assert select_user_speaker(segs) == "B"
 
 
-def test_filter_user_segments_keeps_single_voice_when_energy_is_close():
-    segs = [Segment(start=float(i), end=float(i + 1), energy=0.45 + i * 0.02) for i in range(4)]
-    result = filter_user_segments(segs)
-    assert result == segs
+def test_select_user_speaker_handles_one_voice():
+    assert select_user_speaker([Segment(0, 1, 0.45, "A")]) == "A"
 
 
-def test_filter_user_segments_empty():
-    assert filter_user_segments([]) == []
+def test_select_user_speaker_empty():
+    assert select_user_speaker([]) is None
 
 
 def test_compute_stats_basic():
@@ -121,7 +119,7 @@ def test_compute_stats_adds_voice_analysis_from_audio():
     assert stats["question_count"] == 2
     assert stats["open_question_count"] == 1
     assert stats["closed_question_count"] == 1
-    assert stats["interruption_count"] == 1
+    assert stats["interruption_count"] == 0
     assert stats["average_turn_offset_ms"] == 275
     assert len(stats["energy_axes"]) == 3
     assert len(stats["energy_series_user"]) == 16
@@ -132,20 +130,18 @@ def test_compute_stats_adds_voice_analysis_from_audio():
 
 @patch("app.pipeline.coordinator.analyze")
 @patch("app.pipeline.coordinator.transcribe")
-@patch("app.pipeline.coordinator.filter_user_segments")
 @patch("app.pipeline.coordinator.detect_segments")
-def test_coordinator_resamples_stereo_audio_for_voice_analysis(mock_detect, mock_filter, mock_transcribe, mock_analyze):
+def test_coordinator_resamples_stereo_audio_for_voice_analysis(mock_detect, mock_transcribe, mock_analyze):
     from app.pipeline import coordinator
 
     mock_detect.return_value = [Segment(0, 0.5, 0.1)]
-    mock_filter.return_value = [Segment(0, 0.5, 0.1)]
-    mock_transcribe.return_value = "What changed?"
+    mock_transcribe.return_value = [TranscribedTurn(0, 0.5, "A", "What changed?")]
     mock_analyze.return_value = {"observation": "x", "pattern_to_reduce": "y", "thing_to_try_next": "z"}
 
     result = coordinator.run(_fake_wav(sample_rate=44100, stereo=True))
 
     detected_audio, detected_sr = mock_detect.call_args.args
-    transcribed_audio, transcribed_sr, _segments = mock_transcribe.call_args.args
+    transcribed_audio, transcribed_sr = mock_transcribe.call_args.args
     assert detected_sr == 16000
     assert transcribed_sr == 16000
     assert detected_audio.ndim == 1
@@ -154,15 +150,6 @@ def test_coordinator_resamples_stereo_audio_for_voice_analysis(mock_detect, mock
 
 
 # --- mocked I/O tests ---
-
-@patch("app.pipeline.whisper.OpenAI")
-def test_transcribe(mock_openai):
-    mock_openai.return_value.audio.transcriptions.create.return_value.text = "hello world"
-    from app.pipeline.whisper import transcribe
-    audio = np.zeros(16000, dtype=np.float32)
-    result = transcribe(audio, 16000, [Segment(0, 1, 0.5)])
-    assert result == "hello world"
-
 
 @patch("app.pipeline.claude.anthropic.Anthropic")
 def test_analyze(mock_anthropic):
@@ -336,3 +323,29 @@ def test_missing_audio_content_type_is_rejected(session_io):
     r = client.post("/sessions", content=body, headers={"Content-Type": "multipart/form-data; boundary=test"})
     assert r.status_code == 415
     reserve.assert_not_called()
+
+
+def test_session_preserves_diarization_metadata_with_transcript_saving_disabled(session_io):
+    client, db, _reserve, _refund = session_io
+    main.fetch_user_settings.return_value = UserSettings(save_transcripts=False)
+    diarization = {"model": "gpt-4o-transcribe-diarize", "user_speaker": "A", "speaker_count": 2}
+    main.coordinator.run.return_value = {**SAMPLE_DEBRIEF,
+        "stats": {**SAMPLE_DEBRIEF["stats"], "metadata": {"diarization": diarization}},
+        "transcript": "Speaker A: Hello.\nSpeaker B: Hi.",
+    }
+    r = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")}, data={"title": "Meeting"})
+    assert r.status_code == 200
+    payload = db.table.return_value.insert.call_args.args[0]
+    assert payload["stats"]["metadata"]["diarization"] == diarization
+    assert payload["stats"]["metadata"]["title"] == "Meeting"
+    assert payload["transcript"] is None
+    assert "Speaker A: Hello" not in str(payload)
+
+
+def test_transcription_upload_limit_returns_413_and_refunds_usage(session_io):
+    client, _db, _reserve, refund = session_io
+    main.coordinator.run.side_effect = TranscriptionInputTooLarge()
+    r = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")})
+    assert r.status_code == 413
+    assert "too large to transcribe" in r.json()["detail"]
+    refund.assert_called_once_with(_db, "user-1", "2026-08")

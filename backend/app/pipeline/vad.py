@@ -12,6 +12,7 @@ class Segment:
     start: float  # seconds
     end: float    # seconds
     energy: float  # RMS
+    speaker: str | None = None
 
 
 def _get_model():
