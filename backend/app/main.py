@@ -378,8 +378,9 @@ def _process_session(audio, started_at, client_duration_seconds, title, user_id,
         if reservation_month is not None:
             try:
                 release(db, user_id, reservation_month)
-            except Exception:
-                logger.exception("Could not release debrief reservation for user %s in %s", user_id, reservation_month)
+            except Exception as refund_error:
+                logger.error("Could not release debrief reservation for user %s in %s (%s)",
+                             user_id, reservation_month, type(refund_error).__name__)
         if existing:
             return _session_response(db, user_id, existing)
         if getattr(exc, 'code', None) == 'P0001' and 'recording_deleted' in str(exc):
