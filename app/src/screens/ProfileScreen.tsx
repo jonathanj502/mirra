@@ -1,6 +1,7 @@
 // You · profile — identity, stats, settings.
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Linking, Modal, Pressable, Switch, View, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import { ActivityIndicator, Linking, Modal, Pressable, ScrollView, Switch, View, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path } from 'react-native-svg';
 import { Screen } from '@/components/Screen';
@@ -8,35 +9,20 @@ import { Card } from '@/components/ui';
 import { Body, Serif, SerifItalic, Eyebrow } from '@/components/Typography';
 import { Icon } from '@/components/Icon';
 import { colors, fonts } from '@/theme/tokens';
-import { exportAccountData } from '@/api/client';
+import { deleteAccount, exportAccountData, updateUserSettings } from '@/api/client';
+import { saveJsonDownload } from '@/utils/exportData';
+import { confirmAction } from '@/utils/confirm';
+import { clearPendingRecordings } from '@/storage/pendingRecordings';
+import { PRIVACY_URL, TERMS_URL, SUPPORT_URL } from '@/config/legal';
+import { usePrivacy } from '@/auth/PrivacyContext';
+import { useRecordAudio } from '@/hooks/useRecordAudio';
 import { useAuth } from '@/auth/AuthContext';
 import { useProfileSummary } from '@/hooks/useProfileSummary';
 import { useUserSettings } from '@/hooks/useUserSettings';
-import { CoachingDepth, CoachingTone, UserSettings, WeeklySummaryDay, WeeklySummaryTime } from '@/models/debrief';
+import { CoachingDepth, CoachingTone, UserSettings } from '@/models/debrief';
 
-type SettingsPanelId = 'notifications' | 'privacy' | 'coaching' | 'help';
-type AccountActionId = 'export' | 'signOut';
-type SchedulePickerId = 'day' | 'time';
-
-const DAY_OPTIONS: { value: WeeklySummaryDay; label: string }[] = [
-  { value: 'sunday', label: 'Sunday' },
-  { value: 'monday', label: 'Monday' },
-  { value: 'tuesday', label: 'Tuesday' },
-  { value: 'wednesday', label: 'Wednesday' },
-  { value: 'thursday', label: 'Thursday' },
-  { value: 'friday', label: 'Friday' },
-  { value: 'saturday', label: 'Saturday' },
-];
-
-const TIME_OPTIONS: { value: WeeklySummaryTime; label: string; hint: string }[] = [
-  { value: 'early_morning', label: 'Early morning', hint: '7 AM' },
-  { value: 'morning', label: 'Morning', hint: '9 AM' },
-  { value: 'midday', label: 'Midday', hint: '12 PM' },
-  { value: 'afternoon', label: 'Afternoon', hint: '3 PM' },
-  { value: 'evening', label: 'Evening', hint: '6 PM' },
-  { value: 'night', label: 'Night', hint: '9 PM' },
-];
-
+type SettingsPanelId = 'privacy' | 'coaching' | 'help';
+type AccountActionId = 'export' | 'signOut' | 'delete';
 const TONE_OPTIONS: { value: CoachingTone; label: string; hint: string }[] = [
   { value: 'warm_reflective', label: 'Warm', hint: 'Soft, validating, spacious.' },
   { value: 'direct_practical', label: 'Direct', hint: 'Clear next steps.' },
@@ -49,15 +35,6 @@ const DEPTH_OPTIONS: { value: CoachingDepth; label: string }[] = [
   { value: 'deep', label: 'Deep' },
 ];
 
-const dayLabel = Object.fromEntries(DAY_OPTIONS.map((option) => [option.value, option.label])) as Record<WeeklySummaryDay, string>;
-const timeLabel: Record<WeeklySummaryTime, string> = {
-  early_morning: 'early morning',
-  morning: 'morning',
-  midday: 'midday',
-  afternoon: 'afternoon',
-  evening: 'evening',
-  night: 'night',
-};
 const toneLabel: Record<CoachingTone, string> = {
   warm_reflective: 'Warm reflective',
   direct_practical: 'Direct practical',
@@ -67,7 +44,7 @@ const toneLabel: Record<CoachingTone, string> = {
 function Avatar({ initials = 'MC', size = 84 }: { initials?: string; size?: number }) {
   return (
     <LinearGradient
-      colors={['#E8B79E', '#D08866', '#BA7253'] as const}
+      colors={['#AC6248', colors.terracotta, '#7D412F'] as const}
       locations={[0, 0.7, 1] as const}
       start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
       style={[styles.avatar, { width: size, height: size, borderRadius: size / 2 }]}
@@ -128,6 +105,8 @@ function Segment<T extends string>({
           <Pressable
             key={option.value}
             onPress={() => onChange(option.value)}
+            accessibilityRole="radio"
+            aria-checked={selected}
             style={[styles.segmentOption, selected && styles.segmentOptionSelected]}
           >
             <Body style={[styles.segmentText, selected && styles.segmentTextSelected]}>{option.label}</Body>
@@ -156,37 +135,13 @@ function SwitchRow({
         {hint ? <Body style={styles.optionHint}>{hint}</Body> : null}
       </View>
       <Switch
+        accessibilityLabel={label}
         value={value}
         onValueChange={onChange}
         trackColor={{ false: 'rgba(42,37,32,0.14)', true: 'rgba(208,136,102,0.45)' }}
         thumbColor={value ? colors.terracotta : '#F6EFE0'}
       />
     </View>
-  );
-}
-
-function ScheduleSettingRow({
-  label,
-  value,
-  isLast,
-  onPress,
-}: {
-  label: string;
-  value: string;
-  isLast?: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [styles.scheduleSettingRow, !isLast && styles.scheduleSettingBorder, pressed && styles.settingPressed]}
-    >
-      <Body style={styles.optionLabel}>{label}</Body>
-      <View style={styles.scheduleSettingValueRow}>
-        <Body style={styles.scheduleSettingValue}>{value}</Body>
-        <Icon.chevron color="rgba(42,37,32,0.35)" />
-      </View>
-    </Pressable>
   );
 }
 
@@ -202,7 +157,7 @@ function ChoiceRow({
   onPress: () => void;
 }) {
   return (
-    <Pressable onPress={onPress} style={[styles.choiceRow, selected && styles.choiceRowSelected]}>
+    <Pressable accessibilityRole="radio" aria-checked={selected} accessibilityLabel={label} onPress={onPress} style={[styles.choiceRow, selected && styles.choiceRowSelected]}>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Body style={[styles.optionLabel, selected && styles.choiceLabelSelected]}>{label}</Body>
         {hint ? <Body style={styles.optionHint}>{hint}</Body> : null}
@@ -212,13 +167,12 @@ function ChoiceRow({
   );
 }
 
-function HelpAction({ label, hint, subject }: { label: string; hint: string; subject: string }) {
+function HelpAction({ label, hint }: { label: string; hint: string }) {
   const open = () => {
-    const encoded = encodeURIComponent(subject);
-    void Linking.openURL(`mailto:hello@mirra.app?subject=${encoded}`);
+    void Linking.openURL(SUPPORT_URL);
   };
   return (
-    <Pressable onPress={open} style={styles.helpAction}>
+    <Pressable accessibilityRole="link" onPress={open} style={styles.helpAction}>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Body style={styles.optionLabel}>{label}</Body>
         <Body style={styles.optionHint}>{hint}</Body>
@@ -229,7 +183,6 @@ function HelpAction({ label, hint, subject }: { label: string; hint: string; sub
 }
 
 const SETTINGS_TITLES: Record<SettingsPanelId, string> = {
-  notifications: 'Notifications',
   privacy: 'Voice & Privacy',
   coaching: 'Coaching Tone',
   help: 'Help & Feedback',
@@ -239,34 +192,9 @@ function settingsTitle(panel: SettingsPanelId | null) {
   return panel ? SETTINGS_TITLES[panel] : '';
 }
 
-function notificationsHint(settings: UserSettings) {
-  if (!settings.notificationsEnabled) return 'Off';
-  return `Weekly summary ${dayLabel[settings.weeklySummaryDay]} · ${timeLabel[settings.weeklySummaryTime]}`;
-}
-
-function summaryTimeValue(value: WeeklySummaryTime) {
-  const option = TIME_OPTIONS.find((item) => item.value === value);
-  return option ? `${option.label} · ${option.hint}` : timeLabel[value];
-}
-
 function privacyHint(settings: UserSettings) {
-  if (!settings.saveTranscripts) return 'Transcripts off · audio discarded';
+  if (!settings.saveTranscripts) return 'Transcript saving off';
   return settings.includeTranscriptInReflect ? 'Transcripts saved · Reflect can use excerpts' : 'Transcripts saved · Reflect uses summaries';
-}
-
-function saveJsonDownload(filename: string, value: unknown) {
-  const json = JSON.stringify(value, null, 2);
-  if (typeof document !== 'undefined' && typeof Blob !== 'undefined' && typeof URL !== 'undefined') {
-    const blob = new Blob([json], { type: 'application/json' });
-    const href = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = href;
-    link.download = filename;
-    link.click();
-    URL.revokeObjectURL(href);
-    return;
-  }
-  void Linking.openURL(`data:application/json;charset=utf-8,${encodeURIComponent(json)}`);
 }
 
 function SettingsSheet({
@@ -287,34 +215,19 @@ function SettingsSheet({
   onChange: (patch: Partial<UserSettings>) => void;
 }) {
   const visible = panel !== null;
-  const [schedulePicker, setSchedulePicker] = useState<SchedulePickerId | null>(null);
-  const pickingSchedule = panel === 'notifications' && schedulePicker !== null;
-  const sheetTitle = pickingSchedule ? (schedulePicker === 'day' ? 'Summary Day' : 'Summary Time') : settingsTitle(panel);
-
-  useEffect(() => {
-    if (panel !== 'notifications') {
-      setSchedulePicker(null);
-    }
-  }, [panel]);
-
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.sheetScrim}>
-        <View style={styles.sheet}>
+        <ScrollView style={{ flexGrow: 0, maxHeight: '90%' }} contentContainerStyle={styles.sheet}>
           <View style={styles.sheetGrabber} />
           <View style={styles.sheetHeader}>
             <View style={styles.sheetTitleCluster}>
-              {pickingSchedule ? (
-                <Pressable onPress={() => setSchedulePicker(null)} hitSlop={8} style={styles.sheetBackButton}>
-                  <Icon.back color={colors.ink2} />
-                </Pressable>
-              ) : null}
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Eyebrow>{pickingSchedule ? 'Notifications' : 'Settings'}</Eyebrow>
-                <Serif style={styles.sheetTitle}>{sheetTitle}</Serif>
+                <Eyebrow>Settings</Eyebrow>
+                <Serif style={styles.sheetTitle}>{settingsTitle(panel)}</Serif>
               </View>
             </View>
-            <Pressable onPress={onClose} hitSlop={10} style={styles.closeButton}>
+            <Pressable accessibilityRole="button" onPress={onClose} hitSlop={10} style={styles.closeButton}>
               <Body style={styles.closeText}>Done</Body>
             </Pressable>
           </View>
@@ -322,79 +235,6 @@ function SettingsSheet({
           {loading ? (
             <View style={styles.sheetLoading}>
               <ActivityIndicator color={colors.terracotta} />
-            </View>
-          ) : null}
-
-          {!loading && panel === 'notifications' && schedulePicker === null ? (
-            <View style={styles.sheetBody}>
-              <SwitchRow
-                label="Weekly summary"
-                hint="A short review of recent conversation patterns."
-                value={settings.notificationsEnabled}
-                onChange={(value) => onChange({ notificationsEnabled: value })}
-              />
-              <View style={styles.scheduleSettingList}>
-                <ScheduleSettingRow
-                  label="Summary day"
-                  value={dayLabel[settings.weeklySummaryDay]}
-                  onPress={() => setSchedulePicker('day')}
-                />
-                <ScheduleSettingRow
-                  label="Summary time"
-                  value={summaryTimeValue(settings.weeklySummaryTime)}
-                  isLast
-                  onPress={() => setSchedulePicker('time')}
-                />
-              </View>
-              <SwitchRow
-                label="Reflection nudges"
-                hint="Light reminders to revisit a saved debrief."
-                value={settings.reflectionReminders}
-                onChange={(value) => onChange({ reflectionReminders: value })}
-              />
-              <SwitchRow
-                label="Product updates"
-                hint="Occasional notes about new Mirra features."
-                value={settings.productUpdates}
-                onChange={(value) => onChange({ productUpdates: value })}
-              />
-            </View>
-          ) : null}
-
-          {!loading && panel === 'notifications' && schedulePicker === 'day' ? (
-            <View style={styles.sheetBody}>
-              <View style={styles.choiceList}>
-                {DAY_OPTIONS.map((option) => (
-                  <ChoiceRow
-                    key={option.value}
-                    label={option.label}
-                    selected={settings.weeklySummaryDay === option.value}
-                    onPress={() => {
-                      onChange({ weeklySummaryDay: option.value });
-                      setSchedulePicker(null);
-                    }}
-                  />
-                ))}
-              </View>
-            </View>
-          ) : null}
-
-          {!loading && panel === 'notifications' && schedulePicker === 'time' ? (
-            <View style={styles.sheetBody}>
-              <View style={styles.choiceList}>
-                {TIME_OPTIONS.map((option) => (
-                  <ChoiceRow
-                    key={option.value}
-                    label={option.label}
-                    hint={option.hint}
-                    selected={settings.weeklySummaryTime === option.value}
-                    onPress={() => {
-                      onChange({ weeklySummaryTime: option.value });
-                      setSchedulePicker(null);
-                    }}
-                  />
-                ))}
-              </View>
             </View>
           ) : null}
 
@@ -408,13 +248,13 @@ function SettingsSheet({
               />
               <SwitchRow
                 label="Use transcript in Reflect"
-                hint="Let Mirra use short excerpts for context."
+                hint="Send saved transcript excerpts to OpenAI with your Reflect messages."
                 value={settings.includeTranscriptInReflect}
                 onChange={(value) => onChange({ includeTranscriptInReflect: value })}
               />
               <View style={styles.factBox}>
                 <Body style={styles.factTitle}>Audio handling</Body>
-                <Body style={styles.factText}>Audio is uploaded for debrief processing, then discarded by the backend.</Body>
+                <Body style={styles.factText}>Audio goes to Mirra and OpenAI for transcription. Our backend deletes temporary audio after processing. OpenAI may retain text requests for abuse monitoring. AI estimates may be wrong; the loudest speaker is assumed to be you.</Body>
               </View>
             </View>
           ) : null}
@@ -444,9 +284,9 @@ function SettingsSheet({
 
           {!loading && panel === 'help' ? (
             <View style={styles.sheetBody}>
-              <HelpAction label="Send feedback" hint="Tell us what felt useful or odd." subject="Mirra feedback" />
-              <HelpAction label="Report an issue" hint="Share what broke and where." subject="Mirra issue report" />
-              <HelpAction label="Privacy question" hint="Ask about data, audio, or transcripts." subject="Mirra privacy question" />
+              <HelpAction label="Send feedback" hint="Tell us what felt useful or odd." />
+              <HelpAction label="Report an issue" hint="Share what broke and where." />
+              <HelpAction label="Privacy question" hint="Ask about data, audio, or transcripts." />
             </View>
           ) : null}
 
@@ -454,7 +294,7 @@ function SettingsSheet({
             {saving ? <Body style={styles.saveState}>Saving…</Body> : null}
             {error ? <Body style={styles.errorText}>{error}</Body> : null}
           </View>
-        </View>
+        </ScrollView>
       </View>
     </Modal>
   );
@@ -479,6 +319,8 @@ function AccountActionRow({
     <Pressable
       onPress={onPress}
       disabled={loading}
+      accessibilityRole="button"
+      accessibilityLabel={label}
       style={({ pressed }) => [styles.accountAction, !isLast && styles.accountActionBorder, pressed && styles.settingPressed]}
     >
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -500,6 +342,7 @@ function AccountMenu({
   onExport,
   onHelp,
   onSignOut,
+  onDelete,
 }: {
   visible: boolean;
   label: string;
@@ -510,11 +353,12 @@ function AccountMenu({
   onExport: () => void;
   onHelp: () => void;
   onSignOut: () => void;
+  onDelete: () => void;
 }) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.menuScrim}>
-        <View style={styles.accountMenu}>
+        <ScrollView style={{ flexGrow: 0, maxHeight: '90%' }} contentContainerStyle={styles.accountMenu}>
           <View style={styles.sheetGrabber} />
           <View style={styles.sheetHeader}>
             <View style={{ flex: 1, minWidth: 0 }}>
@@ -522,7 +366,7 @@ function AccountMenu({
               <Serif style={styles.sheetTitle}>Mirra Member</Serif>
               <Body style={styles.accountMenuSubtext}>{label}</Body>
             </View>
-            <Pressable onPress={onClose} hitSlop={10} style={styles.closeButton}>
+            <Pressable accessibilityRole="button" onPress={onClose} hitSlop={10} style={styles.closeButton}>
               <Body style={styles.closeText}>Done</Body>
             </Pressable>
           </View>
@@ -530,7 +374,7 @@ function AccountMenu({
           <View style={styles.accountActionList}>
             <AccountActionRow
               label="Download my data"
-              hint="Conversations and settings."
+              hint="Conversations, settings and reports."
               loading={busy === 'export'}
               onPress={onExport}
             />
@@ -544,23 +388,26 @@ function AccountMenu({
               hint="Leave this device signed out."
               loading={busy === 'signOut'}
               destructive
-              isLast
               onPress={onSignOut}
             />
+            <AccountActionRow label="Delete account" hint="Permanently remove your account and all saved conversations." destructive isLast loading={busy === 'delete'} onPress={onDelete} />
           </View>
 
           <View style={styles.sheetFooter}>
             {note ? <Body style={styles.saveState}>{note}</Body> : null}
             {error ? <Body style={styles.errorText}>{error}</Body> : null}
           </View>
-        </View>
+        </ScrollView>
       </View>
     </Modal>
   );
 }
 
 export function ProfileScreen() {
+  const router = useRouter();
   const { user, accessToken, signOut } = useAuth();
+  const { canProcess, reviewConsent, withdrawLocally } = usePrivacy();
+  const { isRecording, hasUnsavedRecording, isSavingRecording, isStartingRecording, stopRecording, pauseUploads, resumeUploads } = useRecordAudio();
   const { summary, loading: summaryLoading, error: summaryError, refresh: refreshSummary } = useProfileSummary();
   const { settings, loading: settingsLoading, saving: settingsSaving, error: settingsError, loadError: settingsLoadError,
     refresh: refreshSettings, updateSettings } = useUserSettings(accessToken);
@@ -587,7 +434,7 @@ export function ProfileScreen() {
     try {
       const data = await exportAccountData(accessToken);
       const day = new Date().toISOString().slice(0, 10);
-      saveJsonDownload(`mirra-account-${day}.json`, data);
+      await saveJsonDownload(`mirra-account-${day}.json`, data);
       setAccountNote('Data export ready');
     } catch (err) {
       setAccountError(err instanceof Error ? err.message : 'Could not export data');
@@ -603,6 +450,8 @@ export function ProfileScreen() {
     setAccountBusy('signOut');
     setAccountError(null);
     try {
+      if (isStartingRecording || isSavingRecording) throw new Error('Wait for your recording to finish saving before signing out.');
+      if ((isRecording || hasUnsavedRecording) && !await stopRecording()) throw new Error('Your recording is not saved yet. Keep Mirra open and save it before signing out.');
       await signOut();
       setAccountMenuOpen(false);
     } catch (err) {
@@ -611,6 +460,31 @@ export function ProfileScreen() {
       setAccountBusy(null);
     }
   };
+
+  async function handleDeleteAccount() {
+    if (!user || !accessToken || accountBusy) return;
+    if (isRecording || hasUnsavedRecording || isSavingRecording || isStartingRecording) {
+      setAccountError('Stop and save your recording before deleting your account.'); return;
+    }
+    if (!await confirmAction('Delete your account?', 'This permanently deletes your account, conversations, transcripts, reports, settings and recordings saved on this device. It cannot be undone.', 'Delete account', true)) return;
+    setAccountBusy('delete'); setAccountError(null); pauseUploads();
+    try {
+      await deleteAccount(accessToken);
+      await clearPendingRecordings(user.id);
+      await withdrawLocally();
+      await signOut();
+      setAccountMenuOpen(false);
+    } catch (err) { setAccountError(err instanceof Error ? err.message : 'Could not finish account deletion. Please try again.'); }
+    finally { resumeUploads(); setAccountBusy(null); }
+  }
+
+  async function withdrawConsent() {
+    if (!accessToken) return;
+    try {
+      await updateUserSettings(accessToken, { aiConsentVersion: '' });
+      await withdrawLocally();
+    } catch (err) { setAccountError(err instanceof Error ? err.message : 'Could not save your privacy choice.'); }
+  }
 
   return (
     <Screen topOffset={50} error={summaryError || settingsLoadError}
@@ -656,7 +530,6 @@ export function ProfileScreen() {
       <View style={styles.settingsWrap}>
         <Eyebrow style={{ marginBottom: 6 }}>Settings</Eyebrow>
         <Card style={styles.settingsCard}>
-          <SettingRow label="Notifications" disabled={!settingsReady} hint={settingsReady ? notificationsHint(settings) : settingsHint} onPress={() => setActivePanel('notifications')} />
           <SettingRow label="Voice & privacy" disabled={!settingsReady} hint={settingsReady ? privacyHint(settings) : settingsHint} onPress={() => setActivePanel('privacy')} />
           <SettingRow label="Coaching tone" disabled={!settingsReady} hint={settingsReady ? toneLabel[settings.coachingTone] : settingsHint} onPress={() => setActivePanel('coaching')} />
           <SettingRow label="Help & feedback" hint="Contact, issues, privacy" onPress={() => setActivePanel('help')} isLast />
@@ -675,6 +548,13 @@ export function ProfileScreen() {
         }}
       />
 
+      <View style={{ paddingHorizontal: 24, gap: 8 }}>
+        <SettingRow label="Open-source notices" onPress={() => router.push('/licenses')} />
+        <SettingRow label={canProcess ? 'Withdraw AI processing consent' : 'Review AI processing'} hint={canProcess ? 'Stop future uploads and Reflect requests. Saved data stays available.' : 'Required before recording, importing, or using Reflect.'} onPress={() => { if (canProcess) void withdrawConsent(); else reviewConsent(); }} />
+        {accountError && !accountMenuOpen ? <Body accessibilityRole="alert">{accountError}</Body> : null}
+        {[['Privacy Policy', PRIVACY_URL], ['Terms of Use', TERMS_URL]].map(([label, url]) => <SettingRow key={label} label={label} onPress={() => { void Linking.openURL(url); }} />)}
+      </View>
+
       <AccountMenu
         visible={accountMenuOpen}
         label={label}
@@ -689,13 +569,14 @@ export function ProfileScreen() {
         onSignOut={() => {
           void handleAccountSignOut();
         }}
+        onDelete={() => { void handleDeleteAccount(); }}
       />
 
       <View style={styles.footer}>
-        <Pressable onPress={signOut} hitSlop={8}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Sign out" disabled={!!accountBusy} onPress={handleAccountSignOut} hitSlop={8} style={{ minHeight: 44, justifyContent: 'center' }}>
           <Body style={styles.signOut}>Sign out</Body>
         </Pressable>
-        <Body style={styles.version}>Mirra v1.4.2 · made with care</Body>
+        <Body style={styles.version}>Mirra v1.0.0</Body>
       </View>
     </Screen>
   );
@@ -746,7 +627,7 @@ const styles = StyleSheet.create({
   scheduleSettingValueRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4, flexShrink: 0 },
   scheduleSettingValue: { maxWidth: 160, fontSize: 12.5, color: colors.terracotta, fontFamily: fonts.bodyMedium, lineHeight: 17, textAlign: 'right' },
   segment: { flexDirection: 'row', gap: 6, padding: 4, borderRadius: 16, backgroundColor: 'rgba(42,37,32,0.07)' },
-  segmentOption: { flex: 1, minHeight: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  segmentOption: { flex: 1, minHeight: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
   segmentOptionSelected: { backgroundColor: colors.card },
   segmentText: { fontSize: 12.5, color: colors.muted, fontFamily: fonts.bodyMedium },
   segmentTextSelected: { color: colors.ink },
@@ -771,5 +652,5 @@ const styles = StyleSheet.create({
   errorText: { fontSize: 11.5, color: colors.terracotta, lineHeight: 16 },
   footer: { paddingHorizontal: 22, paddingTop: 14, alignItems: 'center' },
   signOut: { fontSize: 12.5, color: colors.muted },
-  version: { fontSize: 10.5, color: colors.muted, marginTop: 14, letterSpacing: 0.3, opacity: 0.7 },
+  version: { fontSize: 10.5, color: colors.muted, marginTop: 14, letterSpacing: 0.3 },
 });

@@ -43,6 +43,9 @@ function hooks() {
   };
 }
 
+const privacy = { usePrivacy: () => ({ canProcess: true, reviewConsent() {}, withdrawLocally: async () => {} }) };
+const confirmation = { confirmRecordingPermission: async () => true, confirmAction: async () => true };
+
 const auth = { useAuth: () => ({ accessToken: 'test-token' }) };
 const http = load('api/http.ts', { '@/config/env': { env: { backendUrl: 'http://test.invalid' } } });
 const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -94,20 +97,26 @@ test('recording saves before upload, allows another offline clip, and retains th
   let starts = 0;
   const saved = [];
   let diskFull = true;
+  let stoppedByOS = false;
+  let createFails = false;
+  const audioModes = [];
   const { RecordingProvider } = load('hooks/useRecordAudio.ts', {
     react: state.react, 'react-native': { Platform: { OS: 'web' }, NativeModules: {} },
     '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' }, accessToken: null }) }, '@/api/http': http,
     '@/storage/pendingRecordings': { recordingId: () => `recording-${starts}` },
+    '@/auth/PrivacyContext': privacy, '@/utils/confirm': confirmation,
     './usePendingRecordings': { usePendingRecordings: () => ({ async enqueue(recording) {
       saved.push(recording);
       if (diskFull) throw new Error('Storage full');
     } }) },
     'expo-av': { InterruptionModeAndroid: {}, InterruptionModeIOS: {}, Audio: {
-      requestPermissionsAsync: async () => ({ granted: true }), setAudioModeAsync: async () => {},
+      requestPermissionsAsync: async () => ({ granted: true }), setAudioModeAsync: async mode => { audioModes.push(mode); },
       RecordingOptionsPresets: { HIGH_QUALITY: {} }, Recording: { async createAsync() {
         starts++;
+        if (createFails) throw Error('Microphone is unavailable');
         return { status: { durationMillis: 7500 }, recording: {
-          async stopAndUnloadAsync() { stops++; return { durationMillis: 7500 }; }, getURI: () => 'blob:test-recording',
+          async stopAndUnloadAsync() { stops++; if (stoppedByOS) throw Error('Already stopped'); return { durationMillis: 7500 }; },
+          getStatusAsync: async () => ({ isDoneRecording: stoppedByOS, durationMillis: 7500 }), getURI: () => 'blob:test-recording',
         } };
       } },
     } },
@@ -135,18 +144,96 @@ test('recording saves before upload, allows another offline clip, and retains th
   assert.equal(hook.error, null);
   await hook.startRecording();
   assert.equal(starts, 2);
+  stoppedByOS = true;
+  assert.equal(await render().stopRecording(), true);
+  assert.equal(render().isRecording, false);
+  assert.equal(saved.at(-1).seconds, 7.5);
+  createFails = true;
+  await render().startRecording();
+  assert.equal(render().isRecording, false);
+  assert.equal(render().isStartingRecording, false);
+  assert.equal(audioModes.at(-1).allowsRecordingIOS, false, 'A failed start must restore the audio session');
+  assert.equal(render().error, 'Microphone is unavailable');
+});
+
+test('Android offers recording notifications once per launch and denial does not block capture', async () => {
+  const state = hooks();
+  const events = [];
+  const { RecordingProvider } = load('hooks/useRecordAudio.ts', {
+    react: state.react, 'react-native': { Platform: { OS: 'android', Version: 33 },
+      PermissionsAndroid: { PERMISSIONS: { POST_NOTIFICATIONS: 'notifications' }, async request(permission) {
+        assert.equal(permission, 'notifications'); events.push('permission'); return 'denied';
+      } }, NativeModules: { RecordingService: {
+        async startForegroundService() { events.push('service'); }, stopForegroundService() {},
+      } } },
+    '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' } }) }, '@/api/http': http,
+    '@/storage/pendingRecordings': { recordingId: () => 'recording' },
+    '@/auth/PrivacyContext': privacy, '@/utils/confirm': confirmation,
+    './usePendingRecordings': { usePendingRecordings: () => ({ async enqueue() {} }) },
+    'expo-av': { InterruptionModeAndroid: {}, InterruptionModeIOS: {}, Audio: {
+      requestPermissionsAsync: async () => ({ granted: true }), setAudioModeAsync: async () => {},
+      RecordingOptionsPresets: { HIGH_QUALITY: {} }, Recording: { async createAsync() {
+        events.push('capture');
+        return { status: { durationMillis: 1000 }, recording: {
+          stopAndUnloadAsync: async () => ({ durationMillis: 1000 }), getURI: () => 'file:///test.m4a',
+        } };
+      } },
+    } },
+  });
+  const render = () => state.render(() => RecordingProvider({ children: null })).props.value;
+  await render().startRecording();
+  assert.deepEqual(events, ['permission', 'service', 'capture']);
+  assert.equal(render().isRecording, true);
+  await render().stopRecording();
+  await render().startRecording();
+  assert.deepEqual(events, ['permission', 'service', 'capture', 'service', 'capture']);
 });
 
 test('import failures are returned as visible error state on web', async () => {
   const state = hooks();
   const { useImportAudio } = load('hooks/useImportAudio.ts', {
-    react: state.react, '@/auth/AuthContext': auth, '@/api/http': http,
-    '@/api/client': {}, '@/utils/timeFormat': {}, 'expo-av': {},
+    react: state.react, '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' } }) }, '@/api/http': http,
+    '@/hooks/useRecordAudio': { useRecordAudio: () => ({}) }, '@/storage/pendingRecordings': {}, '@/utils/timeFormat': {}, 'expo-av': {},
+    '@/auth/PrivacyContext': privacy, '@/utils/confirm': confirmation,
     'expo-document-picker': { async getDocumentAsync() { throw new Error('Could not open audio file'); } },
   });
   assert.equal(await state.render(useImportAudio).importAudio(), null);
   assert.equal(state.render(useImportAudio).error, 'Could not open audio file');
   assert.equal(state.render(useImportAudio).importing, false);
+});
+
+test('import saves an account-owned copy to the offline queue and requires AI and participant consent', async () => {
+  const state = hooks();
+  let canProcess = false;
+  let permission = false;
+  let asked = 0;
+  let picks = 0;
+  const saved = [];
+  const { useImportAudio } = load('hooks/useImportAudio.ts', {
+    react: state.react, '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' } }) }, '@/api/http': http,
+    '@/auth/PrivacyContext': { usePrivacy: () => ({ canProcess, reviewConsent: () => asked++ }) },
+    '@/utils/confirm': { confirmRecordingPermission: async () => permission },
+    '@/storage/pendingRecordings': { recordingId: () => 'stable-id' },
+    '@/hooks/useRecordAudio': { useRecordAudio: () => ({ enqueue: async row => saved.push(row) }) },
+    '@/utils/timeFormat': { titleFromFilename: () => 'Imported conversation' },
+    'expo-av': { Audio: { Sound: { createAsync: async () => { throw Error('Browser cannot read duration'); } } } },
+    'expo-document-picker': { getDocumentAsync: async () => { picks++; return { assets: [{ uri: 'file://original', name: '../unsafe.mp3', size: 40 }] }; } },
+  });
+  const render = () => state.render(useImportAudio);
+  await render().importAudio();
+  assert.equal(asked, 1); assert.equal(picks, 0);
+  canProcess = true;
+  await render().importAudio();
+  assert.equal(saved.length, 0);
+  permission = true;
+  const hook = render();
+  await Promise.all([hook.importAudio(), hook.importAudio()]);
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].id, 'stable-id');
+  assert.equal(saved[0].userId, 'owner');
+  assert.equal(saved[0].audio.name, 'mirra-import-stable-id.mp3');
+  assert.equal(saved[0].audio.uri, 'file://original');
+  assert.equal(render().error, null);
 });
 
 test('focus refresh recovers a failed tab and an older request cannot overwrite newer data', async () => {
@@ -177,14 +264,45 @@ test('focus refresh recovers a failed tab and an older request cannot overwrite 
   assert.deepEqual(render().data, ['latest']);
 });
 
+test('rapid privacy setting changes save in order and a failure restores actual server state', async () => {
+  const state = hooks();
+  let settings = { saveTranscripts: false, includeTranscriptInReflect: false };
+  const server = { saveTranscripts: true, includeTranscriptInReflect: false };
+  const requests = [];
+  const { useUserSettings } = load('hooks/useUserSettings.ts', {
+    react: state.react, '@/api/http': http,
+    '@/api/client': { updateUserSettings: (token, patch) => new Promise((resolve, reject) => requests.push({ token, patch, resolve, reject })) },
+    './useAuthedFetch': { useAuthedFetch: () => ({ data: settings,
+      setData: value => { settings = typeof value === 'function' ? value(settings) : value; }, refresh: async () => { settings = server; } }) },
+  });
+  const render = () => state.render(() => useUserSettings('owner-token'));
+  const hook = render();
+  const first = hook.updateSettings({ saveTranscripts: true });
+  const second = hook.updateSettings({ includeTranscriptInReflect: true });
+  await flush();
+  assert.equal(requests.length, 1);
+  assert.equal(settings.includeTranscriptInReflect, true);
+  requests[0].resolve(server);
+  await first; await flush();
+  assert.equal(requests.length, 2);
+  assert.equal(settings.includeTranscriptInReflect, true, 'Older response must not erase the newer choice');
+  requests[1].reject(Error('Could not save privacy setting'));
+  await second;
+  assert.deepEqual(settings, server);
+  assert.equal(render().saving, false);
+  assert.match(render().error, /Could not save privacy setting/);
+});
+
 test('profile loads account data without a plan request', () => {
   const state = hooks();
   let summaryState = { summary: null, error: 'Offline' };
   const { ProfileScreen } = load('screens/ProfileScreen.tsx', {
     react: state.react, 'react-native': { StyleSheet: { create: styles => styles } },
-    'expo-linear-gradient': {}, 'react-native-svg': {}, '@/components/Screen': {},
+    'expo-router': { useRouter: () => ({}) }, 'expo-linear-gradient': {}, 'react-native-svg': {}, '@/components/Screen': {},
     '@/components/ui': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
     '@/theme/tokens': { colors: {}, fonts: {} }, '@/api/client': {}, '@/auth/AuthContext': auth,
+    '@/utils/exportData': {}, '@/utils/confirm': confirmation, '@/storage/pendingRecordings': {}, '@/config/legal': {},
+    '@/auth/PrivacyContext': privacy, '@/hooks/useRecordAudio': { useRecordAudio: () => ({}) },
     '@/hooks/useProfileSummary': { useProfileSummary: () => summaryState },
     '@/hooks/useUserSettings': { useUserSettings: () => ({ settings: {}, loadError: 'Offline' }) },
   });
@@ -204,6 +322,95 @@ test('profile loads account data without a plan request', () => {
   assert.match(loaded, /7/);
   assert.match(loaded, /2/);
   assert.doesNotMatch(loaded, /Current plan|Try Pro|Manage plan/);
+});
+
+test('account actions save audio before sign-out and clear local data only after confirmed server deletion', async () => {
+  const state = hooks();
+  const events = [];
+  let recording = true;
+  let canSave = false;
+  let deleteSucceeds = false;
+  const { ProfileScreen } = load('screens/ProfileScreen.tsx', {
+    react: state.react, 'react-native': { StyleSheet: { create: value => value } },
+    'expo-router': { useRouter: () => ({}) }, 'expo-linear-gradient': {}, 'react-native-svg': {},
+    '@/components/Screen': {}, '@/components/ui': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
+    '@/theme/tokens': { colors: {}, fonts: {} }, '@/utils/exportData': {}, '@/config/legal': {},
+    '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' }, accessToken: 'owner-token', signOut: async () => events.push('sign-out') }) },
+    '@/api/client': { deleteAccount: async token => { assert.equal(token, 'owner-token'); events.push('server-delete'); if (!deleteSucceeds) throw Error('Server unavailable'); } },
+    '@/utils/confirm': { confirmAction: async () => true },
+    '@/storage/pendingRecordings': { clearPendingRecordings: async user => { assert.equal(user, 'owner'); events.push('clear-local'); } },
+    '@/auth/PrivacyContext': { usePrivacy: () => ({ canProcess: true, withdrawLocally: async () => events.push('clear-consent') }) },
+    '@/hooks/useRecordAudio': { useRecordAudio: () => ({ isRecording: recording,
+      stopRecording: async () => { events.push('save-recording'); return canSave; },
+      pauseUploads: () => events.push('pause'), resumeUploads: () => events.push('resume') }) },
+    '@/hooks/useProfileSummary': { useProfileSummary: () => ({ summary: null }) },
+    '@/hooks/useUserSettings': { useUserSettings: () => ({ settings: {} }) },
+  });
+  function findMenu(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.props?.onDelete) return node.props;
+    for (const child of [node.props?.children].flat(Infinity)) { const found = findMenu(child); if (found) return found; }
+  }
+  const menu = () => findMenu(state.render(ProfileScreen));
+  function footerSignOut(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.props?.accessibilityLabel === 'Sign out') return node.props;
+    for (const child of [node.props?.children].flat(Infinity)) { const found = footerSignOut(child); if (found) return found; }
+  }
+  await footerSignOut(state.render(ProfileScreen)).onPress();
+  assert.deepEqual(events, ['save-recording'], 'The secondary sign-out path must preserve unsaved audio too');
+  events.length = 0;
+  await menu().onSignOut();
+  assert.deepEqual(events, ['save-recording']);
+  assert.match(menu().error, /not saved yet/);
+  canSave = true;
+  await menu().onSignOut();
+  assert.deepEqual(events.slice(-2), ['save-recording', 'sign-out']);
+  events.length = 0;
+  await menu().onDelete(); await flush();
+  assert.equal(events.length, 0, 'Active capture blocks account deletion');
+  recording = false;
+  await menu().onDelete(); await flush();
+  assert.deepEqual(events, ['pause', 'server-delete', 'resume']);
+  assert.match(menu().error, /Server unavailable/);
+  events.length = 0; deleteSucceeds = true;
+  await menu().onDelete(); await flush();
+  assert.deepEqual(events, ['pause', 'server-delete', 'clear-local', 'clear-consent', 'sign-out', 'resume']);
+});
+
+test('content reports submit only the reviewed response and retain failed attempts', async (t) => {
+  const state = hooks();
+  const requests = [];
+  t.mock.method(globalThis, 'fetch', (url, options) => new Promise(resolve => requests.push({ url, options, resolve })));
+  const { ReportContent } = load('components/ReportContent.tsx', {
+    react: state.react, 'react-native': { KeyboardAvoidingView: 'KeyboardAvoidingView', Platform: { OS: 'ios' }, Modal: 'Modal', Pressable: 'Pressable', TextInput: 'TextInput', View: 'View' },
+    '@/auth/AuthContext': auth, '@/api/client': load('api/client.ts', { '@/api/http': http }), '@/api/http': http,
+    '@/theme/tokens': { colors: {} }, './Screen': { Screen: 'Screen' }, './Typography': { Body: 'Body', Serif: 'Serif' },
+  });
+  const render = () => state.render(() => ReportContent({ content: 'Selected AI reply', source: 'reflect', debriefId: 'owned-id' }));
+  function find(node, match) {
+    if (!node || typeof node !== 'object') return;
+    if (match(node)) return node;
+    for (const child of [node.props?.children].flat(Infinity)) { const found = find(child, match); if (found) return found; }
+  }
+  const send = () => find(render(), node => node.type === 'Pressable' && node.props.children?.props?.children === 'Send report').props;
+  find(render(), node => node.props?.accessibilityLabel === 'Report response').props.onPress();
+  assert.equal(requests.length, 0);
+  find(render(), node => node.type === 'TextInput').props.onChangeText('My optional note');
+  const firstButton = send();
+  const first = firstButton.onPress(); firstButton.onPress();
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, 'http://test.invalid/content-reports');
+  assert.equal(requests[0].options.headers.Authorization, 'Bearer test-token');
+  assert.deepEqual(JSON.parse(requests[0].options.body), { source: 'reflect', content: 'Selected AI reply', reason: 'harmful', comment: 'My optional note', debrief_id: 'owned-id' });
+  requests[0].resolve(new Response('{"detail":"Report service unavailable"}', { status: 503 }));
+  await first;
+  assert.equal(find(render(), node => node.type === 'Screen').props.error, 'Report service unavailable');
+  assert.equal(find(render(), node => node.type === 'TextInput').props.value, 'My optional note');
+  const retry = send().onPress();
+  requests[1].resolve(new Response(null, { status: 204 }));
+  await retry;
+  assert.ok(find(render(), node => node.type === 'Serif' && node.props.children === 'Report received.'));
 });
 
 test('conversation deletion confirms on web and native, retains failures, and navigates only after success', async (t) => {
@@ -234,7 +441,7 @@ test('conversation deletion confirms on web and native, retains failures, and na
     '@/theme/tokens': { colors: {}, fonts: {} }, '@/components/Screen': {},
     '@/components/ui': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
     '@/components/FloatingTabBar': {}, '@/components/ExpandableMetric': {},
-    '@/components/ReflectCTA': {}, '@/components/charts': {}, '@/components/meters': {},
+    '@/components/ReflectCTA': {}, '@/components/ReportContent': {}, '@/components/charts': {}, '@/components/meters': {},
   }, { confirm: () => confirmed });
   const render = () => state.render(AnalyticsScreen);
   function deleteButton(node) {

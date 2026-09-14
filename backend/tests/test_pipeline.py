@@ -56,6 +56,7 @@ def _db_for_sessions(under_cap: bool = True) -> MagicMock:
     usage_result.data = None if under_cap else {"count": 5}
     db.table.return_value.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = usage_result
     db.table.return_value.insert.return_value.execute.return_value.data = [SAMPLE_DEBRIEF]
+    db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {"ai_consent_version": "2026-09-14"}
     return db
 
 
@@ -235,7 +236,7 @@ def test_post_sessions_success(mock_run):
 @patch("app.main.fetch_user_settings")
 @patch("app.main.coordinator.run")
 def test_post_sessions_respects_transcript_setting(mock_run, mock_settings):
-    mock_settings.return_value = UserSettings(save_transcripts=False)
+    mock_settings.return_value = UserSettings(save_transcripts=False, ai_consent_version="2026-09-14")
     mock_run.return_value = {
         "observation": SAMPLE_DEBRIEF["observation"],
         "pattern_to_reduce": SAMPLE_DEBRIEF["pattern_to_reduce"],
@@ -299,7 +300,7 @@ def session_io(monkeypatch):
     refund = MagicMock()
     monkeypatch.setattr(main, "check_and_increment", reserve)
     monkeypatch.setattr(main, "release", refund)
-    monkeypatch.setattr(main, "fetch_user_settings", MagicMock(return_value=UserSettings()))
+    monkeypatch.setattr(main, "fetch_user_settings", MagicMock(return_value=UserSettings(ai_consent_version="2026-09-14")))
     monkeypatch.setattr(main.coordinator, "run", MagicMock(return_value=dict(SAMPLE_DEBRIEF)))
     monkeypatch.setattr(main, "get_usage", MagicMock(return_value={"used_this_month": 1, "remaining": 4}))
     return TestClient(app), db, reserve, refund
@@ -368,7 +369,7 @@ def test_missing_audio_content_type_is_rejected(session_io):
 
 def test_session_preserves_diarization_metadata_with_transcript_saving_disabled(session_io):
     client, db, _reserve, _refund = session_io
-    main.fetch_user_settings.return_value = UserSettings(save_transcripts=False)
+    main.fetch_user_settings.return_value = UserSettings(save_transcripts=False, ai_consent_version="2026-09-14")
     diarization = {"model": "gpt-4o-transcribe-diarize", "user_speaker": "A", "speaker_count": 2}
     main.coordinator.run.return_value = {**SAMPLE_DEBRIEF,
         "stats": {**SAMPLE_DEBRIEF["stats"], "metadata": {"diarization": diarization}},

@@ -1,4 +1,6 @@
 import httpx
+from threading import Lock
+from time import monotonic
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import ExpiredSignatureError, JWTError, jwt
@@ -7,13 +9,18 @@ from app.config import settings
 
 _bearer = HTTPBearer()
 _jwks: dict | None = None
+_jwks_fetched_at = monotonic()
+_jwks_lock = Lock()
 
 
-def _get_jwks() -> dict:
-    # ponytail: JWKS cached until process restart; add refetch-on-unknown-kid
-    # if Supabase signing-key rotation ever bites
-    global _jwks
-    if _jwks is None:
+def _get_jwks(kid: str | None = None) -> dict:
+    global _jwks, _jwks_fetched_at
+    with _jwks_lock:
+        age = monotonic() - _jwks_fetched_at
+        unknown_key = kid and _jwks and not any(key.get('kid') == kid for key in _jwks['keys'])
+        # Refresh on rotation, rate-limited so arbitrary kids cannot hammer Supabase.
+        if _jwks is not None and age < 600 and not (unknown_key and age >= 30):
+            return _jwks
         response = httpx.get(
             f"{settings.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json",
             timeout=10,
@@ -28,12 +35,19 @@ def _get_jwks() -> dict:
         ):
             raise ValueError("Invalid JWKS response")
         _jwks = jwks
+        _jwks_fetched_at = monotonic()
     return _jwks
 
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
     try:
-        jwks = _get_jwks()
+        header = jwt.get_unverified_header(credentials.credentials)
+        if header.get('alg') != 'ES256':
+            raise JWTError('Unsupported signing algorithm')
+    except JWTError as exc:
+        raise HTTPException(status_code=401, detail='Invalid token') from exc
+    try:
+        jwks = _get_jwks(header.get('kid'))
     except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Auth service unavailable") from exc
 

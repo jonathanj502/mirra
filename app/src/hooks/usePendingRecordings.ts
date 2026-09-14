@@ -4,6 +4,7 @@ import { uploadSession } from '@/api/client';
 import { ApiError, friendlyErrorMessage } from '@/api/http';
 import { supabase } from '@/api/supabase';
 import { useAuth } from '@/auth/AuthContext';
+import { usePrivacy } from '@/auth/PrivacyContext';
 import { DebriefCard } from '@/models/debrief';
 import {
   PendingRecording, listPendingRecordings, savePendingRecording,
@@ -12,6 +13,10 @@ import {
 
 export function usePendingRecordings() {
   const { user } = useAuth();
+  const { canProcess } = usePrivacy();
+  const [paused, setPaused] = useState(false);
+  const pauseRequested = useRef(false);
+  const abortUpload = useRef<AbortController | null>(null);
   const userId = user?.id;
   const [pending, setPending] = useState<(PendingRecording & { error?: string })[]>([]);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
@@ -37,9 +42,9 @@ export function usePendingRecordings() {
         if (cancelled) return;
         setPending(rows.map(row => ({ ...row, error: failures.current.get(row.id)?.message })));
         setError(null);
-        if (Platform.OS === 'web' && !navigator.onLine) return;
+        if (pauseRequested.current || paused || !canProcess || (Platform.OS === 'web' && !navigator.onLine)) return;
         for (const row of rows) {
-          if (cancelled || (AppState.currentState && AppState.currentState !== 'active')) break;
+          if (cancelled || pauseRequested.current || (AppState.currentState && AppState.currentState !== 'active')) break;
           if ((failures.current.get(row.id)?.retryAt ?? 0) > Date.now()) continue;
           let audio: PendingRecording['audio'] | undefined;
           let stage = 'auth';
@@ -47,27 +52,29 @@ export function usePendingRecordings() {
           try {
             // Refresh expired credentials before sending; never upload another account's audio.
             const { data, error: authError } = await supabase.auth.getSession();
-            if (cancelled) break;
+            if (cancelled || pauseRequested.current) break;
             if (authError) throw authError;
             if (!data.session || data.session.user.id !== row.userId) break;
             setUploadingId(row.id);
             stage = 'storage';
             audio = await readPendingAudio(row);
-            if (cancelled) break;
+            if (cancelled || pauseRequested.current) break;
             stage = 'upload';
             const controller = new AbortController();
             activeRequest = controller;
+            abortUpload.current = controller;
             // Bound a stalled connection. Retrying this ID returns the same server debrief.
             const timeout = setTimeout(() => controller.abort(), 10 * 60_000);
             let response;
             try {
               response = await uploadSession(data.session.access_token, audio, {
-                title: 'Recorded conversation', clientDurationSeconds: row.seconds,
+                title: row.title || 'Recorded conversation', clientDurationSeconds: row.seconds,
                 recordingId: row.id, startedAt: row.startedAt,
               }, controller.signal);
             } finally {
               clearTimeout(timeout);
               activeRequest = undefined;
+              abortUpload.current = null;
             }
             // Delete only after the server acknowledges a saved debrief, even if sign-out intervened.
             stage = 'storage';
@@ -78,14 +85,14 @@ export function usePendingRecordings() {
               setPending(items => items.filter(item => item.id !== row.id));
             }
           } catch (err) {
-            if (cancelled) break;
+            if (cancelled || pauseRequested.current) break;
             const status = err instanceof ApiError ? err.status : 0;
-            const delay = [413, 415, 422].includes(status) ? Infinity : status === 402 ? 300_000 : status >= 500 || status === 429 ? 60_000 : 15_000;
+            const delay = [410, 413, 415, 422].includes(status) ? Infinity : status === 402 ? 300_000 : status >= 500 || status === 429 ? 60_000 : 15_000;
             const message = status || stage === 'storage' ? friendlyErrorMessage(err, 'Could not access saved audio.')
               : 'Waiting for a connection. Upload resumes automatically.';
             failures.current.set(row.id, { retryAt: Date.now() + delay, message });
             setPending(items => items.map(item => item.id === row.id ? { ...item, error: message } : item));
-            if (stage !== 'storage' && ![413, 415, 422].includes(status)) break;
+            if (stage !== 'storage' && ![410, 413, 415, 422].includes(status)) break;
           } finally {
             if (audio) releasePendingAudio(audio);
             busyId.current = null;
@@ -118,7 +125,7 @@ export function usePendingRecordings() {
       subscription.remove();
       if (Platform.OS === 'web') window.removeEventListener('online', reconnect);
     };
-  }, [userId]);
+  }, [userId, canProcess, paused]);
 
   async function enqueue(recording: PendingRecording) {
     const saved = await savePendingRecording(recording);
@@ -138,6 +145,8 @@ export function usePendingRecordings() {
   }
 
   return {
+    pauseUploads: () => { pauseRequested.current = true; abortUpload.current?.abort(); setPaused(true); },
+    resumeUploads: () => { pauseRequested.current = false; setPaused(false); wake.current(); },
     pendingRecordings: pending.filter(row => row.userId === userId),
     uploadingId, queueError: error, enqueue, discard,
     latestDebrief: completed && completed.userId === userId ? completed.debrief : null,

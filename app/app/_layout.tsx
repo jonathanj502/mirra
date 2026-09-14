@@ -8,17 +8,22 @@ import { StatusBar } from 'expo-status-bar';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
-import { InstrumentSerif_400Regular, InstrumentSerif_400Regular_Italic } from '@expo-google-fonts/instrument-serif';
-import { Inter_300Light, Inter_400Regular, Inter_500Medium, Inter_600SemiBold } from '@expo-google-fonts/inter';
+import { InstrumentSerif_400Regular } from '@expo-google-fonts/instrument-serif/400Regular';
+import { InstrumentSerif_400Regular_Italic } from '@expo-google-fonts/instrument-serif/400Regular_Italic';
+import { Inter_300Light } from '@expo-google-fonts/inter/300Light';
+import { Inter_400Regular } from '@expo-google-fonts/inter/400Regular';
+import { Inter_500Medium } from '@expo-google-fonts/inter/500Medium';
+import { Inter_600SemiBold } from '@expo-google-fonts/inter/600SemiBold';
 import { colors } from '@/theme/tokens';
 import { AuthProvider, useAuth } from '@/auth/AuthContext';
 import { AuthScreen } from '@/screens/AuthScreen';
 import { RecordingProvider } from '@/hooks/useRecordAudio';
+import { PrivacyProvider } from '@/auth/PrivacyContext';
 
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
-  const [loaded] = useFonts({
+  const [loaded, fontError] = useFonts({
     InstrumentSerif_400Regular,
     InstrumentSerif_400Regular_Italic,
     Inter_300Light,
@@ -28,11 +33,11 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
-    if (loaded) SplashScreen.hideAsync();
-  }, [loaded]);
+    if (loaded || fontError) void SplashScreen.hideAsync();
+  }, [loaded, fontError]);
 
   // Keep the dawn background visible while fonts load (returning null looks like a blank screen).
-  if (!loaded) {
+  if (!loaded && !fontError) {
     return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
   }
 
@@ -41,9 +46,9 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <StatusBar style="dark" />
         <AuthProvider>
-          <RecordingProvider>
+          <PrivacyProvider><RecordingProvider>
             <AuthenticatedStack />
-          </RecordingProvider>
+          </RecordingProvider></PrivacyProvider>
         </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
@@ -63,6 +68,7 @@ function AuthenticatedStack() {
 
   return (
     <Stack
+      key={session.user.id}
       screenOptions={{
         headerShown: false,
         contentStyle: { backgroundColor: colors.paper },
@@ -74,3 +80,5 @@ function AuthenticatedStack() {
     </Stack>
   );
 }
+
+export { ErrorBoundary } from 'expo-router';

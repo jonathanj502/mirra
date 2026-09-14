@@ -1,6 +1,7 @@
 import { endpoint, parseResponse } from '@/api/http';
 import {
   AccountExport,
+  ContentReport,
   ConversationSummary,
   DebriefCard,
   FillerCount,
@@ -128,6 +129,8 @@ type RawProfileSummary = {
 };
 
 type RawUserSettings = {
+  ai_consent_version: string | null;
+  ai_consent_at: string | null;
   notifications_enabled: boolean;
   weekly_summary_day: UserSettings['weeklySummaryDay'];
   weekly_summary_time: UserSettings['weeklySummaryTime'];
@@ -140,6 +143,8 @@ type RawUserSettings = {
 };
 
 type RawAccountExport = {
+  content_reports?: Record<string, unknown>[];
+  deleted_conversation_ids?: string[];
   exported_at: string;
   user_id: string;
   profile: RawProfileSummary;
@@ -276,6 +281,8 @@ function toUserSettings(raw: RawUserSettings): UserSettings {
 
 function toAccountExport(raw: RawAccountExport): AccountExport {
   return {
+    contentReports: (raw.content_reports ?? []).map(row => camelizeKeys<ContentReport>(row)),
+    deletedConversationIds: raw.deleted_conversation_ids ?? [],
     exportedAt: raw.exported_at,
     userId: raw.user_id,
     profile: toProfileSummary(raw.profile),
@@ -286,6 +293,7 @@ function toAccountExport(raw: RawAccountExport): AccountExport {
 
 function toRawUserSettingsPatch(patch: Partial<UserSettings>): Partial<RawUserSettings> {
   const raw: Partial<RawUserSettings> = {};
+  if (patch.aiConsentVersion !== undefined) raw.ai_consent_version = patch.aiConsentVersion;
   if (patch.notificationsEnabled !== undefined) raw.notifications_enabled = patch.notificationsEnabled;
   if (patch.weeklySummaryDay !== undefined) raw.weekly_summary_day = patch.weeklySummaryDay;
   if (patch.weeklySummaryTime !== undefined) raw.weekly_summary_time = patch.weeklySummaryTime;
@@ -347,6 +355,19 @@ export async function exportAccountData(token: string): Promise<AccountExport> {
   return toAccountExport(raw);
 }
 
+export async function deleteAccount(token: string): Promise<void> {
+  await fetch(endpoint('/account'), {
+    method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+  }).then(r => parseResponse<void>(r));
+}
+
+export async function reportContent(token: string, payload: Pick<ContentReport, 'source' | 'content' | 'reason' | 'comment'> & { debriefId?: string }): Promise<void> {
+  await fetch(endpoint('/content-reports'), {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source: payload.source, content: payload.content, reason: payload.reason, comment: payload.comment, debrief_id: payload.debriefId }),
+  }).then(r => parseResponse<void>(r));
+}
+
 export async function fetchUserSettings(token: string): Promise<UserSettings> {
   const raw = await fetch(endpoint('/settings'), {
     headers: { Authorization: `Bearer ${token}` },
@@ -366,7 +387,7 @@ export async function updateUserSettings(token: string, patch: Partial<UserSetti
 export async function sendReflection(
   token: string,
   payload: { conversationId?: string; prompt: string; messages: ReflectMessage[] }
-): Promise<string> {
+): Promise<{ reply: string; usedModel: boolean }> {
   const raw = await fetch(endpoint('/reflect'), {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -376,7 +397,7 @@ export async function sendReflection(
       messages: payload.messages,
     }),
   }).then((r) => parseResponse<{ reply: string; used_model: boolean }>(r));
-  return raw.reply;
+  return { reply: raw.reply, usedModel: raw.used_model };
 }
 
 export async function uploadSession(

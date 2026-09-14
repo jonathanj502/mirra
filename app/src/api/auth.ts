@@ -15,11 +15,3 @@ export async function usernameSignIn(username: string, password: string) {
     body: JSON.stringify({ username, password }),
   }).then((r) => parseResponse<BackendAuthSession>(r));
 }
-
-export async function usernameSignUp(username: string, password: string) {
-  return fetch(endpoint('/auth/username/sign-up'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
-  }).then((r) => parseResponse<BackendAuthSession>(r));
-}

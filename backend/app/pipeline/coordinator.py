@@ -1,10 +1,9 @@
-import io
+import subprocess
 from pathlib import Path
 import tempfile
 
 import librosa
 import numpy as np
-import soundfile as sf
 
 from app.pipeline.coaching import analyze
 from app.pipeline.prosody import compute_stats
@@ -25,32 +24,35 @@ CONTENT_TYPE_SUFFIXES = {
 }
 
 
-def _decode_audio(audio_bytes: bytes, content_type: str | None = None) -> tuple[np.ndarray, int]:
-    channel_axis = 1  # soundfile returns frames, channels
-    try:
-        audio, sample_rate = sf.read(io.BytesIO(audio_bytes), dtype="float32", always_2d=False)
-    except Exception as soundfile_error:
-        try:
-            suffix = CONTENT_TYPE_SUFFIXES.get((content_type or "").lower(), ".audio")
-            # Close the writer before decoding: reopening NamedTemporaryFile is
-            # not supported on Windows with the default sharing flags.
-            with tempfile.TemporaryDirectory() as directory:
-                path = Path(directory) / ("recording" + suffix)
-                path.write_bytes(audio_bytes)
-                audio, sample_rate = librosa.load(str(path), sr=None, mono=False)
-            channel_axis = 0  # librosa returns channels, frames
-        except Exception as librosa_error:
-            raise ValueError("Could not decode audio") from librosa_error
-        if audio.size == 0:
-            raise ValueError("Could not decode audio") from soundfile_error
+MAX_AUDIO_SECONDS = 3600
 
-    audio = np.asarray(audio, dtype=np.float32)
-    if audio.ndim > 1:
-        audio = audio.mean(axis=channel_axis)
-    audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
-    if len(audio) == 0 or sample_rate <= 0:
+
+class AudioDurationTooLong(ValueError):
+    pass
+
+
+def _decode_audio(audio_bytes: bytes, content_type: str | None = None) -> tuple[np.ndarray, int]:
+    suffix = CONTENT_TYPE_SUFFIXES.get((content_type or "").lower(), ".audio")
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / ("recording" + suffix)
+        path.write_bytes(audio_bytes)
+        try:
+            # Decode to bounded mono PCM before allocating analysis arrays. Disable playlist/network
+            # demuxers: an uploaded file must not make the server fetch URLs or concatenate local files.
+            result = subprocess.run([
+                "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+                "-protocol_whitelist", "file,pipe", "-format_whitelist", "aac,wav,mp3,mov,ogg,matroska,webm",
+                "-i", str(path), "-t", str(MAX_AUDIO_SECONDS + 1), "-vn",
+                "-ac", "1", "-ar", str(ANALYSIS_SAMPLE_RATE), "-f", "f32le", "pipe:1",
+            ], capture_output=True, check=True, timeout=120)
+        except (subprocess.SubprocessError, OSError) as exc:
+            raise ValueError("Could not decode audio") from exc
+    audio = np.frombuffer(result.stdout, dtype="<f4")
+    if len(audio) > MAX_AUDIO_SECONDS * ANALYSIS_SAMPLE_RATE:
+        raise AudioDurationTooLong("Recordings must be no longer than 60 minutes.")
+    if not len(audio):
         raise ValueError("Could not decode audio")
-    return audio, int(sample_rate)
+    return np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0), ANALYSIS_SAMPLE_RATE
 
 
 def _analysis_audio(audio: np.ndarray, sample_rate: int) -> tuple[np.ndarray, int]:

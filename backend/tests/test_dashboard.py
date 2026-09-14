@@ -160,7 +160,7 @@ class _Db:
 
 
 def _client(rows: list[dict], used: int = 2, settings_row: dict | None = None) -> TestClient:
-    app.dependency_overrides[get_db] = lambda: _Db(rows, used, settings_row)
+    app.dependency_overrides[get_db] = lambda: _Db(rows, used, {"ai_consent_version": "2026-09-14", **(settings_row or {})})
     app.dependency_overrides[verify_token] = lambda: "user-1"
     return TestClient(app)
 

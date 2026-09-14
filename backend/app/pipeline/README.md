@@ -8,8 +8,9 @@ overrides are `OPENAI_DEBRIEF_MODEL` and `OPENAI_REFLECT_MODEL`. Supabase still
 requires its own server-side credential for database access.
 
 1. Decode the recording and prepare mono 16 kHz audio for acoustic analysis.
-   M4A/AAC decoding uses librosa's fallback and needs a supported decoder such as
-   FFmpeg installed on the backend host.
+   FFmpeg must be installed on the backend host. Supported audio demuxers are
+   allowlisted; network and playlist loading are disabled. Decoding has a
+   120-second timeout and rejects recordings over 60 minutes.
 2. Use Silero VAD only to skip recordings with no detected speech. Send the entire
    timeline to OpenAI as PCM WAV, with `response_format="diarized_json"` and
    `chunking_strategy="auto"`. There is no speech concatenation or local splitting.
@@ -57,3 +58,5 @@ Request options and limits follow the
 [OpenAI file-transcription documentation](https://developers.openai.com/api/docs/guides/speech-to-text#speaker-diarization).
 
 Coaching uses [OpenAI structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
+
+Upload bytes remain capped at 25 MB. Run only one pipeline at a time because the shared VAD model has mutable inference state.

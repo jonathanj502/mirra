@@ -21,6 +21,8 @@ export function Screen({ children, topOffset = 50, tabBar, error, onRefresh, ref
   return (
     <View style={styles.root}>
       <ScrollView
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         style={styles.scroll}
         showsVerticalScrollIndicator={false}
         refreshControl={onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.terracotta} /> : undefined}

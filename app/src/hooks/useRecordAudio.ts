@@ -1,17 +1,31 @@
-import { createContext, createElement, useContext, useRef, useState, ReactNode } from 'react';
-import { NativeModules, Platform } from 'react-native';
+import { createContext, createElement, useContext, useEffect, useRef, useState, ReactNode } from 'react';
+import { NativeModules, PermissionsAndroid, Platform } from 'react-native';
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 import { friendlyErrorMessage } from '@/api/http';
 import { useAuth } from '@/auth/AuthContext';
 import { PendingRecording, recordingId } from '@/storage/pendingRecordings';
 import { usePendingRecordings } from './usePendingRecordings';
+import { usePrivacy } from '@/auth/PrivacyContext';
+import { confirmRecordingPermission } from '@/utils/confirm';
 
-// Android needs a foreground service holding the mic open once the app backgrounds;
-// optional so web/iOS (and stale native builds) just no-op.
-function setForegroundService(running: boolean) {
+// Android needs its native foreground service before opening the microphone.
+let askedForRecordingNotification = false;
+async function setForegroundService(running: boolean) {
   if (Platform.OS !== 'android') return;
   const service = NativeModules.RecordingService;
-  if (running) service?.startForegroundService();
+  if (running && !service) throw new Error('Recording needs the Mirra native Android build.');
+  if (running) {
+    if (Number(Platform.Version) >= 33 && !askedForRecordingNotification) {
+      askedForRecordingNotification = true;
+      // Optional: Android still shows the foreground service in Task Manager after denial.
+      await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS, {
+        title: 'Recording notification',
+        message: 'Show when Mirra is recording and tap the notification to return to your recording. No reminders or marketing notifications are sent.',
+        buttonPositive: 'Continue', buttonNegative: 'Not now',
+      }).catch(() => {});
+    }
+    await service.startForegroundService();
+  }
   else service?.stopForegroundService();
 }
 
@@ -26,6 +40,7 @@ function recordingMimeType() {
 
 function useRecorderState() {
   const { user } = useAuth();
+  const { canProcess, reviewConsent } = usePrivacy();
   const queue = usePendingRecordings();
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordingMs, setRecordingMs] = useState(0);
@@ -43,6 +58,7 @@ function useRecorderState() {
 
   const startRecording = async () => {
     if (operationInProgress.current || recording || unsaved.current) return;
+    if (!canProcess) { reviewConsent(); return; }
     setError(null);
     if (!user) {
       setError('Please sign in before recording a conversation.');
@@ -52,6 +68,7 @@ function useRecorderState() {
     operationInProgress.current = true;
     setStarting(true);
     try {
+      if (!await confirmRecordingPermission()) return;
       const permission = await Audio.requestPermissionsAsync();
       if (!permission.granted) {
         setError('Allow microphone access to record a conversation.');
@@ -68,7 +85,7 @@ function useRecorderState() {
         playThroughEarpieceAndroid: false,
       });
 
-      setForegroundService(true);
+      await setForegroundService(true);
       const created = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY,
         (status) => {
@@ -86,9 +103,10 @@ function useRecorderState() {
       startedAt.current = Date.now();
       setRecordingMs(created.status.durationMillis ?? 0);
       setRecording(created.recording);
-    } catch {
+    } catch (err) {
       setForegroundService(false);
-      setError('Could not start the microphone recording.');
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
+      setError(friendlyErrorMessage(err, 'Could not start the microphone recording.'));
     } finally {
       operationInProgress.current = false;
       setStarting(false);
@@ -96,7 +114,7 @@ function useRecorderState() {
   };
 
   const stopRecording = async () => {
-    if (operationInProgress.current || (!recording && !unsaved.current)) return;
+    if (operationInProgress.current || (!recording && !unsaved.current)) return false;
 
     operationInProgress.current = true;
     setSaving(true);
@@ -104,8 +122,15 @@ function useRecorderState() {
     try {
       if (!unsaved.current && recording) {
         liveRecording.current = null;
-        const status = await recording.stopAndUnloadAsync();
-        setRecording(null);
+        let status;
+        try { status = await recording.stopAndUnloadAsync(); }
+        catch (err) {
+          status = await recording.getStatusAsync().catch(() => null);
+          if (!status?.isDoneRecording) {
+            liveRecording.current = recording;
+            throw err;
+          }
+        }
         const uri = recording.getURI();
         if (!uri) throw new Error('Missing recording URI');
 
@@ -116,26 +141,36 @@ function useRecorderState() {
           audio: { uri, name: recordingName(), type: recordingMimeType() },
           seconds: (status.durationMillis || recordingMs) / 1000,
         };
+        setRecording(null);
         setForegroundService(false);
         await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
       }
-      if (!unsaved.current) return;
+      if (!unsaved.current) return false;
       await queue.enqueue(unsaved.current);
       if (Platform.OS === 'web') URL.revokeObjectURL(unsaved.current.audio.uri);
       unsaved.current = null;
+      return true;
     } catch (err) {
       setError(unsaved.current
         ? 'Recording is not saved yet. Keep Mirra open, free some device storage, then save again.'
         : friendlyErrorMessage(err, 'Could not finish recording. Please try stopping it again.'));
+      return false;
     } finally {
-      setForegroundService(false);
-      setRecordingMs(0);
-      startedAt.current = null;
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
+      if (!liveRecording.current) {
+        void setForegroundService(false);
+        setRecordingMs(0);
+        startedAt.current = null;
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
+      }
       setSaving(false);
       operationInProgress.current = false;
     }
   };
+
+  useEffect(() => {
+    // A revoked session or account switch must not leave an invisible microphone running.
+    if (recording && owner.current !== user?.id) void stopRecording();
+  }, [user?.id, recording]);
 
   const toggleRecording = () => recording || unsaved.current ? stopRecording() : startRecording();
 

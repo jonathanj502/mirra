@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -75,8 +76,8 @@ class ProfileSummary(BaseModel):
 
 
 class ChatMessage(BaseModel):
-    role: str
-    content: str
+    role: Literal["assistant", "user"]
+    content: str = Field(min_length=1, max_length=4000)
 
 
 class ReflectRequest(BaseModel):

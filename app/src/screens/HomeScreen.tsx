@@ -1,6 +1,6 @@
 // Home / Record screen.
-import React, { useEffect, useRef } from 'react';
-import { View, Pressable, StyleSheet, Animated, Easing, ActivityIndicator, Alert, Platform } from 'react-native';
+import React, { useEffect } from 'react';
+import { View, Pressable, StyleSheet, ActivityIndicator, Alert, Platform } from 'react-native';
 import Svg, { Defs, RadialGradient, Stop, Circle, Rect, Path } from 'react-native-svg';
 import { useRouter } from 'expo-router';
 import { Screen } from '@/components/Screen';
@@ -20,24 +20,13 @@ function displayName(email?: string | null, username?: unknown) {
   return 'there';
 }
 
-function BreathingRing({ inset, delay }: { inset: number; delay: number }) {
-  const v = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.timing(v, { toValue: 1, duration: 4000, delay, easing: Easing.inOut(Easing.ease), useNativeDriver: true })
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [v, delay]);
-  const scale = v.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 1.08, 1] });
-  const opacity = v.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.7, 0.2, 0.7] });
+function RecordRing({ inset }: { inset: number }) {
   return (
-    <Animated.View
+    <View
       style={{
         position: 'absolute', top: inset, left: inset, right: inset, bottom: inset,
         borderRadius: 999, borderWidth: 1,
         borderColor: inset < -20 ? 'rgba(208,136,102,0.22)' : 'rgba(208,136,102,0.35)',
-        transform: [{ scale }], opacity,
       }}
     />
   );
@@ -64,15 +53,15 @@ function RecordButton({
       accessibilityRole="button"
       accessibilityLabel={recording ? 'Stop recording' : 'Start recording'}
     >
-      <BreathingRing inset={-28} delay={0} />
-      <BreathingRing inset={-14} delay={600} />
+      <RecordRing inset={-28} />
+      <RecordRing inset={-14} />
       <View style={[styles.recordBtn, recording && styles.recordBtnActive, (loading || disabled) && styles.recordBtnDisabled, { width: size, height: size, borderRadius: size / 2 }]}>
         <Svg width={size} height={size} style={{ position: 'absolute' }}>
           <Defs>
             <RadialGradient id="rec" cx="35%" cy="30%" r="75%">
-              <Stop offset="0" stopColor="#E5A082" />
-              <Stop offset="0.55" stopColor="#D08866" />
-              <Stop offset="1" stopColor="#BA7253" />
+              <Stop offset="0" stopColor="#AC6248" />
+              <Stop offset="0.55" stopColor={colors.terracotta} />
+              <Stop offset="1" stopColor="#7D412F" />
             </RadialGradient>
           </Defs>
           <Circle cx={size / 2} cy={size / 2} r={size / 2} fill="url(#rec)" />
@@ -95,7 +84,7 @@ function RecordButton({
 
 function RecentRow({ item, isLast, onPress }: { item: ConversationListItem; isLast: boolean; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} style={[styles.recentRow, !isLast && styles.rowBorder]}>
+    <Pressable accessibilityRole="button" onPress={onPress} style={[styles.recentRow, !isLast && styles.rowBorder]}>
       <View style={[styles.dot, { backgroundColor: colors[item.tone as keyof typeof colors] ?? colors.sage }]} />
       <View style={{ flex: 1, minWidth: 0 }}>
         <Serif style={styles.recentTitle}>{item.title}</Serif>
@@ -116,6 +105,7 @@ function ImportButton({ onPress, loading, disabled }: { onPress: () => void; loa
       onPress={onPress}
       disabled={loading || disabled}
       accessibilityLabel="Import audio recording"
+      accessibilityRole="button"
     >
       {loading ? (
         <ActivityIndicator size="small" color={colors.terracotta} />
@@ -184,7 +174,7 @@ export function HomeScreen() {
         <View style={{ flex: 1, minWidth: 0 }}>
           <Eyebrow>{today}</Eyebrow>
           <Serif style={styles.greetingTitle}>
-            Good evening,{'\n'}
+            Hello,{'\n'}
             <SerifItalic style={styles.greetingTitle}>{name}.</SerifItalic>
           </Serif>
         </View>

@@ -119,11 +119,19 @@ export interface ProfileSummary {
 }
 
 export interface AccountExport {
+  contentReports: ContentReport[];
+  deletedConversationIds: string[];
   exportedAt: string;
   userId: string;
   profile: ProfileSummary;
   settings: UserSettings;
   debriefs: DebriefCard[];
+}
+
+export interface ContentReport {
+  id: string; createdAt: string; debriefId: string | null;
+  source: 'debrief' | 'reflect'; content: string;
+  reason: 'harmful' | 'inaccurate' | 'other'; comment: string;
 }
 
 export interface ReflectMessage {
@@ -137,6 +145,8 @@ export type CoachingTone = 'warm_reflective' | 'direct_practical' | 'curious_gen
 export type CoachingDepth = 'quick' | 'balanced' | 'deep';
 
 export interface UserSettings {
+  aiConsentVersion: string | null;
+  aiConsentAt: string | null;
   notificationsEnabled: boolean;
   weeklySummaryDay: WeeklySummaryDay;
   weeklySummaryTime: WeeklySummaryTime;

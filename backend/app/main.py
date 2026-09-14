@@ -1,6 +1,7 @@
 import logging
+import traceback
 from datetime import datetime, timezone
-from threading import Lock
+from threading import Lock, BoundedSemaphore
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
@@ -19,7 +20,10 @@ from app.models.auth import UsernameAuthRequest, UsernameAuthResponse
 from app.models.dashboard import ProfileSummary, ProgressResponse, ReflectRequest, ReflectResponse
 from app.models.debrief import Debrief, SessionResponse
 from app.models.settings import UserSettings, UserSettingsUpdate
+from app.models.report import ContentReportRequest
 from app.reflection import generate_reflection
+from app.privacy import require_ai_consent
+from app.rate_limit import check_reflect_limit, check_request_limit
 from app.pipeline import coordinator
 from app.pipeline.transcription import TranscriptionInputTooLarge
 from app.usage import check_and_increment, get_usage, release
@@ -45,6 +49,9 @@ logger = logging.getLogger(__name__)
 
 _session_lock = Lock()
 _processing_sessions: set[str] = set()
+# Silero's shared model has mutable inference state. Serialize processing to keep it correct
+# and bound decoded-audio memory; the durable app queue retries a busy server automatically.
+_pipeline_slot = BoundedSemaphore(1)
 
 
 # Starlette's default 500 handler returns a plain-text body, which breaks clients that assume
@@ -60,8 +67,11 @@ _processing_sessions: set[str] = set()
 async def catch_unhandled_exceptions(request: Request, call_next):
     try:
         return await call_next(request)
-    except Exception:
-        logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    except Exception as exc:
+        # Provider/validation exception messages can contain conversation content. Keep stack
+        # locations and the exception type, never its message, body or request credentials.
+        logger.error("Unhandled %s on %s %s\n%s", type(exc).__name__, request.method, request.url.path,
+                     ''.join(traceback.format_tb(exc.__traceback__)))
         return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
@@ -80,6 +90,19 @@ app.add_middleware(
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get('/ready')
+def ready(db: Client = Depends(get_db)):
+    try:
+        if not settings.openai_api_key:
+            raise ValueError('Missing AI credential')
+        db.table('user_settings').select('ai_consent_version,ai_consent_at').limit(0).execute()
+        db.table('debrief_deletions').select('debrief_id').limit(0).execute()
+        db.table('content_reports').select('id').limit(0).execute()
+    except Exception:
+        return JSONResponse(status_code=503, content={'status': 'not_ready'})
+    return {'status': 'ready'}
 
 
 def _service_role_key_configured() -> bool:
@@ -171,36 +194,9 @@ def _fetch_debrief_row(db: Client, user_id: str, debrief_id: str) -> dict | None
     return enrich_debrief_row(result.data) if result and result.data else None
 
 
-# TODO: sign-up has no real email today (fabricates <username>@users.mirra.local, no
-# verification). Tighten before wider launch: add a required, verified email field so
-# accounts are recoverable and can't be thrown away in one curl call. Decide whether
-# username stays as the login handle or is replaced by email+password outright.
 @app.post("/auth/username/sign-up", response_model=UsernameAuthResponse)
 async def username_sign_up(payload: UsernameAuthRequest):
-    username = _normalize_username(payload.username)
-    email = _username_email(username)
-    response = httpx.post(
-        f"{settings.supabase_url.rstrip('/')}/auth/v1/admin/users",
-        headers={
-            "apikey": settings.supabase_service_role_key,
-            "Authorization": f"Bearer {settings.supabase_service_role_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "email": email,
-            "password": payload.password,
-            "email_confirm": True,
-            "user_metadata": {"username": username},
-        },
-        timeout=15,
-    )
-    if response.status_code in {401, 403}:
-        raise HTTPException(status_code=503, detail="Supabase service-role key is required for username sign-up")
-    if response.status_code == 422:
-        raise HTTPException(status_code=409, detail="Username is already taken")
-    if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail="Could not create account")
-    return await _password_token(email, payload.password)
+    raise HTTPException(status_code=410, detail="Use email sign-up so you can verify and recover your account.")
 
 
 @app.post("/auth/username/sign-in", response_model=UsernameAuthResponse)
@@ -222,14 +218,55 @@ def profile_summary(user_id: str = Depends(verify_token), db: Client = Depends(g
 
 @app.get("/account/export", response_model=AccountExport)
 def account_export(user_id: str = Depends(verify_token), db: Client = Depends(get_db)):
-    rows = _fetch_debrief_rows(db, user_id, limit=500)
+    rows = []
+    while True:
+        page = _fetch_debrief_rows(db, user_id, limit=500, offset=len(rows))
+        rows.extend(page)
+        if len(page) < 500:
+            break
+    deleted_ids = []
+    while True:
+        markers = db.table('debrief_deletions').select('debrief_id').eq('user_id', user_id).order('debrief_id').range(len(deleted_ids), len(deleted_ids) + 499).execute().data or []
+        deleted_ids.extend(row['debrief_id'] for row in markers)
+        if len(markers) < 500:
+            break
+    reports = []
+    while True:
+        page = db.table('content_reports').select('*').eq('user_id', user_id).order('id').range(len(reports), len(reports) + 499).execute().data or []
+        reports.extend(page)
+        if len(page) < 500:
+            break
     return AccountExport(
         exported_at=datetime.now(timezone.utc),
         user_id=user_id,
         profile=build_profile_summary(rows, get_usage(db, user_id)),
         settings=fetch_user_settings(db, user_id),
         debriefs=rows,
+        deleted_conversation_ids=deleted_ids,
+        content_reports=reports,
     )
+
+
+@app.delete("/account", status_code=204)
+def delete_account(user_id: str = Depends(verify_token), db: Client = Depends(get_db)):
+    # Auth deletion cascades to debriefs, usage, and settings via their foreign keys.
+    try:
+        db.auth.admin.delete_user(user_id)
+    except Exception as exc:
+        if str(getattr(exc, "status", "")) != "404":
+            raise
+    return Response(status_code=204)
+
+
+@app.post('/content-reports', status_code=204)
+def report_content(payload: ContentReportRequest, user_id: str = Depends(verify_token), db: Client = Depends(get_db)):
+    if payload.source == 'debrief' and not payload.debrief_id:
+        raise HTTPException(422, 'A debrief is required for this report.')
+    if payload.debrief_id and not _fetch_debrief_row(db, user_id, str(payload.debrief_id)):
+        raise HTTPException(404, 'Debrief not found')
+    check_request_limit(user_id, 'Content reports', 20)
+    db.table('content_reports').insert({**payload.model_dump(mode='json'), 'user_id': user_id}).execute()
+    return Response(status_code=204)
 
 
 @app.get("/settings", response_model=UserSettings)
@@ -259,9 +296,9 @@ def progress_summary(
 @app.post("/sessions", response_model=SessionResponse)
 def create_session(
     audio: UploadFile = File(...),
-    started_at: str | None = Form(None),
-    client_duration_seconds: float | None = Form(None),
-    title: str | None = Form(None),
+    started_at: str | None = Form(None, max_length=100),
+    client_duration_seconds: float | None = Form(None, ge=0, le=86400),
+    title: str | None = Form(None, max_length=200),
     recording_id: str | None = Form(None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$"),
     user_id: str = Depends(verify_token),
     db: Client = Depends(get_db),
@@ -276,7 +313,12 @@ def create_session(
                 raise HTTPException(status_code=409, detail="This recording is already being processed.")
             _processing_sessions.add(debrief_id)
     try:
-        return _process_session(audio, started_at, client_duration_seconds, title, user_id, db, debrief_id)
+        if not _pipeline_slot.acquire(blocking=False):
+            raise HTTPException(status_code=503, detail='Mirra is processing another recording. Your saved recording will upload automatically.', headers={'Retry-After': '60'})
+        try:
+            return _process_session(audio, started_at, client_duration_seconds, title, user_id, db, debrief_id)
+        finally:
+            _pipeline_slot.release()
     finally:
         if debrief_id:
             with _session_lock:
@@ -290,6 +332,9 @@ def _session_response(db: Client, user_id: str, row: dict):
 
 def _process_session(audio, started_at, client_duration_seconds, title, user_id, db, debrief_id):
     if debrief_id:
+        deleted = db.table('debrief_deletions').select('debrief_id').eq('user_id', user_id).eq('debrief_id', debrief_id).maybe_single().execute()
+        if deleted and isinstance(deleted.data, dict) and deleted.data.get('debrief_id') == debrief_id:
+            raise HTTPException(410, 'This conversation was deleted. Discard its saved audio copy.')
         existing = _fetch_debrief_row(db, user_id, debrief_id)
         if existing:
             return _session_response(db, user_id, existing)
@@ -305,10 +350,13 @@ def _process_session(audio, started_at, client_duration_seconds, title, user_id,
     inserting = False
     try:
         user_settings = fetch_user_settings(db, user_id)
+        require_ai_consent(user_settings)
         try:
             result = coordinator.run(audio_bytes, content_type=content_type)
         except TranscriptionInputTooLarge as exc:
             raise HTTPException(status_code=413, detail="Recording is too large to transcribe. Use a shorter recording or upload M4A, MP3, or WebM.") from exc
+        except coordinator.AudioDurationTooLong as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="Could not decode audio") from exc
         session_id = str(uuid4())
@@ -350,10 +398,13 @@ def _process_session(audio, started_at, client_duration_seconds, title, user_id,
         if reservation_month is not None:
             try:
                 release(db, user_id, reservation_month)
-            except Exception:
-                logger.exception("Could not release debrief reservation for user %s in %s", user_id, reservation_month)
+            except Exception as refund_error:
+                logger.error("Could not release debrief reservation for user %s in %s (%s)",
+                             user_id, reservation_month, type(refund_error).__name__)
         if existing:
             return _session_response(db, user_id, existing)
+        if getattr(exc, 'code', None) == 'P0001' and 'recording_deleted' in str(exc):
+            raise HTTPException(410, 'This conversation was deleted. Discard its saved audio copy.') from exc
         raise
     return _session_response(db, user_id, row.data[0])
 
@@ -387,7 +438,7 @@ def delete_debrief(
     db: Client = Depends(get_db),
 ):
     # Scope the mutation itself: service-role access bypasses database RLS.
-    db.table("debriefs").delete().eq("user_id", user_id).eq("id", str(debrief_id)).execute()
+    db.rpc('delete_debrief_permanently', {'owner_id': user_id, 'target_id': str(debrief_id)}).execute()
     return Response(status_code=204)
 
 
@@ -406,6 +457,8 @@ def reflect(
         rows = _fetch_debrief_rows(db, user_id, limit=1)
 
     user_settings = fetch_user_settings(db, user_id)
+    require_ai_consent(user_settings)
+    check_reflect_limit(user_id)
     text = generate_reflection(
         rows,
         payload,

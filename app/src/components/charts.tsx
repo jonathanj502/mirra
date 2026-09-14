@@ -48,7 +48,7 @@ export function Donut({
       {(centerLabel || centerSub) && (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
           {centerLabel ? <Serif style={{ fontSize: size * 0.28, lineHeight: size * 0.3, color: colors.ink }}>{centerLabel}</Serif> : null}
-          {centerSub ? <Body style={{ fontSize: 10, color: 'rgba(42,37,32,0.55)', letterSpacing: 0.8, textTransform: 'uppercase', marginTop: 4 }}>{centerSub}</Body> : null}
+          {centerSub ? <Body style={{ fontSize: 10, color: colors.muted, letterSpacing: 0.8, textTransform: 'uppercase', marginTop: 4 }}>{centerSub}</Body> : null}
         </View>
       )}
     </View>
@@ -305,11 +305,11 @@ export function TurnOffsetChart({
       <Line x1={padL} x2={padL + plotW} y1={yToPx(200)} y2={yToPx(200)} stroke={colors.sage} strokeWidth={1.2} strokeDasharray={[4, 3]} opacity={0.85} />
       <SvgText x={padL + plotW - 2} y={yToPx(200) - 3} textAnchor="end" fontFamily={FONT} fontSize={9} fill={colors.sage}>target +200</SvgText>
       {[-200, 0, 200, 500].map((v) => (
-        <SvgText key={`yt${v}`} x={padL - 4} y={yToPx(v) + 3} fontFamily={FONT} fontSize={9} fill="rgba(42,37,32,0.55)" textAnchor="end">
+        <SvgText key={`yt${v}`} x={padL - 4} y={yToPx(v) + 3} fontFamily={FONT} fontSize={9} fill={colors.muted} textAnchor="end">
           {v > 0 ? `+${v}` : v}
         </SvgText>
       ))}
-      <SvgText x={4} y={padT + 5} fontFamily={FONT} fontSize={8} fill="rgba(42,37,32,0.5)">ms</SvgText>
+      <SvgText x={4} y={padT + 5} fontFamily={FONT} fontSize={8} fill={colors.muted}>ms</SvgText>
       {data.map((d, i) => {
         const skip = !allShort && data.length > 6 && i % 2 !== 0 && i !== data.length - 1 && i !== 0;
         if (skip) return null;
@@ -317,7 +317,7 @@ export function TurnOffsetChart({
         return (
           <SvgText
             key={`x${i}`} x={xToPx(i)} y={height - 4} textAnchor={anchor} fontFamily={FONT} fontSize={9}
-            fill={d.ms == null ? 'rgba(42,37,32,0.25)' : 'rgba(42,37,32,0.55)'}
+            fill={colors.muted}
           >
             {d.t}
           </SvgText>
@@ -388,7 +388,7 @@ export function LSMHistogram({
       {Array.from({ length: yMax + 1 }, (_, i) => i).map((v) => (
         <G key={`y${v}`}>
           <Line x1={padL} y1={yToPx(v)} x2={padL + plotW} y2={yToPx(v)} stroke={colors.hair} strokeDasharray={v === 0 ? undefined : [1, 4]} opacity={v === 0 ? 1 : 0.5} />
-          <SvgText x={padL - 4} y={yToPx(v) + 3} textAnchor="end" fontFamily={FONT} fontSize={9} fill="rgba(42,37,32,0.55)">{v}</SvgText>
+          <SvgText x={padL - 4} y={yToPx(v) + 3} textAnchor="end" fontFamily={FONT} fontSize={9} fill={colors.muted}>{v}</SvgText>
         </G>
       ))}
       {bins.map((count, i) => {
@@ -404,12 +404,12 @@ export function LSMHistogram({
         );
       })}
       {[0, 0.2, 0.4, 0.6, 0.8, 1.0].map((v) => (
-        <SvgText key={`x${v}`} x={padL + v * plotW} y={height - 4} textAnchor="middle" fontFamily={FONT} fontSize={9} fill="rgba(42,37,32,0.55)">
+        <SvgText key={`x${v}`} x={padL + v * plotW} y={height - 4} textAnchor="middle" fontFamily={FONT} fontSize={9} fill={colors.muted}>
           {v.toFixed(1)}
         </SvgText>
       ))}
       <SvgText
-        x={padL - 18} y={padT + plotH / 2} textAnchor="middle" fontFamily={FONT} fontSize={8} fill="rgba(42,37,32,0.5)"
+        x={padL - 18} y={padT + plotH / 2} textAnchor="middle" fontFamily={FONT} fontSize={8} fill={colors.muted}
         rotation={-90} originX={padL - 18} originY={padT + plotH / 2}
       >
         convos
