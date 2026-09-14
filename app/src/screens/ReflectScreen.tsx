@@ -10,7 +10,9 @@ import Svg, { Circle, Path } from 'react-native-svg';
 import { Body, Serif, SerifItalic, Eyebrow } from '@/components/Typography';
 import { Icon } from '@/components/Icon';
 import { colors, fonts } from '@/theme/tokens';
-import { SEED_MESSAGES, STARTER_PROMPTS, CANNED_REPLIES, ChatMessage } from '@/data/reflect';
+import { SEED_MESSAGES, STARTER_PROMPTS, ChatMessage } from '@/data/reflect';
+import { friendlyErrorMessage } from '@/api/http';
+import { usePrivacy } from '@/auth/PrivacyContext';
 import { fetchDebrief, sendReflection } from '@/api/client';
 import { useAuth } from '@/auth/AuthContext';
 import { titleForDebrief } from '@/hooks/useDebriefs';
@@ -76,11 +78,12 @@ export function ReflectScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { accessToken } = useAuth();
+  const { canProcess, reviewConsent } = usePrivacy();
+  const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>(SEED_MESSAGES);
   const [input, setInput] = useState('');
   const [subject, setSubject] = useState('recent conversation');
   const [thinking, setThinking] = useState(false);
-  const replyIdx = useRef(0);
   const scrollerRef = useRef<ScrollView>(null);
 
   useEffect(() => {
@@ -110,6 +113,8 @@ export function ReflectScreen() {
   const send = async (text?: string) => {
     const msg = (text ?? input).trim();
     if (!msg || thinking) return;
+    if (!canProcess) { reviewConsent(); return; }
+    setError(null);
     setInput('');
     const nextMessages = [...messages, { from: 'you' as const, text: msg }];
     setMessages(nextMessages);
@@ -119,16 +124,16 @@ export function ReflectScreen() {
       const reply = await sendReflection(accessToken, {
         conversationId: id,
         prompt: msg,
-        messages: messages.map((message) => ({
+        messages: messages.slice(-30).map((message) => ({
           role: message.from === 'ai' ? 'assistant' : 'user',
           content: message.text,
         })),
       });
-      setMessages((m) => [...m, { from: 'ai', text: reply }]);
-    } catch {
-      const reply = CANNED_REPLIES[replyIdx.current % CANNED_REPLIES.length];
-      replyIdx.current += 1;
-      setMessages((m) => [...m, { from: 'ai', text: reply }]);
+      setMessages((m) => [...m, { from: 'ai', text: reply.usedModel ? reply.reply : `General guidance (AI unavailable): ${reply.reply}` }]);
+    } catch (err) {
+      setMessages(messages);
+      setInput(msg);
+      setError(friendlyErrorMessage(err, 'Could not get a reply. Your message is ready to send again.'));
     } finally {
       setThinking(false);
     }
@@ -163,6 +168,8 @@ export function ReflectScreen() {
       {/* Messages */}
       <ScrollView ref={scrollerRef} style={{ flex: 1 }} contentContainerStyle={styles.messages} showsVerticalScrollIndicator={false}>
         <ContextPill subject={subject} />
+        <Body style={{ color: colors.muted, fontSize: 12, marginVertical: 12 }}>AI coaching can be wrong. It is not medical or mental-health advice. Chat messages are not saved to your history.</Body>
+        {error ? <Body accessibilityRole="alert" style={{ color: colors.coral, marginBottom: 12 }}>{error}</Body> : null}
         {messages.map((m, i) => <ChatBubble key={i} from={m.from} text={m.text} />)}
         {thinking && <TypingIndicator />}
       </ScrollView>
@@ -182,6 +189,8 @@ export function ReflectScreen() {
       <View style={[styles.inputBar, { paddingBottom: bottomPad }]}>
         <View style={styles.inputWrap}>
           <TextInput
+            accessibilityLabel="Message to Mirra"
+            maxLength={1000}
             value={input}
             onChangeText={setInput}
             onSubmitEditing={() => send()}
@@ -190,7 +199,7 @@ export function ReflectScreen() {
             style={styles.input}
             returnKeyType="send"
           />
-          <Pressable onPress={() => send()} disabled={!canSend} style={[styles.sendBtn, { backgroundColor: canSend ? colors.terracotta : 'rgba(42,37,32,0.10)' }]}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Send message" onPress={() => send()} disabled={!canSend} style={[styles.sendBtn, { backgroundColor: canSend ? colors.terracotta : 'rgba(42,37,32,0.10)' }]}>
             <Svg viewBox="0 0 20 20" width={16} height={16}>
               <Path d="M3 17L17 10 3 3 4.5 10 3 17z" fill={canSend ? '#FBF6EA' : 'rgba(42,37,32,0.30)'} />
             </Svg>

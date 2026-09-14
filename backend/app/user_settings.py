@@ -26,6 +26,8 @@ def fetch_user_settings(db: Client, user_id: str) -> UserSettings:
 def save_user_settings(db: Client, user_id: str, payload: UserSettingsUpdate) -> UserSettings:
     current = fetch_user_settings(db, user_id)
     values = payload.model_dump(exclude_none=True, exclude_unset=True)
+    if "ai_consent_version" in values:
+        values["ai_consent_at"] = datetime.now(timezone.utc).isoformat() if values["ai_consent_version"] else None
     next_settings = current.model_copy(update=values)
     row = {
         "user_id": user_id,

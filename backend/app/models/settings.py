@@ -10,12 +10,14 @@ CoachingDepth = Literal["quick", "balanced", "deep"]
 
 
 class UserSettings(BaseModel):
-    notifications_enabled: bool = True
+    notifications_enabled: bool = False
     weekly_summary_day: WeeklySummaryDay = "sunday"
     weekly_summary_time: WeeklySummaryTime = "evening"
     reflection_reminders: bool = False
-    product_updates: bool = True
-    save_transcripts: bool = True
+    product_updates: bool = False
+    save_transcripts: bool = False
+    ai_consent_version: str | None = None
+    ai_consent_at: str | None = None
     include_transcript_in_reflect: bool = False
     coaching_tone: CoachingTone = "warm_reflective"
     coaching_depth: CoachingDepth = "balanced"
@@ -24,6 +26,7 @@ class UserSettings(BaseModel):
 
 
 class UserSettingsUpdate(BaseModel):
+    ai_consent_version: Literal["2026-09-14", ""] | None = None
     notifications_enabled: bool | None = None
     weekly_summary_day: WeeklySummaryDay | None = None
     weekly_summary_time: WeeklySummaryTime | None = None

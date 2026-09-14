@@ -95,6 +95,7 @@ test('durable native queue survives restart, isolates accounts, serializes recon
         '@/api/supabase': { supabase: { auth: { getSession: async () => ({ data: {
           session: { user: { id: sessionAccount }, access_token: 'refreshed-token' },
         } }) } } },
+        '@/auth/PrivacyContext': { usePrivacy: () => ({ canProcess: true }) },
         '@/api/http': http, '@/storage/pendingRecordings': storage(),
         '@/api/client': { async uploadSession(token, audio, metadata) {
           uploads.push({ token, metadata });
@@ -179,5 +180,38 @@ test('expired cached sign-in opens offline and a later sign-out wins over initia
   assert.equal(render().user.id, 'owner');
   authEvent('SIGNED_OUT', null);
   assert.equal(render().session, null);
+  state.unmount();
+});
+
+test('AI consent is account-scoped, works from an offline cache, and server withdrawal overrides that cache', async () => {
+  const state = hooks();
+  let userId = 'owner';
+  let online = false;
+  let approved = false;
+  const cache = new Map([['mirra:consent:owner', 'current']]);
+  const { PrivacyProvider } = load('auth/PrivacyContext.tsx', {
+    react: state.react, 'react-native': { Modal: 'Modal' },
+    '@react-native-async-storage/async-storage': {
+      getItem: async key => cache.get(key), setItem: async (key, value) => cache.set(key, value),
+      removeItem: async key => cache.delete(key),
+    },
+    './AuthContext': { useAuth: () => ({ user: { id: userId }, accessToken: online ? 'new-token' : 'old-token' }) },
+    '@/config/legal': { CONSENT_VERSION: 'current' }, '@/screens/ConsentScreen': { ConsentScreen: 'Consent' },
+    '@/api/client': { fetchUserSettings: async () => { if (!online) throw Error('offline'); return { aiConsentVersion: approved ? 'current' : null }; } },
+  });
+  const render = () => state.render(() => PrivacyProvider({ children: 'recorder' }));
+  render();
+  await until(() => render().props.value.canProcess);
+  userId = 'other'; render();
+  await new Promise(r => setImmediate(r));
+  assert.equal(render().props.value.canProcess, false);
+  userId = 'owner'; online = true; render();
+  await until(() => !cache.has('mirra:consent:owner'));
+  const tree = render();
+  assert.equal(tree.props.value.canProcess, false);
+  assert.equal(tree.props.children[0], 'recorder', 'Reviewing privacy must not unmount a live recorder');
+  assert.equal(tree.props.children[1].props.visible, true);
+  await tree.props.value.withdrawLocally();
+  assert.equal(cache.has('mirra:consent:owner'), false);
   state.unmount();
 });

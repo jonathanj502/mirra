@@ -5,12 +5,14 @@ import { useAuthedFetch } from './useAuthedFetch';
 import { friendlyErrorMessage } from '@/api/http';
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
-  notificationsEnabled: true,
+  aiConsentVersion: null,
+  aiConsentAt: null,
+  notificationsEnabled: false,
   weeklySummaryDay: 'sunday',
   weeklySummaryTime: 'evening',
   reflectionReminders: false,
-  productUpdates: true,
-  saveTranscripts: true,
+  productUpdates: false,
+  saveTranscripts: false,
   includeTranscriptInReflect: false,
   coachingTone: 'warm_reflective',
   coachingDepth: 'balanced',

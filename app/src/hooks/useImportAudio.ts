@@ -6,6 +6,8 @@ import { uploadSession } from '@/api/client';
 import { useAuth } from '@/auth/AuthContext';
 import { DebriefCard } from '@/models/debrief';
 import { titleFromFilename } from '@/utils/timeFormat';
+import { usePrivacy } from '@/auth/PrivacyContext';
+import { confirmRecordingPermission } from '@/utils/confirm';
 
 const MAX_BYTES = 25 * 1024 * 1024;
 const AUDIO_TYPES = [
@@ -44,10 +46,12 @@ function mimeTypeFor(name: string, provided?: string | null): string {
 
 export function useImportAudio() {
   const { accessToken } = useAuth();
+  const { canProcess, reviewConsent } = usePrivacy();
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const importAudio = useCallback(async (): Promise<DebriefCard | null> => {
+    if (!canProcess) { reviewConsent(); return null; }
     setImporting(true);
     setError(null);
     try {
@@ -63,6 +67,7 @@ export function useImportAudio() {
       });
 
       if (result.canceled || !result.assets?.length) return null;
+      if (!await confirmRecordingPermission()) return null;
 
       const asset = result.assets[0];
       const size = asset.size ?? 0;
@@ -89,7 +94,7 @@ export function useImportAudio() {
     } finally {
       setImporting(false);
     }
-  }, [accessToken]);
+  }, [accessToken, canProcess, reviewConsent]);
 
   return { importAudio, importing, error };
 }

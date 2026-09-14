@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timezone
-from threading import Lock
+from threading import Lock, BoundedSemaphore
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
@@ -20,6 +20,8 @@ from app.models.dashboard import ProfileSummary, ProgressResponse, ReflectReques
 from app.models.debrief import Debrief, SessionResponse
 from app.models.settings import UserSettings, UserSettingsUpdate
 from app.reflection import generate_reflection
+from app.privacy import require_ai_consent
+from app.rate_limit import check_reflect_limit
 from app.pipeline import coordinator
 from app.pipeline.transcription import TranscriptionInputTooLarge
 from app.usage import check_and_increment, get_usage, release
@@ -45,6 +47,9 @@ logger = logging.getLogger(__name__)
 
 _session_lock = Lock()
 _processing_sessions: set[str] = set()
+# Silero's shared model has mutable inference state. Serialize processing to keep it correct
+# and bound decoded-audio memory; the durable app queue retries a busy server automatically.
+_pipeline_slot = BoundedSemaphore(1)
 
 
 # Starlette's default 500 handler returns a plain-text body, which breaks clients that assume
@@ -80,6 +85,17 @@ app.add_middleware(
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get('/ready')
+def ready(db: Client = Depends(get_db)):
+    try:
+        if not settings.openai_api_key:
+            raise ValueError('Missing AI credential')
+        db.table('user_settings').select('ai_consent_version,ai_consent_at').limit(0).execute()
+    except Exception:
+        return JSONResponse(status_code=503, content={'status': 'not_ready'})
+    return {'status': 'ready'}
 
 
 def _service_role_key_configured() -> bool:
@@ -171,36 +187,9 @@ def _fetch_debrief_row(db: Client, user_id: str, debrief_id: str) -> dict | None
     return enrich_debrief_row(result.data) if result and result.data else None
 
 
-# TODO: sign-up has no real email today (fabricates <username>@users.mirra.local, no
-# verification). Tighten before wider launch: add a required, verified email field so
-# accounts are recoverable and can't be thrown away in one curl call. Decide whether
-# username stays as the login handle or is replaced by email+password outright.
 @app.post("/auth/username/sign-up", response_model=UsernameAuthResponse)
 async def username_sign_up(payload: UsernameAuthRequest):
-    username = _normalize_username(payload.username)
-    email = _username_email(username)
-    response = httpx.post(
-        f"{settings.supabase_url.rstrip('/')}/auth/v1/admin/users",
-        headers={
-            "apikey": settings.supabase_service_role_key,
-            "Authorization": f"Bearer {settings.supabase_service_role_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "email": email,
-            "password": payload.password,
-            "email_confirm": True,
-            "user_metadata": {"username": username},
-        },
-        timeout=15,
-    )
-    if response.status_code in {401, 403}:
-        raise HTTPException(status_code=503, detail="Supabase service-role key is required for username sign-up")
-    if response.status_code == 422:
-        raise HTTPException(status_code=409, detail="Username is already taken")
-    if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail="Could not create account")
-    return await _password_token(email, payload.password)
+    raise HTTPException(status_code=410, detail="Use email sign-up so you can verify and recover your account.")
 
 
 @app.post("/auth/username/sign-in", response_model=UsernameAuthResponse)
@@ -222,7 +211,12 @@ def profile_summary(user_id: str = Depends(verify_token), db: Client = Depends(g
 
 @app.get("/account/export", response_model=AccountExport)
 def account_export(user_id: str = Depends(verify_token), db: Client = Depends(get_db)):
-    rows = _fetch_debrief_rows(db, user_id, limit=500)
+    rows = []
+    while True:
+        page = _fetch_debrief_rows(db, user_id, limit=500, offset=len(rows))
+        rows.extend(page)
+        if len(page) < 500:
+            break
     return AccountExport(
         exported_at=datetime.now(timezone.utc),
         user_id=user_id,
@@ -230,6 +224,17 @@ def account_export(user_id: str = Depends(verify_token), db: Client = Depends(ge
         settings=fetch_user_settings(db, user_id),
         debriefs=rows,
     )
+
+
+@app.delete("/account", status_code=204)
+def delete_account(user_id: str = Depends(verify_token), db: Client = Depends(get_db)):
+    # Auth deletion cascades to debriefs, usage, and settings via their foreign keys.
+    try:
+        db.auth.admin.delete_user(user_id)
+    except Exception as exc:
+        if str(getattr(exc, "status", "")) != "404":
+            raise
+    return Response(status_code=204)
 
 
 @app.get("/settings", response_model=UserSettings)
@@ -259,9 +264,9 @@ def progress_summary(
 @app.post("/sessions", response_model=SessionResponse)
 def create_session(
     audio: UploadFile = File(...),
-    started_at: str | None = Form(None),
-    client_duration_seconds: float | None = Form(None),
-    title: str | None = Form(None),
+    started_at: str | None = Form(None, max_length=100),
+    client_duration_seconds: float | None = Form(None, ge=0, le=86400),
+    title: str | None = Form(None, max_length=200),
     recording_id: str | None = Form(None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$"),
     user_id: str = Depends(verify_token),
     db: Client = Depends(get_db),
@@ -276,7 +281,12 @@ def create_session(
                 raise HTTPException(status_code=409, detail="This recording is already being processed.")
             _processing_sessions.add(debrief_id)
     try:
-        return _process_session(audio, started_at, client_duration_seconds, title, user_id, db, debrief_id)
+        if not _pipeline_slot.acquire(blocking=False):
+            raise HTTPException(status_code=503, detail='Mirra is processing another recording. Your saved recording will upload automatically.', headers={'Retry-After': '60'})
+        try:
+            return _process_session(audio, started_at, client_duration_seconds, title, user_id, db, debrief_id)
+        finally:
+            _pipeline_slot.release()
     finally:
         if debrief_id:
             with _session_lock:
@@ -305,6 +315,7 @@ def _process_session(audio, started_at, client_duration_seconds, title, user_id,
     inserting = False
     try:
         user_settings = fetch_user_settings(db, user_id)
+        require_ai_consent(user_settings)
         try:
             result = coordinator.run(audio_bytes, content_type=content_type)
         except TranscriptionInputTooLarge as exc:
@@ -406,6 +417,8 @@ def reflect(
         rows = _fetch_debrief_rows(db, user_id, limit=1)
 
     user_settings = fetch_user_settings(db, user_id)
+    require_ai_consent(user_settings)
+    check_reflect_limit(user_id)
     text = generate_reflection(
         rows,
         payload,

@@ -190,6 +190,7 @@ export function AnalyticsScreen() {
           {title}
         </Serif>
         <Body style={styles.meta}>{meta}</Body>
+        <Body style={{ color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 10 }}>Estimates, not a judgment. Mirra assumes the loudest speaker is you; check that this matches your conversation.</Body>
       </View>
 
       {/* Warm reflection */}

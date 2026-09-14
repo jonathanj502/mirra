@@ -137,6 +137,8 @@ export type CoachingTone = 'warm_reflective' | 'direct_practical' | 'curious_gen
 export type CoachingDepth = 'quick' | 'balanced' | 'deep';
 
 export interface UserSettings {
+  aiConsentVersion: string | null;
+  aiConsentAt: string | null;
   notificationsEnabled: boolean;
   weeklySummaryDay: WeeklySummaryDay;
   weeklySummaryTime: WeeklySummaryTime;

@@ -1,0 +1,81 @@
+name: Validate release
+on:
+  pull_request:
+  push:
+    branches: [main, 'codex/**']
+permissions:
+  contents: read
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+        working-directory: app
+      - run: npm run typecheck && node --test tests/*.test.mjs
+        working-directory: app
+      - run: node website/build.mjs && node --test website/*.test.mjs
+      - run: npx expo export --platform web --output-dir dist
+        working-directory: app
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: public-build-placeholder
+          EXPO_PUBLIC_MIRRA_BACKEND_URL: https://example.invalid
+      - run: npx expo prebuild --no-install
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-projects
+          path: |
+            app/ios
+            app/android
+          retention-days: 7
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg libsndfile1
+      - run: pip install torch==2.12.1 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -e '.[dev]' && pytest -q
+        working-directory: backend
+        env:
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: test-key
+          OPENAI_API_KEY: test-key
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t mirra:check backend
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci && npx expo prebuild --platform ios
+        working-directory: app
+      - run: xcodebuild -workspace Mirra.xcworkspace -scheme Mirra -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build > build.log 2>&1 || { tail -100 build.log; exit 1; }
+        working-directory: app/ios
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-build-log
+          path: app/ios/build.log
+          retention-days: 7

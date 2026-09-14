@@ -43,6 +43,9 @@ function hooks() {
   };
 }
 
+const privacy = { usePrivacy: () => ({ canProcess: true, reviewConsent() {}, withdrawLocally: async () => {} }) };
+const confirmation = { confirmRecordingPermission: async () => true, confirmAction: async () => true };
+
 const auth = { useAuth: () => ({ accessToken: 'test-token' }) };
 const http = load('api/http.ts', { '@/config/env': { env: { backendUrl: 'http://test.invalid' } } });
 const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -98,6 +101,7 @@ test('recording saves before upload, allows another offline clip, and retains th
     react: state.react, 'react-native': { Platform: { OS: 'web' }, NativeModules: {} },
     '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' }, accessToken: null }) }, '@/api/http': http,
     '@/storage/pendingRecordings': { recordingId: () => `recording-${starts}` },
+    '@/auth/PrivacyContext': privacy, '@/utils/confirm': confirmation,
     './usePendingRecordings': { usePendingRecordings: () => ({ async enqueue(recording) {
       saved.push(recording);
       if (diskFull) throw new Error('Storage full');
@@ -142,6 +146,7 @@ test('import failures are returned as visible error state on web', async () => {
   const { useImportAudio } = load('hooks/useImportAudio.ts', {
     react: state.react, '@/auth/AuthContext': auth, '@/api/http': http,
     '@/api/client': {}, '@/utils/timeFormat': {}, 'expo-av': {},
+    '@/auth/PrivacyContext': privacy, '@/utils/confirm': confirmation,
     'expo-document-picker': { async getDocumentAsync() { throw new Error('Could not open audio file'); } },
   });
   assert.equal(await state.render(useImportAudio).importAudio(), null);
@@ -185,6 +190,8 @@ test('profile loads account data without a plan request', () => {
     'expo-linear-gradient': {}, 'react-native-svg': {}, '@/components/Screen': {},
     '@/components/ui': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
     '@/theme/tokens': { colors: {}, fonts: {} }, '@/api/client': {}, '@/auth/AuthContext': auth,
+    '@/utils/exportData': {}, '@/utils/confirm': confirmation, '@/storage/pendingRecordings': {}, '@/config/legal': {},
+    '@/auth/PrivacyContext': privacy, '@/hooks/useRecordAudio': { useRecordAudio: () => ({}) },
     '@/hooks/useProfileSummary': { useProfileSummary: () => summaryState },
     '@/hooks/useUserSettings': { useUserSettings: () => ({ settings: {}, loadError: 'Offline' }) },
   });

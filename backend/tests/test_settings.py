@@ -58,7 +58,7 @@ def teardown_function():
 def test_get_settings_returns_defaults_when_missing():
     r = _client(_Db()).get("/settings")
     assert r.status_code == 200
-    assert r.json()["notifications_enabled"] is True
+    assert r.json()["notifications_enabled"] is False
     assert r.json()["coaching_tone"] == "warm_reflective"
 
 
