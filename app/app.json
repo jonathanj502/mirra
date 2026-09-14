@@ -67,6 +67,7 @@
       },
       "permissions": [
         "RECORD_AUDIO",
+        "POST_NOTIFICATIONS",
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_MICROPHONE"
       ],

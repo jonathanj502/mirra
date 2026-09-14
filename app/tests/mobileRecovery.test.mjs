@@ -156,6 +156,39 @@ test('recording saves before upload, allows another offline clip, and retains th
   assert.equal(render().error, 'Microphone is unavailable');
 });
 
+test('Android offers recording notifications once per launch and denial does not block capture', async () => {
+  const state = hooks();
+  const events = [];
+  const { RecordingProvider } = load('hooks/useRecordAudio.ts', {
+    react: state.react, 'react-native': { Platform: { OS: 'android', Version: 33 },
+      PermissionsAndroid: { PERMISSIONS: { POST_NOTIFICATIONS: 'notifications' }, async request(permission) {
+        assert.equal(permission, 'notifications'); events.push('permission'); return 'denied';
+      } }, NativeModules: { RecordingService: {
+        async startForegroundService() { events.push('service'); }, stopForegroundService() {},
+      } } },
+    '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' } }) }, '@/api/http': http,
+    '@/storage/pendingRecordings': { recordingId: () => 'recording' },
+    '@/auth/PrivacyContext': privacy, '@/utils/confirm': confirmation,
+    './usePendingRecordings': { usePendingRecordings: () => ({ async enqueue() {} }) },
+    'expo-av': { InterruptionModeAndroid: {}, InterruptionModeIOS: {}, Audio: {
+      requestPermissionsAsync: async () => ({ granted: true }), setAudioModeAsync: async () => {},
+      RecordingOptionsPresets: { HIGH_QUALITY: {} }, Recording: { async createAsync() {
+        events.push('capture');
+        return { status: { durationMillis: 1000 }, recording: {
+          stopAndUnloadAsync: async () => ({ durationMillis: 1000 }), getURI: () => 'file:///test.m4a',
+        } };
+      } },
+    } },
+  });
+  const render = () => state.render(() => RecordingProvider({ children: null })).props.value;
+  await render().startRecording();
+  assert.deepEqual(events, ['permission', 'service', 'capture']);
+  assert.equal(render().isRecording, true);
+  await render().stopRecording();
+  await render().startRecording();
+  assert.deepEqual(events, ['permission', 'service', 'capture', 'service', 'capture']);
+});
+
 test('import failures are returned as visible error state on web', async () => {
   const state = hooks();
   const { useImportAudio } = load('hooks/useImportAudio.ts', {

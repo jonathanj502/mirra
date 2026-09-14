@@ -13,19 +13,19 @@ npm install
 npx expo start          # then press i (iOS), a (Android), or scan in Expo Go
 ```
 
-> Fonts (Instrument Serif + Inter) are fetched from `@expo-google-fonts` at
-> first launch — the splash holds until they load.
+> Fonts (Instrument Serif + Inter) are bundled from `@expo-google-fonts`.
+> The splash waits for font loading; a font error falls back to system fonts.
 
 ## Screens
 
 | Route | Screen | Notes |
 |---|---|---|
-| `/` (tab: Record) | `HomeScreen` | Greeting, breathing record button, recents, import action |
+| `/` (tab: Record) | `HomeScreen` | Greeting, record control, durable upload queue, recents, import action |
 | `/insights` (tab) | `InsightsIndexScreen` | Swipeable week index, conversations grouped by day |
 | `/progress` (tab) | `ProgressScreen` | Daily-minutes bars + 6 expandable weekly metric cards + strengths/nudges |
-| `/profile` (tab) | `ProfileScreen` | Identity, stats, settings, and account export |
+| `/profile` (tab) | `ProfileScreen` | Identity, stats, settings, consent, export and account deletion |
 | `/conversation` | `AnalyticsScreen` | Single-conversation deep-dive (Talk/Listen, Questions, Turn-floor offset, Energy, LSM radar, Vocabulary) |
-| `/reflect` | `ReflectScreen` | OpenAI reflection chat with a local fallback when unavailable |
+| `/reflect` | `ReflectScreen` | OpenAI reflection chat, labeled general guidance if unavailable, private response reports |
 
 ## Layout
 
@@ -36,7 +36,7 @@ app/                    expo-router routes (thin wrappers)
   reflect.tsx
 src/
   theme/tokens.ts       dawn palette, fonts, radii, shadows (from tokens.css)
-  data/                 Reflect starter prompts and fallback copy
+  data/                 Reflect starter prompts and introductory copy
   components/           Typography, Icon, ui (Card/Pip/Chip), Screen,
                         FloatingTabBar, charts (react-native-svg port),
                         meters (FillerBars/SyncBars/OffsetZoneLegend),
@@ -59,7 +59,7 @@ src/
 
 ## Offline recording and recovery
 
-After signing in once, recording works without connectivity, including when the saved access token has expired. Stopping a recording saves its audio and original timestamp on the device before any upload. Multiple recordings can wait in the queue shown on the Record tab.
+After signing in and granting AI-processing consent once, recording works without connectivity, including when the saved access token has expired. Stopping a recording saves its audio and original timestamp on the device before any upload. Multiple recordings can wait in the queue shown on the Record tab.
 
 `RecordingProvider` lives above the routes. Its queue restores at launch and uploads serially with refreshed credentials for the recording's original account. Native audio lives in the app's documents directory; web audio and metadata are committed together in IndexedDB. Failed uploads keep their audio. A successful server acknowledgement removes the local copy. Each recording has a stable ID, so a repeated request returns its existing debrief without another usage charge.
 
@@ -74,3 +74,7 @@ node tests/browserStorageCheck.mjs
 ```
 
 The last command serves an isolated IndexedDB check at `http://localhost:8768`: save the synthetic samples, reload, then verify. For physical-device validation, use an installed native build, sign in, enable airplane mode, record and stop two clips, force-quit and reopen, then reconnect. Both clips should upload automatically exactly once. Repeat with an expired access token and with an account switch; another account must not see or upload the original account's clips. Expo Go may need its development server to load the app bundle, so it is not a substitute for the native offline-launch check.
+
+## Release preparation
+
+The [release record](../docs/RELEASE.md) tracks required migrations, provider setup, signing and device checks. `npx expo prebuild` regenerates native projects from the committed config plugins; manual edits to generated native folders do not survive. CI compiles Android and an unsigned iOS Release build, then installs and launches the iOS build in Simulator. A signed physical-device build is still required to verify locked-screen recording and recovery.

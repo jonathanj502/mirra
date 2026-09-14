@@ -93,7 +93,7 @@ The optional `recording_id` form field on `POST /sessions` produces an account-s
 
 - **Expo prebuild** — native files are disposable generated output. Preserve custom behavior through `app/plugins/`, including background recording and backup exclusions. There are no manual iOS extension targets to preserve.
 
-- **Background recording** — iOS requires `UIBackgroundModes: ["audio"]` in `app.config.ts` and an active `AVAudioSession`. Android requires a foreground service with a persistent notification. Validate on real devices, not simulators, with screen locked for 5+ minutes.
+- **Background recording** — iOS requires `UIBackgroundModes: ["audio"]` in `app.config.ts` and an active `AVAudioSession`. Android requires a foreground service with a notification. On Android 13+, the recording hook offers notification permission once per app launch; denial still permits the service, visible in OS Task Manager. Validate on real devices, not simulators, with screen locked for 5+ minutes.
 
 - **OpenAI structured output** — use `responses.parse` with the `CoachingOutput` Pydantic schema, never free-text JSON parsing. Keep two retries for invalid output in `coaching.py`; reject missing or incomplete output rather than saving an invalid debrief.
 
@@ -143,7 +143,7 @@ The frontend is fully wired to the backend — no more mock data. `src/data/rece
 - Auth (username/password + Google, via Supabase) — `src/auth/AuthContext.tsx`, `src/api/auth.ts`, `backend/app/auth.py` / `main.py`'s `/auth/*` routes.
 - User settings (notifications, coaching tone) — `useUserSettings`, `backend/app/user_settings.py`, `/settings` routes.
 - Dashboard/analytics — `useProgressSummary`, `backend/app/dashboard.py`, `/analytics/progress`.
-- Reflect chat — `useDebriefs` + `api/client.ts`'s reflect call, `backend/app/reflection.py`, `/reflect`. Uses the same OpenAI key as transcription and debriefs, with a local fallback when no model reply is available. `src/data/reflect.ts` still exists but only for seed/starter-prompt copy and canned replies used if the live call fails — not conversation data.
+- Reflect chat — `useDebriefs` + `api/client.ts`'s reflect call, `backend/app/reflection.py`, `/reflect`. Uses the same OpenAI key as transcription and debriefs, with a local fallback when no model reply is available. `src/data/reflect.ts` contains only introductory and starter-prompt copy. Any backend general-guidance fallback is labeled as AI unavailable in the UI; failed network requests retain the user message.
 
 **Data models are already aligned** — `backend/app/models/debrief.py` matches the TypeScript `DebriefCard`/`ConversationStats` interfaces in `app/src/models/`.
 

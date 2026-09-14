@@ -1,5 +1,5 @@
 import { createContext, createElement, useContext, useEffect, useRef, useState, ReactNode } from 'react';
-import { NativeModules, Platform } from 'react-native';
+import { NativeModules, PermissionsAndroid, Platform } from 'react-native';
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 import { friendlyErrorMessage } from '@/api/http';
 import { useAuth } from '@/auth/AuthContext';
@@ -9,11 +9,23 @@ import { usePrivacy } from '@/auth/PrivacyContext';
 import { confirmRecordingPermission } from '@/utils/confirm';
 
 // Android needs its native foreground service before opening the microphone.
+let askedForRecordingNotification = false;
 async function setForegroundService(running: boolean) {
   if (Platform.OS !== 'android') return;
   const service = NativeModules.RecordingService;
   if (running && !service) throw new Error('Recording needs the Mirra native Android build.');
-  if (running) await service.startForegroundService();
+  if (running) {
+    if (Number(Platform.Version) >= 33 && !askedForRecordingNotification) {
+      askedForRecordingNotification = true;
+      // Optional: Android still shows the foreground service in Task Manager after denial.
+      await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS, {
+        title: 'Recording notification',
+        message: 'Show when Mirra is recording and tap the notification to return to your recording. No reminders or marketing notifications are sent.',
+        buttonPositive: 'Continue', buttonNegative: 'Not now',
+      }).catch(() => {});
+    }
+    await service.startForegroundService();
+  }
   else service?.stopForegroundService();
 }
 
