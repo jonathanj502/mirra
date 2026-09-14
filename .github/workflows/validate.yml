@@ -117,9 +117,30 @@ jobs:
         working-directory: app
       - run: xcodebuild -workspace Mirra.xcworkspace -scheme Mirra -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build > build.log 2>&1 || { tail -100 build.log; exit 1; }
         working-directory: app/ios
+      - name: Launch the app in iOS Simulator
+        timeout-minutes: 8
+        working-directory: app
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: public-build-placeholder
+          EXPO_PUBLIC_MIRRA_BACKEND_URL: https://example.invalid
+        run: |
+          device=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(d["udid"] for runtime, devices in sorted(data["devices"].items(), reverse=True) for d in devices if "iOS" in runtime and d["name"].startswith("iPhone")))')
+          xcrun simctl boot "$device" || true
+          xcrun simctl bootstatus "$device" -b
+          nohup npx expo start --localhost --port 8081 > metro.log 2>&1 &
+          curl --fail --retry 20 --retry-delay 3 --retry-connrefused http://localhost:8081/status
+          curl --fail --max-time 180 'http://localhost:8081/node_modules/expo-router/entry.bundle?platform=ios&dev=true&minify=false' -o /dev/null
+          xcrun simctl install "$device" ios/build/Build/Products/Debug-iphonesimulator/Mirra.app
+          xcrun simctl launch "$device" com.mirra.app
+          sleep 20
+          xcrun simctl io "$device" screenshot ios-launch.png
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: ios-build-log
-          path: app/ios/build.log
+          path: |
+            app/ios/build.log
+            app/metro.log
+            app/ios-launch.png
           retention-days: 7
