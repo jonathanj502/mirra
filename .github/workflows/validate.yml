@@ -43,7 +43,7 @@ jobs:
       - run: npm run typecheck && node --test tests/*.test.mjs
         working-directory: app
       - run: node website/build.mjs && node --test website/*.test.mjs
-      - run: npx expo export --platform web --output-dir dist
+      - run: npx expo export --platform all --output-dir dist
         working-directory: app
         env:
           EXPO_PUBLIC_SUPABASE_URL: https://example.supabase.co

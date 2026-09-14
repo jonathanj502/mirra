@@ -98,6 +98,8 @@ test('recording saves before upload, allows another offline clip, and retains th
   const saved = [];
   let diskFull = true;
   let stoppedByOS = false;
+  let createFails = false;
+  const audioModes = [];
   const { RecordingProvider } = load('hooks/useRecordAudio.ts', {
     react: state.react, 'react-native': { Platform: { OS: 'web' }, NativeModules: {} },
     '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' }, accessToken: null }) }, '@/api/http': http,
@@ -108,9 +110,10 @@ test('recording saves before upload, allows another offline clip, and retains th
       if (diskFull) throw new Error('Storage full');
     } }) },
     'expo-av': { InterruptionModeAndroid: {}, InterruptionModeIOS: {}, Audio: {
-      requestPermissionsAsync: async () => ({ granted: true }), setAudioModeAsync: async () => {},
+      requestPermissionsAsync: async () => ({ granted: true }), setAudioModeAsync: async mode => { audioModes.push(mode); },
       RecordingOptionsPresets: { HIGH_QUALITY: {} }, Recording: { async createAsync() {
         starts++;
+        if (createFails) throw Error('Microphone is unavailable');
         return { status: { durationMillis: 7500 }, recording: {
           async stopAndUnloadAsync() { stops++; if (stoppedByOS) throw Error('Already stopped'); return { durationMillis: 7500 }; },
           getStatusAsync: async () => ({ isDoneRecording: stoppedByOS, durationMillis: 7500 }), getURI: () => 'blob:test-recording',
@@ -145,6 +148,12 @@ test('recording saves before upload, allows another offline clip, and retains th
   assert.equal(await render().stopRecording(), true);
   assert.equal(render().isRecording, false);
   assert.equal(saved.at(-1).seconds, 7.5);
+  createFails = true;
+  await render().startRecording();
+  assert.equal(render().isRecording, false);
+  assert.equal(render().isStartingRecording, false);
+  assert.equal(audioModes.at(-1).allowsRecordingIOS, false, 'A failed start must restore the audio session');
+  assert.equal(render().error, 'Microphone is unavailable');
 });
 
 test('import failures are returned as visible error state on web', async () => {

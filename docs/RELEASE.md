@@ -15,7 +15,7 @@ Updated September 14, 2026. **Prelaunch; not approved for public app distributio
 
 ## Verified evidence
 
-- Local TypeScript validation and 20 passing behavior tests cover callback-token cleanup, account isolation, offline recovery, consent, imports, both sign-out paths, deletion, archive rules and loading errors. Web export also passed after the final UI changes.
+- Local TypeScript validation and 20 passing behavior tests cover callback-token cleanup, account isolation, offline recovery, consent, imports, both sign-out paths, deletion, archive rules and loading errors. Production JavaScript export passed for web and both native platforms, including Hermes bytecode. CI now runs all-platform export as well as native compilation.
 - All 136 backend tests passed in CI, covering auth, settings, AI consent, usage refunds, duplicate processing, pipeline output, ownership checks, export, deletion and private error logging.
 - A live OpenAI smoke check used two synthetic voices: transcription found two speakers, structured coaching and Reflect both succeeded (22.8 seconds for the complete smoke check). No customer content, account or database row was used. Reproduce intentionally with `python scripts/smoke_ai.py --live` from `backend`; this incurs API charges.
 - [GitHub Actions run 34822843697](https://github.com/sheanrahman192/mirra/actions/runs/34822843697), at `50c6018`, passed all six jobs: app/prebuild, backend, PostgreSQL schema/privacy checks, container, Android compilation, and unsigned iOS simulator compilation. Subsequent UI, website and archive-rule changes have their local evidence above; the PR lists the final workflow result.

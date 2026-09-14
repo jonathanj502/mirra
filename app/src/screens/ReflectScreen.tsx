@@ -157,7 +157,7 @@ export function ReflectScreen() {
     >
       {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + 6 }]}>
-        <Pressable onPress={goBack} hitSlop={8}><Icon.back color={colors.muted} /></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={goBack} hitSlop={8} style={{ minWidth: 44, minHeight: 44, justifyContent: 'center' }}><Icon.back color={colors.muted} /></Pressable>
         <View style={{ alignItems: 'center', gap: 2 }}>
           <Eyebrow>Reflect with</Eyebrow>
           <SerifItalic style={styles.headerName}>Mirra</SerifItalic>
@@ -178,7 +178,7 @@ export function ReflectScreen() {
       {messages.length <= 3 && !thinking && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.startersWrap} contentContainerStyle={{ gap: 8, paddingHorizontal: 14 }}>
           {STARTER_PROMPTS.map((p, i) => (
-            <Pressable key={i} onPress={() => send(p)} style={styles.starter}>
+            <Pressable accessibilityRole="button" key={i} onPress={() => send(p)} style={styles.starter}>
               <Body style={styles.starterText}>{p}</Body>
             </Pressable>
           ))}

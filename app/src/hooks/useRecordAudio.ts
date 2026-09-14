@@ -91,9 +91,10 @@ function useRecorderState() {
       startedAt.current = Date.now();
       setRecordingMs(created.status.durationMillis ?? 0);
       setRecording(created.recording);
-    } catch {
+    } catch (err) {
       setForegroundService(false);
-      setError('Could not start the microphone recording.');
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
+      setError(friendlyErrorMessage(err, 'Could not start the microphone recording.'));
     } finally {
       operationInProgress.current = false;
       setStarting(false);
