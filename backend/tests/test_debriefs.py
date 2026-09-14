@@ -76,18 +76,13 @@ def test_delete_debrief_is_scoped_idempotent_and_validates_id():
         {"id": kept_id, "user_id": "user-1"},
     ]
     db = MagicMock()
-    query = db.table.return_value.delete.return_value
-    filters = {}
-
-    def eq(key, value):
-        filters[key] = value
+    query = db.rpc.return_value
+    def rpc(name, arguments):
+        assert name == 'delete_debrief_permanently'
+        assert arguments['owner_id'] == 'user-1'
+        rows[:] = [row for row in rows if not (row['user_id'] == arguments['owner_id'] and row['id'] == arguments['target_id'])]
         return query
-
-    def execute():
-        rows[:] = [row for row in rows if not all(row[key] == value for key, value in filters.items())]
-
-    query.eq.side_effect = eq
-    query.execute.side_effect = execute
+    db.rpc.side_effect = rpc
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[verify_token] = lambda: "user-1"
     client = TestClient(app)
@@ -101,7 +96,7 @@ def test_delete_debrief_is_scoped_idempotent_and_validates_id():
     assert client.delete("/debriefs/not-a-uuid").status_code == 422
     assert query.execute.call_count == 3
     # Deletion never touches usage counters or any other account data.
-    assert all(call.args == ("debriefs",) for call in db.table.call_args_list)
+    db.table.assert_not_called()
 
 
 def test_delete_requires_auth_and_does_not_report_database_failure_as_success():
@@ -112,7 +107,7 @@ def test_delete_requires_auth_and_does_not_report_database_failure_as_success():
     db.table.assert_not_called()
 
     app.dependency_overrides[verify_token] = lambda: "user-1"
-    db.table.return_value.delete.return_value.eq.return_value.eq.return_value.execute.side_effect = RuntimeError("database unavailable")
+    db.rpc.return_value.execute.side_effect = RuntimeError("database unavailable")
     response = client.delete(f'/debriefs/{SAMPLE["id"]}')
     assert response.status_code == 500
     assert response.json() == {"detail": "Internal server error"}

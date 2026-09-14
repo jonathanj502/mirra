@@ -119,6 +119,7 @@ export interface ProfileSummary {
 }
 
 export interface AccountExport {
+  deletedConversationIds: string[];
   exportedAt: string;
   userId: string;
   profile: ProfileSummary;

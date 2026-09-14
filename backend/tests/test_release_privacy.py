@@ -90,3 +90,28 @@ def test_busy_pipeline_rejects_without_reserving_usage():
         reserve.assert_not_called()
     finally:
         _pipeline_slot.release()
+
+
+def test_deleted_recording_replay_never_reserves_usage_or_calls_ai():
+    from uuid import uuid5, NAMESPACE_URL
+    deleted_id = str(uuid5(NAMESPACE_URL, 'mirra:owner:old-recording'))
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {'debrief_id': deleted_id}
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[verify_token] = lambda: 'owner'
+    with patch('app.main.check_and_increment') as reserve, patch('app.main.coordinator.run') as process:
+        response = TestClient(app).post('/sessions', data={'recording_id': 'old-recording'}, files={'audio': ('test.wav', b'audio', 'audio/wav')})
+    assert response.status_code == 410
+    reserve.assert_not_called()
+    process.assert_not_called()
+
+
+def test_unhandled_provider_error_does_not_log_conversation_content(caplog):
+    db = MagicMock()
+    db.auth.admin.delete_user.side_effect = RuntimeError('private-message-marker')
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[verify_token] = lambda: 'owner'
+    response = TestClient(app).delete('/account')
+    assert response.status_code == 500
+    assert 'private-message-marker' not in caplog.text
+    assert 'RuntimeError' in caplog.text

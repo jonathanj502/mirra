@@ -57,3 +57,5 @@ Request options and limits follow the
 [OpenAI file-transcription documentation](https://developers.openai.com/api/docs/guides/speech-to-text#speaker-diarization).
 
 Coaching uses [OpenAI structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
+
+Release decoding uses FFmpeg on PATH, restricted to supported audio demuxers with network/playlist loading disabled. Output is mono 16 kHz PCM; the decoder has a 120-second timeout and rejects recordings over 60 minutes. Upload bytes remain capped at 25 MB. Run only one pipeline at a time because the shared VAD model has mutable inference state.

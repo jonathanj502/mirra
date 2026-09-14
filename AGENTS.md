@@ -9,7 +9,7 @@ Verify implementation details against the code before relying on descriptions of
 Mirra is a conversational coaching iOS/Android app. It records real conversations, analyzes the user's speech for social signals (talk/listen ratio, question frequency, interruptions, energy, vocabulary), and surfaces a debrief card with coaching bullets and an AI-powered Reflect chat.
 
 This is a monorepo with two top-level packages:
-- `app/` — React Native (Expo bare workflow + TypeScript)
+- `app/` — React Native (Expo 54 generated native projects + TypeScript)
 - `backend/` — FastAPI (Python 3.11+)
 
 ## Commands
@@ -38,7 +38,7 @@ pytest tests/test_usage_gate.py
 
 ### Audio Pipeline (the core product)
 
-All audio capture happens on-device via `expo-av` (`useRecordAudio.ts`), encoded as `.m4a` (`.webm` on web) — not WAV; no streaming or on-device VAD. On stop, the app uploads the file to `POST /sessions`. The backend accepts several container formats (`SUPPORTED_AUDIO_TYPES` in `main.py`: aac, mp4/m4a, mpeg, ogg, wav, webm) and decodes with `soundfile`, falling back to `librosa.load` for formats it can't parse (`coordinator.py`). The backend runs a synchronous pipeline in order:
+All audio capture happens on-device via `expo-av` (`useRecordAudio.ts`), encoded as `.m4a` (`.webm` on web) — not WAV; no streaming or on-device VAD. On stop, the app uploads the file to `POST /sessions`. The backend accepts several container formats (`SUPPORTED_AUDIO_TYPES` in `main.py`: aac, mp4/m4a, mpeg, ogg, wav, webm) and decodes through FFmpeg into bounded mono 16 kHz PCM (`coordinator.py`). Playlist/network demuxers are disabled; decoding times out after 120 seconds and recordings longer than 60 minutes are rejected. The backend runs a synchronous pipeline in order:
 
 1. `pipeline/vad.py` — Silero VAD checks whether any speech is present; it does not filter the audio sent to transcription.
 2. `pipeline/transcription.py` — Sends the complete recording to `gpt-4o-transcribe-diarize` with `diarized_json` output and automatic server chunking. Speaker labels and timestamps refer to the original timeline.
@@ -52,7 +52,7 @@ See `backend/app/pipeline/README.md` for request limits, timing caveats, and val
 
 ### Auth & JWT
 
-The backend verifies Supabase JWTs on every request (`app/auth.py`). Uses `python-jose` to verify ES256 signatures against the project's public JWKS (`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`), fetched once and cached for the process lifetime — no per-request network call and no shared secret. The Supabase project uses asymmetric signing keys; there is no `SUPABASE_JWT_SECRET` setting. `user_id` comes from the token's `sub` claim and is threaded through all DB operations.
+The backend verifies Supabase JWTs on every request (`app/auth.py`). Uses `python-jose` to verify ES256 signatures against the project's public JWKS (`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`), cached for ten minutes and refreshed on an unknown signing-key ID (at most once per 30 seconds) — no per-request network call and no shared secret. The Supabase project uses asymmetric signing keys; there is no `SUPABASE_JWT_SECRET` setting. `user_id` comes from the token's `sub` claim and is threaded through all DB operations.
 
 Username/password sign-in is a thin wrapper: the backend maps `<username>` to the fake email `<username>@users.mirra.local` and drives Supabase's REST auth API directly. Sign-up needs `SUPABASE_SERVICE_ROLE_KEY` on the backend (`POST /auth/v1/admin/users`); sign-in only needs the password grant. `GET /auth/status` reports whether username sign-up and Google OAuth are currently available so the app can gate its UI.
 
@@ -75,25 +75,23 @@ interface ConversationStats {
 
 **Python** (`backend/app/models/debrief.py`): same fields in `snake_case`. The API returns `snake_case`; `api/client.ts` converts to `camelCase` at the boundary.
 
-### IPC for iOS-only triggers (Phase 5)
+### Native builds
 
-Control Center widget, Back Tap, and Lock Screen Shortcut all fire `ToggleRecordingIntent` (Swift AppIntents extension). The intent writes a command to a shared `UserDefaults` App Group container and posts a Darwin notification. A native `RCTEventEmitter` module in the main app listens for that Darwin notification and emits an event into RN, where `useRecorder.toggle()` is called. All four targets share App Group `group.com.<yourname>.mirra`.
+Native projects are generated with Expo prebuild and excluded from git/EAS uploads. `app/app.json`, `app/app.config.ts`, and `app/plugins/withRecordingService.js` are canonical. The plugin installs the Android foreground microphone service and excludes iOS Documents (pending audio) from device backups. There are no implemented iOS AppIntent/widget/share-extension targets. Changes to native behavior belong in a config plugin, not generated directories.
 
 ### Offline recording queue
 
 `RecordingProvider` (`app/src/hooks/useRecordAudio.ts`) sits under AuthProvider and above the routes. Stopped recordings are saved before upload, using `src/storage/pendingRecordings.ts` (native documents directory) or `.web.ts` (IndexedDB blobs and metadata). `usePendingRecordings.ts` restores the per-account queue and uploads serially on launch, foreground/online events, and a 15-second foreground poll. Each upload refreshes auth and checks account identity. Only acknowledged uploads or explicit discards remove queued audio. Storage failures retain the original clip and block another capture until saving succeeds.
 
-The optional `recording_id` form field on `POST /sessions` produces an account-scoped deterministic debrief primary key. Replays return the existing debrief before reserving usage. A process-local in-flight guard returns 409 for simultaneous retries; across processes the database primary key prevents duplicate rows and duplicate-insert reservations are refunded. No schema migration is required. The queue survives restarts after Stop/save completes; uploads resume when the app is foregrounded, not while force-quit. Browser offline app-shell loading and OS background upload jobs are not implemented.
+The optional `recording_id` form field on `POST /sessions` produces an account-scoped deterministic debrief primary key. Replays return the existing debrief before reserving usage. A process-local in-flight guard returns 409 for simultaneous retries; across processes the database primary key prevents duplicate rows and duplicate-insert reservations are refunded. Deletion tombstones require the `20260914020000_deletion_tombstones.sql` migration; they prevent delayed uploads from restoring deleted conversations. The queue survives restarts after Stop/save completes; uploads resume when the app is foregrounded, not while force-quit. Browser offline app-shell loading and OS background upload jobs are not implemented.
 
 ### Audio file import
 
-`useImportAudio.ts` uses `expo-document-picker` (not an OS share-sheet intent) to let the user pick an existing audio file on either platform. Client-side guards: 25MB cap, MIME sniffed from the file extension when the picker returns `application/octet-stream`. Duration is read via a throwaway `Audio.Sound.createAsync`/`unloadAsync` before upload. Goes through the same `uploadSession()` → `POST /sessions` path as a live recording, wired into `HomeScreen.tsx` alongside `useRecordAudio`.
-
-Note: the original plan called for `react-native-receive-sharing-intent` handling Android `ACTION_SEND` intents (share-sheet import, confirmation card instead of a manual picker) — that package was never installed and no intent filter exists in `AndroidManifest.xml`. The document-picker approach above is what actually shipped; treat any reference to `useSharedFile.ts` elsewhere as stale.
+`useImportAudio.ts` uses `expo-document-picker`. It validates supported MIME types/extensions and the 25 MB cap, confirms participant permission, then copies audio into the same durable account queue as a recording. The queue refreshes auth and uses an idempotent recording ID. Import does not use an OS share-sheet intent. Duration probing is best effort; FFmpeg performs authoritative server decoding.
 
 ## Critical Gotchas
 
-- **Expo prebuild + iOS extensions** — Phase 5 extension targets (`MirraIntents`, `MirraWidgets`, `MirraShare`) are not managed by Expo. After generating `ios/` with `expo prebuild`, either commit `ios/` and stop re-running prebuild, or write `withMod` config plugins. Re-running prebuild will clobber manual target additions.
+- **Expo prebuild** — native files are disposable generated output. Preserve custom behavior through `app/plugins/`, including background recording and backup exclusions. There are no manual iOS extension targets to preserve.
 
 - **Background recording** — iOS requires `UIBackgroundModes: ["audio"]` in `app.config.ts` and an active `AVAudioSession`. Android requires a foreground service with a persistent notification. Validate on real devices, not simulators, with screen locked for 5+ minutes.
 
@@ -103,7 +101,7 @@ Note: the original plan called for `react-native-receive-sharing-intent` handlin
 
 - **Transcription 25MB limit** — `main.py` limits uploaded bytes before processing. `transcription.py` separately checks encoded PCM against the API's 25,000,000-byte limit and uses the original supported compressed recording when PCM is too large. If neither fits, return 413 and refund reserved usage. Do not split into independent requests without a strategy to reconcile speaker IDs; labels are local to each request.
 
-- **JWT verification is ES256/JWKS, not a shared secret** — this Supabase project signs tokens with asymmetric keys, so an HS256 `SUPABASE_JWT_SECRET` can never verify them (this once silently broke every authenticated request). `app/auth.py` fetches the public JWKS once and caches it for the process lifetime; restart the backend if Supabase signing keys are ever rotated.
+- **JWT verification is ES256/JWKS, not a shared secret** — this Supabase project signs tokens with asymmetric keys, so an HS256 `SUPABASE_JWT_SECRET` can never verify them (this once silently broke every authenticated request). `app/auth.py` fetches the public JWKS once and caches it for the process lifetime; the cache refreshes on key rotation and periodically.
 
 - **One AI credential** — `OPENAI_API_KEY` powers transcription, debriefs, and Reflect. Optional `OPENAI_DEBRIEF_MODEL` / `OPENAI_REFLECT_MODEL` overrides default to `gpt-4.1` / `gpt-4.1-mini`. Text requests use `store=False`; Reflect includes transcripts only when the user's settings allow it.
 
@@ -148,3 +146,11 @@ The frontend is fully wired to the backend — no more mock data. `src/data/rece
 - Reflect chat — `useDebriefs` + `api/client.ts`'s reflect call, `backend/app/reflection.py`, `/reflect`. Uses the same OpenAI key as transcription and debriefs, with a local fallback when no model reply is available. `src/data/reflect.ts` still exists but only for seed/starter-prompt copy and canned replies used if the live call fails — not conversation data.
 
 **Data models are already aligned** — `backend/app/models/debrief.py` matches the TypeScript `DebriefCard`/`ConversationStats` interfaces in `app/src/models/`.
+
+## Release privacy and operations
+
+- Apply both September 14 release migrations before deploying the current backend. `/health` reports liveness; `/ready` requires the consent columns, deletion-marker table and AI credential.
+- AI consent uses version `2026-09-14`, is opt-in and checked server-side for sessions/Reflect. Consent timestamps are written by the backend. Settings updates only write supplied fields, so an unrelated change cannot restore withdrawn consent.
+- `DELETE /account` removes the authenticated Supabase user with cascading data deletion. `DELETE /debriefs/{id}` uses an account-scoped SQL RPC and a content-free tombstone. SQL advisory locks serialize deletion and replay; the insert trigger rejects resurrection. Tombstones disappear on account deletion and are included in account exports.
+- One pipeline/worker protects the stateful VAD model and memory budget. Reflect has a per-account 60-message/hour process-local limit. Move budgets to shared storage before scaling workers/instances.
+- Product/release evidence and external blockers are tracked in `docs/RELEASE.md`. The website and policy pages remain a clearly labeled prelaunch preview until the operator, private support contact and deployment are finalized.

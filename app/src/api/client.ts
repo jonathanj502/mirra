@@ -142,6 +142,7 @@ type RawUserSettings = {
 };
 
 type RawAccountExport = {
+  deleted_conversation_ids?: string[];
   exported_at: string;
   user_id: string;
   profile: RawProfileSummary;
@@ -278,6 +279,7 @@ function toUserSettings(raw: RawUserSettings): UserSettings {
 
 function toAccountExport(raw: RawAccountExport): AccountExport {
   return {
+    deletedConversationIds: raw.deleted_conversation_ids ?? [],
     exportedAt: raw.exported_at,
     userId: raw.user_id,
     profile: toProfileSummary(raw.profile),

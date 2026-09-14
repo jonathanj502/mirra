@@ -9,6 +9,26 @@ concurrency:
   group: validate-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  schema:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: mirra_test
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: ci-only-password
+      PGDATABASE: mirra_test
+    steps:
+      - uses: actions/checkout@v4
+      - run: psql -v ON_ERROR_STOP=1 -f supabase/tests/bootstrap.sql
+      - run: for migration in supabase/migrations/*.sql; do psql -v ON_ERROR_STOP=1 -f "$migration" || exit 1; done
+      - run: psql -v ON_ERROR_STOP=1 -f supabase/tests/privacy.sql
   app:
     runs-on: ubuntu-latest
     steps:
@@ -59,6 +79,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t mirra:check backend
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: npm ci && npx expo prebuild --platform android --no-install
+        working-directory: app
+      - run: ./gradlew :app:assembleDebug --no-daemon --max-workers=2 -PreactNativeArchitectures=arm64-v8a > build.log 2>&1 || { tail -100 build.log; exit 1; }
+        working-directory: app/android
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-build-log
+          path: app/android/build.log
+          retention-days: 7
   ios:
     runs-on: macos-15
     timeout-minutes: 40

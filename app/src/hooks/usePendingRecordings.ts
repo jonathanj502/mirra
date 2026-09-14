@@ -68,7 +68,7 @@ export function usePendingRecordings() {
             let response;
             try {
               response = await uploadSession(data.session.access_token, audio, {
-                title: 'Recorded conversation', clientDurationSeconds: row.seconds,
+                title: row.title || 'Recorded conversation', clientDurationSeconds: row.seconds,
                 recordingId: row.id, startedAt: row.startedAt,
               }, controller.signal);
             } finally {
@@ -87,12 +87,12 @@ export function usePendingRecordings() {
           } catch (err) {
             if (cancelled || pauseRequested.current) break;
             const status = err instanceof ApiError ? err.status : 0;
-            const delay = [413, 415, 422].includes(status) ? Infinity : status === 402 ? 300_000 : status >= 500 || status === 429 ? 60_000 : 15_000;
+            const delay = [410, 413, 415, 422].includes(status) ? Infinity : status === 402 ? 300_000 : status >= 500 || status === 429 ? 60_000 : 15_000;
             const message = status || stage === 'storage' ? friendlyErrorMessage(err, 'Could not access saved audio.')
               : 'Waiting for a connection. Upload resumes automatically.';
             failures.current.set(row.id, { retryAt: Date.now() + delay, message });
             setPending(items => items.map(item => item.id === row.id ? { ...item, error: message } : item));
-            if (stage !== 'storage' && ![413, 415, 422].includes(status)) break;
+            if (stage !== 'storage' && ![410, 413, 415, 422].includes(status)) break;
           } finally {
             if (audio) releasePendingAudio(audio);
             busyId.current = null;

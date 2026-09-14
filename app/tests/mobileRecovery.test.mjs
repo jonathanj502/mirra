@@ -97,6 +97,7 @@ test('recording saves before upload, allows another offline clip, and retains th
   let starts = 0;
   const saved = [];
   let diskFull = true;
+  let stoppedByOS = false;
   const { RecordingProvider } = load('hooks/useRecordAudio.ts', {
     react: state.react, 'react-native': { Platform: { OS: 'web' }, NativeModules: {} },
     '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' }, accessToken: null }) }, '@/api/http': http,
@@ -111,7 +112,8 @@ test('recording saves before upload, allows another offline clip, and retains th
       RecordingOptionsPresets: { HIGH_QUALITY: {} }, Recording: { async createAsync() {
         starts++;
         return { status: { durationMillis: 7500 }, recording: {
-          async stopAndUnloadAsync() { stops++; return { durationMillis: 7500 }; }, getURI: () => 'blob:test-recording',
+          async stopAndUnloadAsync() { stops++; if (stoppedByOS) throw Error('Already stopped'); return { durationMillis: 7500 }; },
+          getStatusAsync: async () => ({ isDoneRecording: stoppedByOS, durationMillis: 7500 }), getURI: () => 'blob:test-recording',
         } };
       } },
     } },
@@ -139,19 +141,57 @@ test('recording saves before upload, allows another offline clip, and retains th
   assert.equal(hook.error, null);
   await hook.startRecording();
   assert.equal(starts, 2);
+  stoppedByOS = true;
+  assert.equal(await render().stopRecording(), true);
+  assert.equal(render().isRecording, false);
+  assert.equal(saved.at(-1).seconds, 7.5);
 });
 
 test('import failures are returned as visible error state on web', async () => {
   const state = hooks();
   const { useImportAudio } = load('hooks/useImportAudio.ts', {
-    react: state.react, '@/auth/AuthContext': auth, '@/api/http': http,
-    '@/api/client': {}, '@/utils/timeFormat': {}, 'expo-av': {},
+    react: state.react, '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' } }) }, '@/api/http': http,
+    '@/hooks/useRecordAudio': { useRecordAudio: () => ({}) }, '@/storage/pendingRecordings': {}, '@/utils/timeFormat': {}, 'expo-av': {},
     '@/auth/PrivacyContext': privacy, '@/utils/confirm': confirmation,
     'expo-document-picker': { async getDocumentAsync() { throw new Error('Could not open audio file'); } },
   });
   assert.equal(await state.render(useImportAudio).importAudio(), null);
   assert.equal(state.render(useImportAudio).error, 'Could not open audio file');
   assert.equal(state.render(useImportAudio).importing, false);
+});
+
+test('import saves an account-owned copy to the offline queue and requires AI and participant consent', async () => {
+  const state = hooks();
+  let canProcess = false;
+  let permission = false;
+  let asked = 0;
+  let picks = 0;
+  const saved = [];
+  const { useImportAudio } = load('hooks/useImportAudio.ts', {
+    react: state.react, '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' } }) }, '@/api/http': http,
+    '@/auth/PrivacyContext': { usePrivacy: () => ({ canProcess, reviewConsent: () => asked++ }) },
+    '@/utils/confirm': { confirmRecordingPermission: async () => permission },
+    '@/storage/pendingRecordings': { recordingId: () => 'stable-id' },
+    '@/hooks/useRecordAudio': { useRecordAudio: () => ({ enqueue: async row => saved.push(row) }) },
+    '@/utils/timeFormat': { titleFromFilename: () => 'Imported conversation' },
+    'expo-av': { Audio: { Sound: { createAsync: async () => { throw Error('Browser cannot read duration'); } } } },
+    'expo-document-picker': { getDocumentAsync: async () => { picks++; return { assets: [{ uri: 'file://original', name: '../unsafe.mp3', size: 40 }] }; } },
+  });
+  const render = () => state.render(useImportAudio);
+  await render().importAudio();
+  assert.equal(asked, 1); assert.equal(picks, 0);
+  canProcess = true;
+  await render().importAudio();
+  assert.equal(saved.length, 0);
+  permission = true;
+  const hook = render();
+  await Promise.all([hook.importAudio(), hook.importAudio()]);
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].id, 'stable-id');
+  assert.equal(saved[0].userId, 'owner');
+  assert.equal(saved[0].audio.name, 'mirra-import-stable-id.mp3');
+  assert.equal(saved[0].audio.uri, 'file://original');
+  assert.equal(render().error, null);
 });
 
 test('focus refresh recovers a failed tab and an older request cannot overwrite newer data', async () => {
@@ -182,12 +222,41 @@ test('focus refresh recovers a failed tab and an older request cannot overwrite 
   assert.deepEqual(render().data, ['latest']);
 });
 
+test('rapid privacy setting changes save in order and a failure restores actual server state', async () => {
+  const state = hooks();
+  let settings = { saveTranscripts: false, includeTranscriptInReflect: false };
+  const server = { saveTranscripts: true, includeTranscriptInReflect: false };
+  const requests = [];
+  const { useUserSettings } = load('hooks/useUserSettings.ts', {
+    react: state.react, '@/api/http': http,
+    '@/api/client': { updateUserSettings: (token, patch) => new Promise((resolve, reject) => requests.push({ token, patch, resolve, reject })) },
+    './useAuthedFetch': { useAuthedFetch: () => ({ data: settings,
+      setData: value => { settings = typeof value === 'function' ? value(settings) : value; }, refresh: async () => { settings = server; } }) },
+  });
+  const render = () => state.render(() => useUserSettings('owner-token'));
+  const hook = render();
+  const first = hook.updateSettings({ saveTranscripts: true });
+  const second = hook.updateSettings({ includeTranscriptInReflect: true });
+  await flush();
+  assert.equal(requests.length, 1);
+  assert.equal(settings.includeTranscriptInReflect, true);
+  requests[0].resolve(server);
+  await first; await flush();
+  assert.equal(requests.length, 2);
+  assert.equal(settings.includeTranscriptInReflect, true, 'Older response must not erase the newer choice');
+  requests[1].reject(Error('Could not save privacy setting'));
+  await second;
+  assert.deepEqual(settings, server);
+  assert.equal(render().saving, false);
+  assert.match(render().error, /Could not save privacy setting/);
+});
+
 test('profile loads account data without a plan request', () => {
   const state = hooks();
   let summaryState = { summary: null, error: 'Offline' };
   const { ProfileScreen } = load('screens/ProfileScreen.tsx', {
     react: state.react, 'react-native': { StyleSheet: { create: styles => styles } },
-    'expo-linear-gradient': {}, 'react-native-svg': {}, '@/components/Screen': {},
+    'expo-router': { useRouter: () => ({}) }, 'expo-linear-gradient': {}, 'react-native-svg': {}, '@/components/Screen': {},
     '@/components/ui': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
     '@/theme/tokens': { colors: {}, fonts: {} }, '@/api/client': {}, '@/auth/AuthContext': auth,
     '@/utils/exportData': {}, '@/utils/confirm': confirmation, '@/storage/pendingRecordings': {}, '@/config/legal': {},
@@ -211,6 +280,52 @@ test('profile loads account data without a plan request', () => {
   assert.match(loaded, /7/);
   assert.match(loaded, /2/);
   assert.doesNotMatch(loaded, /Current plan|Try Pro|Manage plan/);
+});
+
+test('account actions save audio before sign-out and clear local data only after confirmed server deletion', async () => {
+  const state = hooks();
+  const events = [];
+  let recording = true;
+  let canSave = false;
+  let deleteSucceeds = false;
+  const { ProfileScreen } = load('screens/ProfileScreen.tsx', {
+    react: state.react, 'react-native': { StyleSheet: { create: value => value } },
+    'expo-router': { useRouter: () => ({}) }, 'expo-linear-gradient': {}, 'react-native-svg': {},
+    '@/components/Screen': {}, '@/components/ui': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
+    '@/theme/tokens': { colors: {}, fonts: {} }, '@/utils/exportData': {}, '@/config/legal': {},
+    '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' }, accessToken: 'owner-token', signOut: async () => events.push('sign-out') }) },
+    '@/api/client': { deleteAccount: async token => { assert.equal(token, 'owner-token'); events.push('server-delete'); if (!deleteSucceeds) throw Error('Server unavailable'); } },
+    '@/utils/confirm': { confirmAction: async () => true },
+    '@/storage/pendingRecordings': { clearPendingRecordings: async user => { assert.equal(user, 'owner'); events.push('clear-local'); } },
+    '@/auth/PrivacyContext': { usePrivacy: () => ({ canProcess: true, withdrawLocally: async () => events.push('clear-consent') }) },
+    '@/hooks/useRecordAudio': { useRecordAudio: () => ({ isRecording: recording,
+      stopRecording: async () => { events.push('save-recording'); return canSave; },
+      pauseUploads: () => events.push('pause'), resumeUploads: () => events.push('resume') }) },
+    '@/hooks/useProfileSummary': { useProfileSummary: () => ({ summary: null }) },
+    '@/hooks/useUserSettings': { useUserSettings: () => ({ settings: {} }) },
+  });
+  function findMenu(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.props?.onDelete) return node.props;
+    for (const child of [node.props?.children].flat(Infinity)) { const found = findMenu(child); if (found) return found; }
+  }
+  const menu = () => findMenu(state.render(ProfileScreen));
+  await menu().onSignOut();
+  assert.deepEqual(events, ['save-recording']);
+  assert.match(menu().error, /not saved yet/);
+  canSave = true;
+  await menu().onSignOut();
+  assert.deepEqual(events.slice(-2), ['save-recording', 'sign-out']);
+  events.length = 0;
+  await menu().onDelete(); await flush();
+  assert.equal(events.length, 0, 'Active capture blocks account deletion');
+  recording = false;
+  await menu().onDelete(); await flush();
+  assert.deepEqual(events, ['pause', 'server-delete', 'resume']);
+  assert.match(menu().error, /Server unavailable/);
+  events.length = 0; deleteSucceeds = true;
+  await menu().onDelete(); await flush();
+  assert.deepEqual(events, ['pause', 'server-delete', 'clear-local', 'clear-consent', 'sign-out', 'resume']);
 });
 
 test('conversation deletion confirms on web and native, retains failures, and navigates only after success', async (t) => {

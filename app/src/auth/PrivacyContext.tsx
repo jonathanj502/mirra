@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Modal } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from './AuthContext';
@@ -13,20 +13,22 @@ export function PrivacyProvider({ children }: { children: React.ReactNode }) {
   const { user, accessToken } = useAuth();
   const [approvedUser, setApprovedUser] = useState<string | null>(null);
   const [review, setReview] = useState(false);
+  const revision = useRef(0);
   const userId = user?.id;
   useEffect(() => {
     let active = true;
+    const requestRevision = ++revision.current;
     setApprovedUser(null);
     setReview(false);
     if (!userId) return;
     void (async () => {
       const cached = await AsyncStorage.getItem(consentKey(userId)).catch(() => null);
-      if (!active) return;
+      if (!active || requestRevision !== revision.current) return;
       if (cached === CONSENT_VERSION) setApprovedUser(userId);
       if (!accessToken) return;
       try {
         const settings = await fetchUserSettings(accessToken);
-        if (!active) return;
+        if (!active || requestRevision !== revision.current) return;
         const approved = settings.aiConsentVersion === CONSENT_VERSION;
         setApprovedUser(approved ? userId : null);
         setReview(!approved);
@@ -37,11 +39,13 @@ export function PrivacyProvider({ children }: { children: React.ReactNode }) {
     return () => { active = false; };
   }, [userId, accessToken]);
   async function withdrawLocally() {
+    revision.current++;
     setApprovedUser(null);
     if (userId) await AsyncStorage.removeItem(consentKey(userId));
   }
   function accepted() {
     if (!userId) return;
+    revision.current++;
     setApprovedUser(userId);
     setReview(false);
     void AsyncStorage.setItem(consentKey(userId), CONSENT_VERSION).catch(() => {});

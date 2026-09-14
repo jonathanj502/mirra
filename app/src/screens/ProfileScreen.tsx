@@ -1,6 +1,7 @@
 // You · profile — identity, stats, settings.
 import React, { useState } from 'react';
 import { ActivityIndicator, Linking, Modal, Pressable, Switch, View, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path } from 'react-native-svg';
 import { Screen } from '@/components/Screen';
@@ -401,9 +402,10 @@ function AccountMenu({
 }
 
 export function ProfileScreen() {
+  const router = useRouter();
   const { user, accessToken, signOut } = useAuth();
   const { canProcess, reviewConsent, withdrawLocally } = usePrivacy();
-  const { isRecording, hasUnsavedRecording, isSavingRecording, pauseUploads, resumeUploads } = useRecordAudio();
+  const { isRecording, hasUnsavedRecording, isSavingRecording, isStartingRecording, stopRecording, pauseUploads, resumeUploads } = useRecordAudio();
   const { summary, loading: summaryLoading, error: summaryError, refresh: refreshSummary } = useProfileSummary();
   const { settings, loading: settingsLoading, saving: settingsSaving, error: settingsError, loadError: settingsLoadError,
     refresh: refreshSettings, updateSettings } = useUserSettings(accessToken);
@@ -446,6 +448,8 @@ export function ProfileScreen() {
     setAccountBusy('signOut');
     setAccountError(null);
     try {
+      if (isStartingRecording || isSavingRecording) throw new Error('Wait for your recording to finish saving before signing out.');
+      if ((isRecording || hasUnsavedRecording) && !await stopRecording()) throw new Error('Your recording is not saved yet. Keep Mirra open and save it before signing out.');
       await signOut();
       setAccountMenuOpen(false);
     } catch (err) {
@@ -457,7 +461,7 @@ export function ProfileScreen() {
 
   async function handleDeleteAccount() {
     if (!user || !accessToken || accountBusy) return;
-    if (isRecording || hasUnsavedRecording || isSavingRecording) {
+    if (isRecording || hasUnsavedRecording || isSavingRecording || isStartingRecording) {
       setAccountError('Stop and save your recording before deleting your account.'); return;
     }
     if (!await confirmAction('Delete your account?', 'This permanently deletes your account, conversations, transcripts, settings and recordings saved on this device. It cannot be undone.', 'Delete account', true)) return;
@@ -543,6 +547,7 @@ export function ProfileScreen() {
       />
 
       <View style={{ paddingHorizontal: 24, gap: 8 }}>
+        <SettingRow label="Open-source notices" onPress={() => router.push('/licenses')} />
         <SettingRow label={canProcess ? 'Withdraw AI processing consent' : 'Review AI processing'} hint={canProcess ? 'Stop future uploads and Reflect requests. Saved data stays available.' : 'Required before recording, importing, or using Reflect.'} onPress={() => { if (canProcess) void withdrawConsent(); else reviewConsent(); }} />
         {accountError && !accountMenuOpen ? <Body accessibilityRole="alert">{accountError}</Body> : null}
         {[['Privacy Policy', PRIVACY_URL], ['Terms of Use', TERMS_URL]].map(([label, url]) => <SettingRow key={label} label={label} onPress={() => { void Linking.openURL(url); }} />)}

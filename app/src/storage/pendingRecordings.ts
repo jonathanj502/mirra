@@ -5,6 +5,7 @@ export type PendingRecording = {
   userId: string;
   startedAt: string;
   seconds: number;
+  title?: string;
   audio: { uri: string; name: string; type: string };
 };
 

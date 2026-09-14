@@ -26,10 +26,10 @@ class RecordingForegroundService : Service() {
       .setContentTitle("Mirra is recording")
       .setContentText("Tap to return to Mirra and stop recording")
       .setContentIntent(launch)
-      .setSmallIcon(R.mipmap.ic_launcher)
+      .setSmallIcon(R.drawable.ic_recording)
       .setOngoing(true)
       .build()
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
       startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
     } else {
       startForeground(NOTIFICATION_ID, notification)

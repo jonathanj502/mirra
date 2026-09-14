@@ -154,18 +154,28 @@ def test_no_speech_skips_coaching_and_returns_empty_transcript(monkeypatch, loca
     analyze.assert_not_called()
 
 
-def test_decode_fallback_uses_a_closed_file_and_cleans_it_up(monkeypatch):
-    monkeypatch.setattr(coordinator.sf, "read", MagicMock(side_effect=RuntimeError("Unsupported codec")))
+def test_decode_uses_bounded_ffmpeg_and_cleans_up_temporary_audio(monkeypatch):
     paths = []
 
-    def decode(path, **_kwargs):
-        paths.append(Path(path))
-        assert Path(path).read_bytes() == b"encoded m4a"
-        return np.array([[0.2, 0.4, 0.6], [0.4, 0.6, 0.8]], dtype=np.float32), 44100
+    def decode(command, **kwargs):
+        path = Path(command[command.index('-i') + 1])
+        paths.append(path)
+        assert path.read_bytes() == b"encoded m4a"
+        assert command[command.index('-protocol_whitelist') + 1] == 'file,pipe'
+        assert 'concat' not in command[command.index('-format_whitelist') + 1]
+        assert kwargs['timeout'] == 120
+        return type('Decoded', (), {'stdout': np.array([0.3, 0.5, 0.7], dtype='<f4').tobytes()})()
 
-    monkeypatch.setattr(coordinator.librosa, "load", decode)
+    monkeypatch.setattr(coordinator.subprocess, 'run', decode)
     audio, sr = coordinator._decode_audio(b"encoded m4a", "audio/mp4")
     np.testing.assert_allclose(audio, [0.3, 0.5, 0.7])
-    assert sr == 44100
+    assert sr == 16000
     assert paths[0].suffix == ".m4a"
     assert not paths[0].exists()
+
+
+def test_decode_rejects_audio_beyond_duration_limit(monkeypatch):
+    monkeypatch.setattr(coordinator, 'MAX_AUDIO_SECONDS', 1)
+    monkeypatch.setattr(coordinator.subprocess, 'run', lambda *args, **kwargs: type('Decoded', (), {'stdout': np.zeros(16001, dtype='<f4').tobytes()})())
+    with pytest.raises(coordinator.AudioDurationTooLong):
+        coordinator._decode_audio(b'audio', 'audio/wav')

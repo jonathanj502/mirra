@@ -13,3 +13,4 @@ class AccountExport(BaseModel):
     profile: ProfileSummary
     settings: UserSettings
     debriefs: list[Debrief]
+    deleted_conversation_ids: list[str]

@@ -1,4 +1,5 @@
 import logging
+import traceback
 from datetime import datetime, timezone
 from threading import Lock, BoundedSemaphore
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -65,8 +66,11 @@ _pipeline_slot = BoundedSemaphore(1)
 async def catch_unhandled_exceptions(request: Request, call_next):
     try:
         return await call_next(request)
-    except Exception:
-        logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    except Exception as exc:
+        # Provider/validation exception messages can contain conversation content. Keep stack
+        # locations and the exception type, never its message, body or request credentials.
+        logger.error("Unhandled %s on %s %s\n%s", type(exc).__name__, request.method, request.url.path,
+                     ''.join(traceback.format_tb(exc.__traceback__)))
         return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
@@ -93,6 +97,7 @@ def ready(db: Client = Depends(get_db)):
         if not settings.openai_api_key:
             raise ValueError('Missing AI credential')
         db.table('user_settings').select('ai_consent_version,ai_consent_at').limit(0).execute()
+        db.table('debrief_deletions').select('debrief_id').limit(0).execute()
     except Exception:
         return JSONResponse(status_code=503, content={'status': 'not_ready'})
     return {'status': 'ready'}
@@ -217,12 +222,19 @@ def account_export(user_id: str = Depends(verify_token), db: Client = Depends(ge
         rows.extend(page)
         if len(page) < 500:
             break
+    deleted_ids = []
+    while True:
+        markers = db.table('debrief_deletions').select('debrief_id').eq('user_id', user_id).order('debrief_id').range(len(deleted_ids), len(deleted_ids) + 499).execute().data or []
+        deleted_ids.extend(row['debrief_id'] for row in markers)
+        if len(markers) < 500:
+            break
     return AccountExport(
         exported_at=datetime.now(timezone.utc),
         user_id=user_id,
         profile=build_profile_summary(rows, get_usage(db, user_id)),
         settings=fetch_user_settings(db, user_id),
         debriefs=rows,
+        deleted_conversation_ids=deleted_ids,
     )
 
 
@@ -300,6 +312,9 @@ def _session_response(db: Client, user_id: str, row: dict):
 
 def _process_session(audio, started_at, client_duration_seconds, title, user_id, db, debrief_id):
     if debrief_id:
+        deleted = db.table('debrief_deletions').select('debrief_id').eq('user_id', user_id).eq('debrief_id', debrief_id).maybe_single().execute()
+        if deleted and isinstance(deleted.data, dict) and deleted.data.get('debrief_id') == debrief_id:
+            raise HTTPException(410, 'This conversation was deleted. Discard its saved audio copy.')
         existing = _fetch_debrief_row(db, user_id, debrief_id)
         if existing:
             return _session_response(db, user_id, existing)
@@ -320,6 +335,8 @@ def _process_session(audio, started_at, client_duration_seconds, title, user_id,
             result = coordinator.run(audio_bytes, content_type=content_type)
         except TranscriptionInputTooLarge as exc:
             raise HTTPException(status_code=413, detail="Recording is too large to transcribe. Use a shorter recording or upload M4A, MP3, or WebM.") from exc
+        except coordinator.AudioDurationTooLong as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="Could not decode audio") from exc
         session_id = str(uuid4())
@@ -365,6 +382,8 @@ def _process_session(audio, started_at, client_duration_seconds, title, user_id,
                 logger.exception("Could not release debrief reservation for user %s in %s", user_id, reservation_month)
         if existing:
             return _session_response(db, user_id, existing)
+        if getattr(exc, 'code', None) == 'P0001' and 'recording_deleted' in str(exc):
+            raise HTTPException(410, 'This conversation was deleted. Discard its saved audio copy.') from exc
         raise
     return _session_response(db, user_id, row.data[0])
 
@@ -398,7 +417,7 @@ def delete_debrief(
     db: Client = Depends(get_db),
 ):
     # Scope the mutation itself: service-role access bypasses database RLS.
-    db.table("debriefs").delete().eq("user_id", user_id).eq("id", str(debrief_id)).execute()
+    db.rpc('delete_debrief_permanently', {'owner_id': user_id, 'target_id': str(debrief_id)}).execute()
     return Response(status_code=204)
 
 

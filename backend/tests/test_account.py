@@ -63,6 +63,8 @@ class _Table:
         return self
 
     def execute(self):
+        if self.name == 'debrief_deletions':
+            return _Result([{'debrief_id': 'deleted-conversation'}])
         if self.name == "debrief_usage":
             return _Result({"count": self.db.used})
         if self.name == "user_settings":
@@ -106,6 +108,7 @@ def test_account_export_returns_user_data_bundle():
     assert body["user_id"] == "user-1"
     assert body["profile"]["total_conversations"] == 1
     assert body["settings"]["coaching_tone"] == "curious_gentle"
-    assert set(body) == {"exported_at", "user_id", "profile", "settings", "debriefs"}
+    assert set(body) == {"exported_at", "user_id", "profile", "settings", "debriefs", "deleted_conversation_ids"}
+    assert body['deleted_conversation_ids'] == ['deleted-conversation']
     assert body["debriefs"][0]["id"] == ROW["id"]
     assert body["debriefs"][0]["transcript"] == ROW["transcript"]
