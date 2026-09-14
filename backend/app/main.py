@@ -20,9 +20,10 @@ from app.models.auth import UsernameAuthRequest, UsernameAuthResponse
 from app.models.dashboard import ProfileSummary, ProgressResponse, ReflectRequest, ReflectResponse
 from app.models.debrief import Debrief, SessionResponse
 from app.models.settings import UserSettings, UserSettingsUpdate
+from app.models.report import ContentReportRequest
 from app.reflection import generate_reflection
 from app.privacy import require_ai_consent
-from app.rate_limit import check_reflect_limit
+from app.rate_limit import check_reflect_limit, check_request_limit
 from app.pipeline import coordinator
 from app.pipeline.transcription import TranscriptionInputTooLarge
 from app.usage import check_and_increment, get_usage, release
@@ -98,6 +99,7 @@ def ready(db: Client = Depends(get_db)):
             raise ValueError('Missing AI credential')
         db.table('user_settings').select('ai_consent_version,ai_consent_at').limit(0).execute()
         db.table('debrief_deletions').select('debrief_id').limit(0).execute()
+        db.table('content_reports').select('id').limit(0).execute()
     except Exception:
         return JSONResponse(status_code=503, content={'status': 'not_ready'})
     return {'status': 'ready'}
@@ -228,6 +230,12 @@ def account_export(user_id: str = Depends(verify_token), db: Client = Depends(ge
         deleted_ids.extend(row['debrief_id'] for row in markers)
         if len(markers) < 500:
             break
+    reports = []
+    while True:
+        page = db.table('content_reports').select('*').eq('user_id', user_id).order('id').range(len(reports), len(reports) + 499).execute().data or []
+        reports.extend(page)
+        if len(page) < 500:
+            break
     return AccountExport(
         exported_at=datetime.now(timezone.utc),
         user_id=user_id,
@@ -235,6 +243,7 @@ def account_export(user_id: str = Depends(verify_token), db: Client = Depends(ge
         settings=fetch_user_settings(db, user_id),
         debriefs=rows,
         deleted_conversation_ids=deleted_ids,
+        content_reports=reports,
     )
 
 
@@ -246,6 +255,17 @@ def delete_account(user_id: str = Depends(verify_token), db: Client = Depends(ge
     except Exception as exc:
         if str(getattr(exc, "status", "")) != "404":
             raise
+    return Response(status_code=204)
+
+
+@app.post('/content-reports', status_code=204)
+def report_content(payload: ContentReportRequest, user_id: str = Depends(verify_token), db: Client = Depends(get_db)):
+    if payload.source == 'debrief' and not payload.debrief_id:
+        raise HTTPException(422, 'A debrief is required for this report.')
+    if payload.debrief_id and not _fetch_debrief_row(db, user_id, str(payload.debrief_id)):
+        raise HTTPException(404, 'Debrief not found')
+    check_request_limit(user_id, 'Content reports', 20)
+    db.table('content_reports').insert({**payload.model_dump(mode='json'), 'user_id': user_id}).execute()
     return Response(status_code=204)
 
 

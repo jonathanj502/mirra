@@ -4,6 +4,24 @@ import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import ignore from 'ignore';
 
+test('shared text and action colors remain readable on all paper surfaces', () => {
+  const source = readFileSync(new URL('../src/theme/tokens.ts', import.meta.url), 'utf8');
+  const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } });
+  const exports = {};
+  new Function('exports', outputText)(exports);
+  const { colors } = exports;
+  const luminance = hex => hex.slice(1).match(/../g).map(value => parseInt(value, 16) / 255)
+    .map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
+    .reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+  const contrast = (a, b) => (Math.max(luminance(a), luminance(b)) + 0.05) / (Math.min(luminance(a), luminance(b)) + 0.05);
+  for (const text of ['ink', 'ink2', 'muted', 'inkSoft', 'terracotta', 'sage', 'lavender', 'coral']) {
+    for (const surface of ['bg', 'paper', 'card', 'card2']) {
+      assert.ok(contrast(colors[text], colors[surface]) >= 4.5, `${text} on ${surface}`);
+    }
+  }
+  assert.ok(contrast('#FFFFFF', colors.terracotta) >= 4.5, 'primary action label');
+});
+
 test('EAS archive excludes credentials and native output while preserving monorepo release checks', () => {
   const rules = ignore().add(readFileSync(new URL('../../.easignore', import.meta.url), 'utf8'));
   for (const path of ['app/.env.local', 'backend/.env', 'app/credentials.json', 'app/android/app/debug.keystore', 'app/ios/Mirra/Info.plist', '.mcp.json']) {

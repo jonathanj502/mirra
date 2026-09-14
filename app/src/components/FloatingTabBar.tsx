@@ -17,7 +17,7 @@ const TABS: { id: TabId; label: string; Glyph: typeof Icon.mic }[] = [
   { id: 'profile', label: 'You', Glyph: Icon.person },
 ];
 
-const INACTIVE = 'rgba(42,37,32,0.45)';
+const INACTIVE = colors.muted;
 
 export function FloatingTabBar({
   active,

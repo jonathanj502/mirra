@@ -68,6 +68,7 @@ function AuthenticatedStack() {
 
   return (
     <Stack
+      key={session.user.id}
       screenOptions={{
         headerShown: false,
         contentStyle: { backgroundColor: colors.paper },

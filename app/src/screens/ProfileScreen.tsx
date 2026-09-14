@@ -44,7 +44,7 @@ const toneLabel: Record<CoachingTone, string> = {
 function Avatar({ initials = 'MC', size = 84 }: { initials?: string; size?: number }) {
   return (
     <LinearGradient
-      colors={['#E8B79E', '#D08866', '#BA7253'] as const}
+      colors={['#AC6248', colors.terracotta, '#7D412F'] as const}
       locations={[0, 0.7, 1] as const}
       start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
       style={[styles.avatar, { width: size, height: size, borderRadius: size / 2 }]}
@@ -374,7 +374,7 @@ function AccountMenu({
           <View style={styles.accountActionList}>
             <AccountActionRow
               label="Download my data"
-              hint="Conversations and settings."
+              hint="Conversations, settings and reports."
               loading={busy === 'export'}
               onPress={onExport}
             />
@@ -466,7 +466,7 @@ export function ProfileScreen() {
     if (isRecording || hasUnsavedRecording || isSavingRecording || isStartingRecording) {
       setAccountError('Stop and save your recording before deleting your account.'); return;
     }
-    if (!await confirmAction('Delete your account?', 'This permanently deletes your account, conversations, transcripts, settings and recordings saved on this device. It cannot be undone.', 'Delete account', true)) return;
+    if (!await confirmAction('Delete your account?', 'This permanently deletes your account, conversations, transcripts, reports, settings and recordings saved on this device. It cannot be undone.', 'Delete account', true)) return;
     setAccountBusy('delete'); setAccountError(null); pauseUploads();
     try {
       await deleteAccount(accessToken);
@@ -652,5 +652,5 @@ const styles = StyleSheet.create({
   errorText: { fontSize: 11.5, color: colors.terracotta, lineHeight: 16 },
   footer: { paddingHorizontal: 22, paddingTop: 14, alignItems: 'center' },
   signOut: { fontSize: 12.5, color: colors.muted },
-  version: { fontSize: 10.5, color: colors.muted, marginTop: 14, letterSpacing: 0.3, opacity: 0.7 },
+  version: { fontSize: 10.5, color: colors.muted, marginTop: 14, letterSpacing: 0.3 },
 });

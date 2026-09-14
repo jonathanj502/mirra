@@ -2,13 +2,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, ScrollView, TextInput, Pressable, StyleSheet,
-  KeyboardAvoidingView, Platform, Animated, Easing,
+  KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { Body, Serif, SerifItalic, Eyebrow } from '@/components/Typography';
 import { Icon } from '@/components/Icon';
+import { ReportContent } from '@/components/ReportContent';
 import { colors, fonts } from '@/theme/tokens';
 import { SEED_MESSAGES, STARTER_PROMPTS, ChatMessage } from '@/data/reflect';
 import { friendlyErrorMessage } from '@/api/http';
@@ -17,41 +18,23 @@ import { fetchDebrief, sendReflection } from '@/api/client';
 import { useAuth } from '@/auth/AuthContext';
 import { titleForDebrief } from '@/hooks/useDebriefs';
 
-function ChatBubble({ from, text }: ChatMessage) {
+function ChatBubble({ from, text, debriefId }: ChatMessage & { debriefId?: string }) {
   const isYou = from === 'you';
   return (
     <View style={[styles.bubbleRow, { justifyContent: isYou ? 'flex-end' : 'flex-start' }]}>
       <View style={[isYou ? styles.bubbleYou : styles.bubbleAi]}>
         <Body style={[styles.bubbleText, { color: isYou ? '#FBF6EA' : colors.ink }]}>{text}</Body>
+        {!isYou && <ReportContent source="reflect" content={text} debriefId={debriefId} />}
       </View>
     </View>
   );
-}
-
-function TypingDot({ delay }: { delay: number }) {
-  const v = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(v, { toValue: 1, duration: 360, delay, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        Animated.timing(v, { toValue: 0, duration: 480, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [v, delay]);
-  const translateY = v.interpolate({ inputRange: [0, 1], outputRange: [0, -3] });
-  const opacity = v.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] });
-  return <Animated.View style={[styles.typingDot, { transform: [{ translateY }], opacity }]} />;
 }
 
 function TypingIndicator() {
   return (
     <View style={[styles.bubbleRow, { justifyContent: 'flex-start' }]}>
       <View style={styles.typingBubble}>
-        <TypingDot delay={0} />
-        <TypingDot delay={150} />
-        <TypingDot delay={300} />
+        <ActivityIndicator accessibilityLabel="Mirra is thinking" color={colors.terracotta} />
       </View>
     </View>
   );
@@ -168,9 +151,9 @@ export function ReflectScreen() {
       {/* Messages */}
       <ScrollView ref={scrollerRef} style={{ flex: 1 }} contentContainerStyle={styles.messages} showsVerticalScrollIndicator={false}>
         <ContextPill subject={subject} />
-        <Body style={{ color: colors.muted, fontSize: 12, marginVertical: 12 }}>AI coaching can be wrong. It is not medical or mental-health advice. Chat messages are not saved to your history.</Body>
+        <Body style={{ color: colors.muted, fontSize: 12, marginVertical: 12 }}>AI coaching can be wrong. It is not medical or mental-health advice. Chats stay in this session; responses you report are saved for review.</Body>
         {error ? <Body accessibilityRole="alert" style={{ color: colors.coral, marginBottom: 12 }}>{error}</Body> : null}
-        {messages.map((m, i) => <ChatBubble key={i} from={m.from} text={m.text} />)}
+        {messages.map((m, i) => <ChatBubble key={i} from={m.from} text={m.text} debriefId={id} />)}
         {thinking && <TypingIndicator />}
       </ScrollView>
 
@@ -220,7 +203,6 @@ const styles = StyleSheet.create({
   bubbleAi: { maxWidth: '78%', backgroundColor: colors.card, paddingVertical: 11, paddingHorizontal: 14, borderRadius: 18, borderBottomLeftRadius: 4, ...{ shadowColor: '#2A2520', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 2, elevation: 1 } },
   bubbleText: { fontSize: 14, lineHeight: 21 },
   typingBubble: { backgroundColor: colors.card, paddingVertical: 14, paddingHorizontal: 16, borderRadius: 18, borderBottomLeftRadius: 4, flexDirection: 'row', gap: 4, alignItems: 'center' },
-  typingDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.terracotta, opacity: 0.55 },
   contextPill: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 14, backgroundColor: 'rgba(208,136,102,0.10)', borderRadius: 14, marginBottom: 14 },
   contextLabel: { fontSize: 10, color: colors.muted, letterSpacing: 1, textTransform: 'uppercase' },
   contextSubject: { fontSize: 15, color: colors.ink, marginTop: 2, lineHeight: 17 },

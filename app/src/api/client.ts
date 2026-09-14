@@ -1,6 +1,7 @@
 import { endpoint, parseResponse } from '@/api/http';
 import {
   AccountExport,
+  ContentReport,
   ConversationSummary,
   DebriefCard,
   FillerCount,
@@ -142,6 +143,7 @@ type RawUserSettings = {
 };
 
 type RawAccountExport = {
+  content_reports?: Record<string, unknown>[];
   deleted_conversation_ids?: string[];
   exported_at: string;
   user_id: string;
@@ -279,6 +281,7 @@ function toUserSettings(raw: RawUserSettings): UserSettings {
 
 function toAccountExport(raw: RawAccountExport): AccountExport {
   return {
+    contentReports: (raw.content_reports ?? []).map(row => camelizeKeys<ContentReport>(row)),
     deletedConversationIds: raw.deleted_conversation_ids ?? [],
     exportedAt: raw.exported_at,
     userId: raw.user_id,
@@ -355,6 +358,13 @@ export async function exportAccountData(token: string): Promise<AccountExport> {
 export async function deleteAccount(token: string): Promise<void> {
   await fetch(endpoint('/account'), {
     method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+  }).then(r => parseResponse<void>(r));
+}
+
+export async function reportContent(token: string, payload: Pick<ContentReport, 'source' | 'content' | 'reason' | 'comment'> & { debriefId?: string }): Promise<void> {
+  await fetch(endpoint('/content-reports'), {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source: payload.source, content: payload.content, reason: payload.reason, comment: payload.comment, debrief_id: payload.debriefId }),
   }).then(r => parseResponse<void>(r));
 }
 

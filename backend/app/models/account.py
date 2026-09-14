@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from app.models.dashboard import ProfileSummary
 from app.models.debrief import Debrief
 from app.models.settings import UserSettings
+from app.models.report import ContentReport
 
 
 class AccountExport(BaseModel):
@@ -14,3 +15,4 @@ class AccountExport(BaseModel):
     settings: UserSettings
     debriefs: list[Debrief]
     deleted_conversation_ids: list[str]
+    content_reports: list[ContentReport]

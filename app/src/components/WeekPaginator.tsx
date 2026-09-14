@@ -79,7 +79,7 @@ export function WeekPaginator({ weeks, idx, onChange }: { weeks: { label: string
               <Body
                 style={[
                   styles.pillText,
-                  { color: isActive ? colors.ink : colors.muted, opacity: isActive ? 1 : 0.55, fontFamily: isActive ? fonts.bodySemibold : fonts.bodyMedium },
+                  { color: isActive ? colors.ink : colors.muted, fontFamily: isActive ? fonts.bodySemibold : fonts.bodyMedium },
                 ]}
               >
                 {w.label}{w.upcoming && isActive ? ' · live' : ''}

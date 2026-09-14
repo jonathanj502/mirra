@@ -345,6 +345,41 @@ test('account actions save audio before sign-out and clear local data only after
   assert.deepEqual(events, ['pause', 'server-delete', 'clear-local', 'clear-consent', 'sign-out', 'resume']);
 });
 
+test('content reports submit only the reviewed response and retain failed attempts', async (t) => {
+  const state = hooks();
+  const requests = [];
+  t.mock.method(globalThis, 'fetch', (url, options) => new Promise(resolve => requests.push({ url, options, resolve })));
+  const { ReportContent } = load('components/ReportContent.tsx', {
+    react: state.react, 'react-native': { KeyboardAvoidingView: 'KeyboardAvoidingView', Platform: { OS: 'ios' }, Modal: 'Modal', Pressable: 'Pressable', TextInput: 'TextInput', View: 'View' },
+    '@/auth/AuthContext': auth, '@/api/client': load('api/client.ts', { '@/api/http': http }), '@/api/http': http,
+    '@/theme/tokens': { colors: {} }, './Screen': { Screen: 'Screen' }, './Typography': { Body: 'Body', Serif: 'Serif' },
+  });
+  const render = () => state.render(() => ReportContent({ content: 'Selected AI reply', source: 'reflect', debriefId: 'owned-id' }));
+  function find(node, match) {
+    if (!node || typeof node !== 'object') return;
+    if (match(node)) return node;
+    for (const child of [node.props?.children].flat(Infinity)) { const found = find(child, match); if (found) return found; }
+  }
+  const send = () => find(render(), node => node.type === 'Pressable' && node.props.children?.props?.children === 'Send report').props;
+  find(render(), node => node.props?.accessibilityLabel === 'Report response').props.onPress();
+  assert.equal(requests.length, 0);
+  find(render(), node => node.type === 'TextInput').props.onChangeText('My optional note');
+  const firstButton = send();
+  const first = firstButton.onPress(); firstButton.onPress();
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, 'http://test.invalid/content-reports');
+  assert.equal(requests[0].options.headers.Authorization, 'Bearer test-token');
+  assert.deepEqual(JSON.parse(requests[0].options.body), { source: 'reflect', content: 'Selected AI reply', reason: 'harmful', comment: 'My optional note', debrief_id: 'owned-id' });
+  requests[0].resolve(new Response('{"detail":"Report service unavailable"}', { status: 503 }));
+  await first;
+  assert.equal(find(render(), node => node.type === 'Screen').props.error, 'Report service unavailable');
+  assert.equal(find(render(), node => node.type === 'TextInput').props.value, 'My optional note');
+  const retry = send().onPress();
+  requests[1].resolve(new Response(null, { status: 204 }));
+  await retry;
+  assert.ok(find(render(), node => node.type === 'Serif' && node.props.children === 'Report received.'));
+});
+
 test('conversation deletion confirms on web and native, retains failures, and navigates only after success', async (t) => {
   const api = load('api/client.ts', { '@/api/http': http });
   const state = hooks();
@@ -373,7 +408,7 @@ test('conversation deletion confirms on web and native, retains failures, and na
     '@/theme/tokens': { colors: {}, fonts: {} }, '@/components/Screen': {},
     '@/components/ui': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
     '@/components/FloatingTabBar': {}, '@/components/ExpandableMetric': {},
-    '@/components/ReflectCTA': {}, '@/components/charts': {}, '@/components/meters': {},
+    '@/components/ReflectCTA': {}, '@/components/ReportContent': {}, '@/components/charts': {}, '@/components/meters': {},
   }, { confirm: () => confirmed });
   const render = () => state.render(AnalyticsScreen);
   function deleteButton(node) {

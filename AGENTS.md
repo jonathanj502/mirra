@@ -54,7 +54,7 @@ See `backend/app/pipeline/README.md` for request limits, timing caveats, and val
 
 The backend verifies Supabase JWTs on every request (`app/auth.py`). Uses `python-jose` to verify ES256 signatures against the project's public JWKS (`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`), cached for ten minutes and refreshed on an unknown signing-key ID (at most once per 30 seconds) — no per-request network call and no shared secret. The Supabase project uses asymmetric signing keys; there is no `SUPABASE_JWT_SECRET` setting. `user_id` comes from the token's `sub` claim and is threaded through all DB operations.
 
-Username/password sign-in is a thin wrapper: the backend maps `<username>` to the fake email `<username>@users.mirra.local` and drives Supabase's REST auth API directly. Sign-up needs `SUPABASE_SERVICE_ROLE_KEY` on the backend (`POST /auth/v1/admin/users`); sign-in only needs the password grant. `GET /auth/status` reports whether username sign-up and Google OAuth are currently available so the app can gate its UI.
+Username/password sign-in is a thin wrapper: the backend maps `<username>` to the fake email `<username>@users.mirra.local` and drives Supabase's REST auth API directly. New username sign-up is disabled (410); existing users can still sign in through the password grant. New accounts use email links. `GET /auth/status` reports whether username sign-up and Google OAuth are currently available so the app can gate its UI.
 
 ### Data Models
 
@@ -101,7 +101,7 @@ The optional `recording_id` form field on `POST /sessions` produces an account-s
 
 - **Transcription 25MB limit** — `main.py` limits uploaded bytes before processing. `transcription.py` separately checks encoded PCM against the API's 25,000,000-byte limit and uses the original supported compressed recording when PCM is too large. If neither fits, return 413 and refund reserved usage. Do not split into independent requests without a strategy to reconcile speaker IDs; labels are local to each request.
 
-- **JWT verification is ES256/JWKS, not a shared secret** — this Supabase project signs tokens with asymmetric keys, so an HS256 `SUPABASE_JWT_SECRET` can never verify them (this once silently broke every authenticated request). `app/auth.py` fetches the public JWKS once and caches it for the process lifetime; the cache refreshes on key rotation and periodically.
+- **JWT verification is ES256/JWKS, not a shared secret** — this Supabase project signs tokens with asymmetric keys, so an HS256 `SUPABASE_JWT_SECRET` can never verify them (this once silently broke every authenticated request). `app/auth.py` caches public JWKS for ten minutes and refreshes unknown signing-key IDs at most once per 30 seconds.
 
 - **One AI credential** — `OPENAI_API_KEY` powers transcription, debriefs, and Reflect. Optional `OPENAI_DEBRIEF_MODEL` / `OPENAI_REFLECT_MODEL` overrides default to `gpt-4.1` / `gpt-4.1-mini`. Text requests use `store=False`; Reflect includes transcripts only when the user's settings allow it.
 
@@ -149,8 +149,12 @@ The frontend is fully wired to the backend — no more mock data. `src/data/rece
 
 ## Release privacy and operations
 
-- Apply both September 14 release migrations before deploying the current backend. `/health` reports liveness; `/ready` requires the consent columns, deletion-marker table and AI credential.
+- Apply all three September 14 release migrations before deploying the current backend. `/health` reports liveness; `/ready` requires the consent columns, deletion-marker and content-report tables, and AI credential.
 - AI consent uses version `2026-09-14`, is opt-in and checked server-side for sessions/Reflect. Consent timestamps are written by the backend. Settings updates only write supplied fields, so an unrelated change cannot restore withdrawn consent.
 - `DELETE /account` removes the authenticated Supabase user with cascading data deletion. `DELETE /debriefs/{id}` uses an account-scoped SQL RPC and a content-free tombstone. SQL advisory locks serialize deletion and replay; the insert trigger rejects resurrection. Tombstones disappear on account deletion and are included in account exports.
 - One pipeline/worker protects the stateful VAD model and memory budget. Reflect has a per-account 60-message/hour process-local limit. Move budgets to shared storage before scaling workers/instances.
 - Product/release evidence and external blockers are tracked in `docs/RELEASE.md`. The website and policy pages remain a clearly labeled prelaunch preview until the operator, private support contact and deployment are finalized.
+
+### Private content reporting
+
+`POST /content-reports` accepts an authenticated, size-limited selected response, reason and optional note. Debrief links are ownership-checked. Reports have a separate 20/hour process-local limit, are stored in `content_reports` behind owner-read RLS and backend-only writes, and appear in account export. Linked-conversation and account deletion cascade to reports. Apply `20260914030000_content_reports.sql` before deployment. `ReportContent` is shared by debrief and Reflect screens; no full transcript or audio is attached. A private report-review owner/process must exist before launch.

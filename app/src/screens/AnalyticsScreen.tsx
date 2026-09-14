@@ -9,6 +9,7 @@ import { Icon } from '@/components/Icon';
 import { FloatingTabBar, TabId } from '@/components/FloatingTabBar';
 import { ExpandableMetric } from '@/components/ExpandableMetric';
 import { ReflectCTA } from '@/components/ReflectCTA';
+import { ReportContent } from '@/components/ReportContent';
 import { Donut, RingMeter, RadarChart, TurnOffsetChart, EnergyWave } from '@/components/charts';
 import { FillerBars, SyncBars, OffsetZoneLegend } from '@/components/meters';
 import { colors, fonts } from '@/theme/tokens';
@@ -203,6 +204,7 @@ export function AnalyticsScreen() {
             {' '}to notice. {next}
           </Serif>
           <ReflectCTA subject={title.toLowerCase()} onPress={() => router.push({ pathname: '/reflect', params: selected ? { id: selected.id } : {} })} />
+          {selected && <ReportContent source="debrief" debriefId={selected.id} content={`${observation}\n${pattern}\n${next}`} />}
         </Card>
       </View>
 
@@ -422,7 +424,7 @@ const styles = StyleSheet.create({
   qBarFill: { width: '100%', borderRadius: 10, alignItems: 'center', paddingTop: 8 },
   qBarVal: { fontSize: 22, color: '#FBF6EA', lineHeight: 24 },
   qBarLabel: { fontSize: 10, color: colors.muted, letterSpacing: 0.8, textTransform: 'uppercase', textAlign: 'center', lineHeight: 14 },
-  qBarSub: { fontSize: 9, color: colors.muted, opacity: 0.7 },
+  qBarSub: { fontSize: 9, color: colors.muted },
   qAnalysis: { flex: 1, gap: 8, height: 130 },
   miniCard: { borderRadius: 10, paddingVertical: 8, paddingHorizontal: 10, flex: 1, justifyContent: 'center' },
   miniLabel: { fontSize: 9.5, color: colors.muted, letterSpacing: 1, textTransform: 'uppercase' },

@@ -119,12 +119,19 @@ export interface ProfileSummary {
 }
 
 export interface AccountExport {
+  contentReports: ContentReport[];
   deletedConversationIds: string[];
   exportedAt: string;
   userId: string;
   profile: ProfileSummary;
   settings: UserSettings;
   debriefs: DebriefCard[];
+}
+
+export interface ContentReport {
+  id: string; createdAt: string; debriefId: string | null;
+  source: 'debrief' | 'reflect'; content: string;
+  reason: 'harmful' | 'inaccurate' | 'other'; comment: string;
 }
 
 export interface ReflectMessage {
