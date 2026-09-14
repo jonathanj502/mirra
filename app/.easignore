@@ -1,9 +1,0 @@
-node_modules/
-/ios/
-/android/
-.expo/
-.env*
-*.log
-tests/
-.expo-export-check/
-dist/

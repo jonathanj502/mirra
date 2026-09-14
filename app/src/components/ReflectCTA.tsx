@@ -12,7 +12,7 @@ export function ReflectCTA({
   subject?: string; onPress?: () => void;
 }) {
   return (
-    <Pressable onPress={onPress} style={styles.wrap}>
+    <Pressable accessibilityRole="button" onPress={onPress} style={styles.wrap}>
       <View style={styles.iconCircle}>
         <Svg viewBox="0 0 20 20" width={16} height={16}>
           <Path d="M10 2.5 L11.6 7 L16 8 L11.6 10 L10 14.5 L8.4 10 L4 8 L8.4 7 Z" fill="#FBF6EA" />

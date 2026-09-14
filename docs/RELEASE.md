@@ -11,15 +11,16 @@ Updated September 14, 2026. **Prelaunch; not approved for public app distributio
 - FFmpeg decoding is limited to supported audio demuxers, mono 16 kHz output, 60 minutes and a 120-second decoder timeout. Uploads remain limited to 25 MB. A single pipeline runs at a time because the shared VAD model has mutable state. Busy requests preserve queued audio.
 - Live, labeled Reflect responses with no fabricated model-success fallback. Reflect allows 60 requests per account per hour in the single-worker launch deployment.
 - Marketing, privacy, terms, support and authenticated web-deletion pages. Download links stay disabled until actual store URLs exist. The current website identifies itself as a prelaunch preview and does not collect email while deletion infrastructure is unconfigured.
-- Container build, automated app/backend checks, native prebuild checks, an unsigned iOS simulator build workflow, dependency notices and store copy below.
+- Container build, automated app/backend/database checks, Android and unsigned iOS simulator builds, dependency notices and store copy below. Account/settings sheets scroll on small screens, and shared navigation and controls expose accessible roles and state.
 
 ## Verified evidence
 
-- Local TypeScript validation and behavior tests cover callback-token cleanup, account isolation, offline recovery, consent, imports, deletion and loading errors.
-- Backend tests cover auth, settings, AI consent, usage refunds, duplicate processing, pipeline output, ownership checks, export and deletion.
+- Local TypeScript validation and 20 passing behavior tests cover callback-token cleanup, account isolation, offline recovery, consent, imports, both sign-out paths, deletion, archive rules and loading errors. Web export also passed after the final UI changes.
+- All 136 backend tests passed in CI, covering auth, settings, AI consent, usage refunds, duplicate processing, pipeline output, ownership checks, export, deletion and private error logging.
 - A live OpenAI smoke check used two synthetic voices: transcription found two speakers, structured coaching and Reflect both succeeded (22.8 seconds for the complete smoke check). No customer content, account or database row was used. Reproduce intentionally with `python scripts/smoke_ai.py --live` from `backend`; this incurs API charges.
-- GitHub Actions run `34820308492` passed app/prebuild, backend and container jobs. The unsigned iOS simulator build also passed. Follow-up native/privacy changes are validated in the subsequent workflow run.
-- The website was visually checked at phone width; the landing and privacy pages had no horizontal overflow. Local links and assets have an automated check.
+- [GitHub Actions run 34822843697](https://github.com/sheanrahman192/mirra/actions/runs/34822843697), at `50c6018`, passed all six jobs: app/prebuild, backend, PostgreSQL schema/privacy checks, container, Android compilation, and unsigned iOS simulator compilation. Subsequent UI, website and archive-rule changes have their local evidence above; the PR lists the final workflow result.
+- The [published website](https://sheanrahman192.github.io/mirra/) was checked at phone width; landing and privacy pages had no horizontal overflow. Three website tests pass. A browser check caught a CSS rule overriding the hidden deletion form; it is fixed with a submission guard and versioned assets, and the published page was verified to hide the form. No email is collected while release services are unconfigured.
+- EAS's repository-copy implementation was exercised locally: website release checks are included, and local credentials, backend contents and generated native contents are excluded. `.easignore` belongs at the repository root. Full `eas build:inspect` requires Expo authentication and was not completed; this copy check is not a signed cloud build.
 
 ## Launch blockers and their current evidence
 

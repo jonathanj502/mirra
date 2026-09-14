@@ -14,7 +14,7 @@ export default function Licenses() {
     <Serif style={{ fontSize: 30 }}>Open-source notices</Serif>
     <TextInput accessibilityLabel="Find a dependency" placeholder="Find a dependency" value={query} onChangeText={setQuery} style={{ padding: 12, borderWidth: 1, borderRadius: 12 }} />
     {notices.filter(item => item.name.toLowerCase().includes(query.toLowerCase())).map(item => <View key={`${item.name}@${item.version}`}>
-      <Pressable accessibilityRole="button" accessibilityState={{ expanded: expanded === item.name }} onPress={() => setExpanded(expanded === item.name ? null : item.name)} style={{ minHeight: 44, justifyContent: 'center' }}><Body>{item.name} · {item.version} · {item.license}</Body></Pressable>
+      <Pressable accessibilityRole="button" aria-expanded={expanded === item.name} onPress={() => setExpanded(expanded === item.name ? null : item.name)} style={{ minHeight: 44, justifyContent: 'center' }}><Body>{item.name} · {item.version} · {item.license}</Body></Pressable>
       {expanded === item.name ? <Body selectable style={{ fontSize: 12, lineHeight: 18 }}>{item.text || 'This package declares the license shown above. Full source and notices are available from its package registry entry.'}</Body> : null}
     </View>)}
   </View></Screen>;

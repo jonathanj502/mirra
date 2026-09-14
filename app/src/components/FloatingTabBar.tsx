@@ -39,6 +39,9 @@ export function FloatingTabBar({
             return (
               <Pressable
                 key={t.id}
+                accessibilityRole="tab"
+                accessibilityLabel={t.label}
+                aria-selected={isActive}
                 onPress={() => onPress(t.id)}
                 style={styles.tab}
                 hitSlop={8}
@@ -88,6 +91,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 3,
     minWidth: 56,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   label: {
     fontSize: 10,

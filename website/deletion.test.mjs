@@ -34,6 +34,9 @@ test('unconfigured deletion page does not collect email or verify callback crede
   const { elements, requests } = await page({});
   assert.equal(requests.length, 1);
   assert.equal(elements['#sign-in'].hidden, true);
+  await elements['#sign-in'].handlers.submit({ preventDefault() {} });
+  assert.equal(requests.length, 1, 'Unavailable forms must reject submission even if displayed');
+  assert.match(readFileSync(new URL('./styles.css', import.meta.url), 'utf8'), /\[hidden\]\{display:none!important\}/);
   assert.match(elements['#availability'].textContent, /No email is collected/);
 });
 

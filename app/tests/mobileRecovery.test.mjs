@@ -310,6 +310,14 @@ test('account actions save audio before sign-out and clear local data only after
     for (const child of [node.props?.children].flat(Infinity)) { const found = findMenu(child); if (found) return found; }
   }
   const menu = () => findMenu(state.render(ProfileScreen));
+  function footerSignOut(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.props?.accessibilityLabel === 'Sign out') return node.props;
+    for (const child of [node.props?.children].flat(Infinity)) { const found = footerSignOut(child); if (found) return found; }
+  }
+  await footerSignOut(state.render(ProfileScreen)).onPress();
+  assert.deepEqual(events, ['save-recording'], 'The secondary sign-out path must preserve unsaved audio too');
+  events.length = 0;
   await menu().onSignOut();
   assert.deepEqual(events, ['save-recording']);
   assert.match(menu().error, /not saved yet/);

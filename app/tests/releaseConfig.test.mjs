@@ -2,6 +2,17 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
+import ignore from 'ignore';
+
+test('EAS archive excludes credentials and native output while preserving monorepo release checks', () => {
+  const rules = ignore().add(readFileSync(new URL('../../.easignore', import.meta.url), 'utf8'));
+  for (const path of ['app/.env.local', 'backend/.env', 'app/credentials.json', 'app/android/app/debug.keystore', 'app/ios/Mirra/Info.plist', '.mcp.json']) {
+    assert.equal(rules.ignores(path), true, path);
+  }
+  for (const path of ['app/app.json', 'app/eas.json', 'app/plugins/withRecordingService.js', 'website/release.json', 'website/release-check.mjs']) {
+    assert.equal(rules.ignores(path), false, path);
+  }
+});
 
 test('production builds reject development endpoints and privileged keys', () => {
   const source = readFileSync(new URL('../app.config.ts', import.meta.url), 'utf8');

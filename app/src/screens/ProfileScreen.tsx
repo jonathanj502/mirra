@@ -1,6 +1,6 @@
 // You · profile — identity, stats, settings.
 import React, { useState } from 'react';
-import { ActivityIndicator, Linking, Modal, Pressable, Switch, View, StyleSheet } from 'react-native';
+import { ActivityIndicator, Linking, Modal, Pressable, ScrollView, Switch, View, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path } from 'react-native-svg';
@@ -105,6 +105,8 @@ function Segment<T extends string>({
           <Pressable
             key={option.value}
             onPress={() => onChange(option.value)}
+            accessibilityRole="radio"
+            aria-checked={selected}
             style={[styles.segmentOption, selected && styles.segmentOptionSelected]}
           >
             <Body style={[styles.segmentText, selected && styles.segmentTextSelected]}>{option.label}</Body>
@@ -155,7 +157,7 @@ function ChoiceRow({
   onPress: () => void;
 }) {
   return (
-    <Pressable accessibilityRole="radio" accessibilityState={{ checked: selected }} accessibilityLabel={label} onPress={onPress} style={[styles.choiceRow, selected && styles.choiceRowSelected]}>
+    <Pressable accessibilityRole="radio" aria-checked={selected} accessibilityLabel={label} onPress={onPress} style={[styles.choiceRow, selected && styles.choiceRowSelected]}>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Body style={[styles.optionLabel, selected && styles.choiceLabelSelected]}>{label}</Body>
         {hint ? <Body style={styles.optionHint}>{hint}</Body> : null}
@@ -165,12 +167,12 @@ function ChoiceRow({
   );
 }
 
-function HelpAction({ label, hint, subject }: { label: string; hint: string; subject: string }) {
+function HelpAction({ label, hint }: { label: string; hint: string }) {
   const open = () => {
     void Linking.openURL(SUPPORT_URL);
   };
   return (
-    <Pressable onPress={open} style={styles.helpAction}>
+    <Pressable accessibilityRole="link" onPress={open} style={styles.helpAction}>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Body style={styles.optionLabel}>{label}</Body>
         <Body style={styles.optionHint}>{hint}</Body>
@@ -191,7 +193,7 @@ function settingsTitle(panel: SettingsPanelId | null) {
 }
 
 function privacyHint(settings: UserSettings) {
-  if (!settings.saveTranscripts) return 'Transcripts off · audio discarded';
+  if (!settings.saveTranscripts) return 'Transcript saving off';
   return settings.includeTranscriptInReflect ? 'Transcripts saved · Reflect can use excerpts' : 'Transcripts saved · Reflect uses summaries';
 }
 
@@ -216,7 +218,7 @@ function SettingsSheet({
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.sheetScrim}>
-        <View style={styles.sheet}>
+        <ScrollView style={{ flexGrow: 0, maxHeight: '90%' }} contentContainerStyle={styles.sheet}>
           <View style={styles.sheetGrabber} />
           <View style={styles.sheetHeader}>
             <View style={styles.sheetTitleCluster}>
@@ -225,7 +227,7 @@ function SettingsSheet({
                 <Serif style={styles.sheetTitle}>{settingsTitle(panel)}</Serif>
               </View>
             </View>
-            <Pressable onPress={onClose} hitSlop={10} style={styles.closeButton}>
+            <Pressable accessibilityRole="button" onPress={onClose} hitSlop={10} style={styles.closeButton}>
               <Body style={styles.closeText}>Done</Body>
             </Pressable>
           </View>
@@ -282,9 +284,9 @@ function SettingsSheet({
 
           {!loading && panel === 'help' ? (
             <View style={styles.sheetBody}>
-              <HelpAction label="Send feedback" hint="Tell us what felt useful or odd." subject="Mirra feedback" />
-              <HelpAction label="Report an issue" hint="Share what broke and where." subject="Mirra issue report" />
-              <HelpAction label="Privacy question" hint="Ask about data, audio, or transcripts." subject="Mirra privacy question" />
+              <HelpAction label="Send feedback" hint="Tell us what felt useful or odd." />
+              <HelpAction label="Report an issue" hint="Share what broke and where." />
+              <HelpAction label="Privacy question" hint="Ask about data, audio, or transcripts." />
             </View>
           ) : null}
 
@@ -292,7 +294,7 @@ function SettingsSheet({
             {saving ? <Body style={styles.saveState}>Saving…</Body> : null}
             {error ? <Body style={styles.errorText}>{error}</Body> : null}
           </View>
-        </View>
+        </ScrollView>
       </View>
     </Modal>
   );
@@ -356,7 +358,7 @@ function AccountMenu({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.menuScrim}>
-        <View style={styles.accountMenu}>
+        <ScrollView style={{ flexGrow: 0, maxHeight: '90%' }} contentContainerStyle={styles.accountMenu}>
           <View style={styles.sheetGrabber} />
           <View style={styles.sheetHeader}>
             <View style={{ flex: 1, minWidth: 0 }}>
@@ -364,7 +366,7 @@ function AccountMenu({
               <Serif style={styles.sheetTitle}>Mirra Member</Serif>
               <Body style={styles.accountMenuSubtext}>{label}</Body>
             </View>
-            <Pressable onPress={onClose} hitSlop={10} style={styles.closeButton}>
+            <Pressable accessibilityRole="button" onPress={onClose} hitSlop={10} style={styles.closeButton}>
               <Body style={styles.closeText}>Done</Body>
             </Pressable>
           </View>
@@ -395,7 +397,7 @@ function AccountMenu({
             {note ? <Body style={styles.saveState}>{note}</Body> : null}
             {error ? <Body style={styles.errorText}>{error}</Body> : null}
           </View>
-        </View>
+        </ScrollView>
       </View>
     </Modal>
   );
@@ -571,7 +573,7 @@ export function ProfileScreen() {
       />
 
       <View style={styles.footer}>
-        <Pressable onPress={signOut} hitSlop={8}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Sign out" disabled={!!accountBusy} onPress={handleAccountSignOut} hitSlop={8} style={{ minHeight: 44, justifyContent: 'center' }}>
           <Body style={styles.signOut}>Sign out</Body>
         </Pressable>
         <Body style={styles.version}>Mirra v1.0.0</Body>
@@ -625,7 +627,7 @@ const styles = StyleSheet.create({
   scheduleSettingValueRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4, flexShrink: 0 },
   scheduleSettingValue: { maxWidth: 160, fontSize: 12.5, color: colors.terracotta, fontFamily: fonts.bodyMedium, lineHeight: 17, textAlign: 'right' },
   segment: { flexDirection: 'row', gap: 6, padding: 4, borderRadius: 16, backgroundColor: 'rgba(42,37,32,0.07)' },
-  segmentOption: { flex: 1, minHeight: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  segmentOption: { flex: 1, minHeight: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
   segmentOptionSelected: { backgroundColor: colors.card },
   segmentText: { fontSize: 12.5, color: colors.muted, fontFamily: fonts.bodyMedium },
   segmentTextSelected: { color: colors.ink },

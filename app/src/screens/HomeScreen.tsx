@@ -95,7 +95,7 @@ function RecordButton({
 
 function RecentRow({ item, isLast, onPress }: { item: ConversationListItem; isLast: boolean; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} style={[styles.recentRow, !isLast && styles.rowBorder]}>
+    <Pressable accessibilityRole="button" onPress={onPress} style={[styles.recentRow, !isLast && styles.rowBorder]}>
       <View style={[styles.dot, { backgroundColor: colors[item.tone as keyof typeof colors] ?? colors.sage }]} />
       <View style={{ flex: 1, minWidth: 0 }}>
         <Serif style={styles.recentTitle}>{item.title}</Serif>
@@ -116,6 +116,7 @@ function ImportButton({ onPress, loading, disabled }: { onPress: () => void; loa
       onPress={onPress}
       disabled={loading || disabled}
       accessibilityLabel="Import audio recording"
+      accessibilityRole="button"
     >
       {loading ? (
         <ActivityIndicator size="small" color={colors.terracotta} />
@@ -184,7 +185,7 @@ export function HomeScreen() {
         <View style={{ flex: 1, minWidth: 0 }}>
           <Eyebrow>{today}</Eyebrow>
           <Serif style={styles.greetingTitle}>
-            Good evening,{'\n'}
+            Hello,{'\n'}
             <SerifItalic style={styles.greetingTitle}>{name}.</SerifItalic>
           </Serif>
         </View>

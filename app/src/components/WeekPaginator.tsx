@@ -67,6 +67,8 @@ export function WeekPaginator({ weeks, idx, onChange }: { weeks: { label: string
           return (
             <Pressable
               key={i}
+              accessibilityRole="button"
+              aria-selected={isActive}
               onPress={() => onChange(i)}
               onLayout={(e) => {
                 layouts.current[i] = { x: e.nativeEvent.layout.x, w: e.nativeEvent.layout.width };
@@ -92,10 +94,10 @@ export function WeekPaginator({ weeks, idx, onChange }: { weeks: { label: string
       <LinearGradient colors={['rgba(246,239,224,0)', colors.paper] as const} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={[styles.fade, { right: 0 }]} pointerEvents="none" />
 
       {/* prev / next */}
-      <Pressable disabled={idx === 0} onPress={() => onChange(Math.max(0, idx - 1))} style={[styles.chev, { left: 0 }]} hitSlop={6}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Previous week" disabled={idx === 0} onPress={() => onChange(Math.max(0, idx - 1))} style={[styles.chev, { left: 0 }]} hitSlop={6}>
         <Chevron dir="left" disabled={idx === 0} />
       </Pressable>
-      <Pressable disabled={idx === count - 1} onPress={() => onChange(Math.min(count - 1, idx + 1))} style={[styles.chev, { right: 0 }]} hitSlop={6}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Next week" disabled={idx === count - 1} onPress={() => onChange(Math.min(count - 1, idx + 1))} style={[styles.chev, { right: 0 }]} hitSlop={6}>
         <Chevron dir="right" disabled={idx === count - 1} />
       </Pressable>
     </View>

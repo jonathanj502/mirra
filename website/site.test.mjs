@@ -13,7 +13,7 @@ test('all website pages have working local links, accessible landmarks, and no f
     assert.match(html, /id="main"/);
     assert.equal((html.match(/<h1[ >]/g) || []).length, 1);
     for (const [, path] of html.matchAll(/(?:href|src)="\.\/([^"#]*)/g)) {
-      assert.ok(existsSync(join(root, 'dist', path || 'index.html')), `Missing ${path} from ${name}`);
+      assert.ok(existsSync(join(root, 'dist', path.split('?')[0] || 'index.html')), `Missing ${path} from ${name}`);
     }
     if (!config.appStoreUrl) assert.doesNotMatch(html, /href="https:\/\/apps.apple.com/);
     if (!config.playStoreUrl) assert.doesNotMatch(html, /href="https:\/\/play.google.com/);

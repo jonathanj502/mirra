@@ -178,7 +178,7 @@ export function AnalyticsScreen() {
           disabled={deleting || !accessToken}
           accessibilityRole="button"
           accessibilityLabel="Delete conversation"
-          accessibilityState={{ disabled: deleting || !accessToken, busy: deleting }}
+          aria-disabled={deleting || !accessToken} aria-busy={deleting}
           style={{ minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'center' }}
         >
           <Body style={{ color: colors.coral, fontSize: 13 }}>{deleting ? 'Deleting…' : 'Delete'}</Body>
