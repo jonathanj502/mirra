@@ -8,10 +8,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 import secrets
 import time
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
-from jose import jwt
 
 from app.config import settings
 
@@ -37,10 +36,17 @@ def main():
             assert call("GET", "/health")["status"] == "ok"
             assert call("GET", "/auth/status")["username_password_ready"]
             session = call("POST", "/auth/username/sign-up", json={"username": username, "password": password})
-            # Only clean up in the configured project, never infer a privileged destination from a token.
-            claims = jwt.get_unverified_claims(session["access_token"])
-            assert claims["iss"] == f"{settings.supabase_url.rstrip('/')}/auth/v1", "Backend/Supabase project mismatch"
-            user_id = session["user"]["id"]
+            # A backend response cannot authorize deletion of an arbitrary Supabase account.
+            candidate_id = str(UUID(session["user"]["id"]))
+            account = httpx.get(
+                f"{settings.supabase_url.rstrip('/')}/auth/v1/admin/users/{candidate_id}",
+                headers={"apikey": settings.supabase_service_role_key,
+                         "Authorization": f"Bearer {settings.supabase_service_role_key}"}, timeout=30,
+            )
+            account.raise_for_status()
+            if account.json().get("id") != candidate_id or account.json().get("email") != f"{username}@users.mirra.local":
+                raise RuntimeError("Refusing cleanup: account does not match this run's temporary test email")
+            user_id = candidate_id
             session = call("POST", "/auth/username/sign-in", json={"username": username, "password": password})
             assert session["user"]["id"] == user_id
             client.headers["Authorization"] = f"Bearer {session['access_token']}"

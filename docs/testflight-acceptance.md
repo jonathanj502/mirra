@@ -10,9 +10,9 @@ or physical-device gate. Keep failures and untested steps open.
 
 | ID | Acceptance criterion | Status | Evidence / next check |
 | --- | --- | --- | --- |
-| TF-1 | Signed production build processes in App Store Connect, installs through TestFlight, and cold-launches without a development server. | OPEN | CocoaPods updated successfully to Expo 57.0.22 / RN 0.86.3 / ExpoAudio 57.0.5. Production Hermes export passes (1,881 modules). EAS production build reached signing, then failed because distribution credentials are not configured. No TestFlight build yet. |
+| TF-1 | Signed production build processes in App Store Connect, installs through TestFlight, and cold-launches without a development server. | OPEN | EAS Simulator native build succeeded; production Hermes export passes (1,881 modules). Production store build stopped because distribution credentials are not configured. No TestFlight build yet. |
 | TF-2 | Installed build connects over public HTTPS to the intended backend; sign-up/sign-in, restored session, and authenticated reads work. | OPEN | Live Render health, sign-up/sign-in, JWT verification, history, and usage reads passed. Public URL and Supabase values saved to EAS production. Installed-device connection/session restoration remain untested. |
-| TF-3 | A real iPhone recording produces a saved, nonempty debrief; it reopens from history after relaunch and Reflect returns a model reply about it. | OPEN | 128 backend tests pass with mocked external services. No physical recording or live end-to-end result yet. |
+| TF-3 | A real iPhone recording produces a saved, nonempty debrief; it reopens from history after relaunch and Reflect returns a model reply about it. | OPEN | Local HTTP smoke with real Supabase/OpenAI passed M4A → saved debrief → history/Reflect. The same valid 10.1-second synthetic M4A timed out after 600 seconds on Render. Production processing and physical recording remain blockers. |
 | TF-4 | Offline stopped clips survive force-quit/relaunch; reconnect uploads each exactly once without losing audio, duplicating debriefs, or charging usage twice. | OPEN | App queue/recovery tests pass; backend replay/usage tests pass. Physical device, token refresh, and account-switch checks remain. |
 | TF-5 | Denying microphone permission is recoverable; granting permission in Settings allows recording without a crash or stuck recorder. | OPEN | Device check pending. |
 | TF-6 | Recording continues for at least five minutes with the iPhone locked; after unlock/Stop, audio from before, during, and after lock reaches the debrief. | OPEN | Native audio background mode and Expo recording configuration exist. Real-device check pending. |
@@ -36,10 +36,13 @@ Run from `app/`:
   cache; use `npm run export:ios:production` for subsequent local release exports.
 - `pod update --no-repo-update` — PASS, 108 pods installed. Xcode itself is absent,
   so this proves dependency resolution/integration, not native compilation.
+- EAS Simulator build — PASS, finished 2026-09-15 18:54 UTC:
+  [59076232-fd8c-4f0c-800f-bffc631d4bc3](https://expo.dev/accounts/jjiang25/projects/mirra/builds/59076232-fd8c-4f0c-800f-bffc631d4bc3).
+  This proves native compilation; it is not a signed device/TestFlight build.
 
 Run from `backend/`:
 
-- `.venv/bin/python -m pytest -q` — PASS, 128 tests, one existing Starlette/httpx
+- `.venv/bin/python -m pytest -q` — PASS, 132 tests, one existing Starlette/httpx
   deprecation warning. Auth, pipeline, storage, usage, settings, and API error
   behavior are covered with mocks; credentials and deployed services are not.
 
@@ -64,10 +67,28 @@ Current instance is Free and sleeps when inactive. Cold-start behavior needs
 device validation. No paid service upgrade has been made.
 
 The live smoke command is `python -m scripts.smoke_beta --url
-https://mirra-backend-wp2b.onrender.com --audio /private/tmp/mirra-beta-synthetic.m4a`
-from `backend/`. It uses synthetic speech, checks replay/usage/history/Reflect,
-and deletes only the temporary account it creates. Local log:
-`/private/tmp/mirra-beta-smoke.log`. Audio-flow result still pending.
+https://mirra-backend-wp2b.onrender.com --audio /private/tmp/mirra-beta-speech.m4a`
+from `backend/`. It checks replay/usage/history/Reflect and cleans up its temporary
+account only after Supabase confirms its ID and freshly generated test email.
+An independent security review caught unsafe trust in the target backend's
+account ID; authoritative verification and four regression cases now cover it.
+
+Live service evidence on 2026-09-15:
+
+- Corrected synthetic fixture: 10.103 seconds, mono AAC, 48,410-byte M4A. Local
+  decoding and real OpenAI transcription/coaching passed.
+- Local full HTTP smoke (`--url http://127.0.0.1:8773`) — PASS: production
+  Supabase auth, M4A processing (10.8 seconds), persistence, replay with exactly
+  one usage charge, history/detail, real Reflect reply, deletion, and cleanup.
+  Log: `/private/tmp/mirra-local-http-smoke.log`.
+- Render smoke — FAIL: auth/history/usage passed; valid M4A upload hit the
+  600-second client read timeout. Temporary account cleanup succeeded.
+  Log: `/private/tmp/mirra-beta-valid-smoke.log`. Health remained responsive.
+  Stage logging is prepared to isolate the production stall; its cause is not
+  established yet.
+- Earlier `/private/tmp/mirra-beta-synthetic.m4a` had zero audio frames because
+  speech generation was sandboxed. That run also timed out and cleaned up,
+  but is invalid evidence for a speech-processing acceptance test.
 
 Supabase read-only checks: public JWKS returned ES256; auth settings returned email
 and Google enabled; `debriefs`, `debrief_usage`, and `user_settings` were reachable
