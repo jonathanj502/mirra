@@ -9,7 +9,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { Body, Serif, SerifItalic, Eyebrow } from '@/components/Typography';
 import { Icon } from '@/components/Icon';
-import { ReportContent } from '@/components/ReportContent';
 import { colors, fonts } from '@/theme/tokens';
 import { SEED_MESSAGES, STARTER_PROMPTS, ChatMessage } from '@/data/reflect';
 import { friendlyErrorMessage } from '@/api/http';
@@ -18,13 +17,12 @@ import { fetchDebrief, sendReflection } from '@/api/client';
 import { useAuth } from '@/auth/AuthContext';
 import { titleForDebrief } from '@/hooks/useDebriefs';
 
-function ChatBubble({ from, text, debriefId }: ChatMessage & { debriefId?: string }) {
+function ChatBubble({ from, text }: ChatMessage) {
   const isYou = from === 'you';
   return (
     <View style={[styles.bubbleRow, { justifyContent: isYou ? 'flex-end' : 'flex-start' }]}>
       <View style={[isYou ? styles.bubbleYou : styles.bubbleAi]}>
         <Body style={[styles.bubbleText, { color: isYou ? '#FBF6EA' : colors.ink }]}>{text}</Body>
-        {!isYou && <ReportContent source="reflect" content={text} debriefId={debriefId} />}
       </View>
     </View>
   );
@@ -162,9 +160,9 @@ export function ReflectScreen() {
       {/* Messages */}
       <ScrollView ref={scrollerRef} style={{ flex: 1 }} contentContainerStyle={styles.messages} showsVerticalScrollIndicator={false}>
         <ContextPill subject={subject} />
-        <Body style={{ color: colors.muted, fontSize: 12, marginVertical: 12 }}>AI coaching can be wrong. It is not medical or mental-health advice. Chats stay in this session; responses you report are saved for review.</Body>
+        <Body style={{ color: colors.muted, fontSize: 12, marginVertical: 12 }}>AI coaching can be wrong. It is not medical or mental-health advice. Chats stay in this session.</Body>
         {error ? <Body accessibilityRole="alert" style={{ color: colors.coral, marginBottom: 12 }}>{error}</Body> : null}
-        {messages.map((m, i) => <ChatBubble key={i} from={m.from} text={m.text} debriefId={id} />)}
+        {messages.map((m, i) => <ChatBubble key={i} from={m.from} text={m.text} />)}
         {thinking && <TypingIndicator />}
       </ScrollView>
 

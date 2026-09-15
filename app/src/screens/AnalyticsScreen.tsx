@@ -9,7 +9,6 @@ import { Icon } from '@/components/Icon';
 import { FloatingTabBar, TabId } from '@/components/FloatingTabBar';
 import { ExpandableMetric } from '@/components/ExpandableMetric';
 import { ReflectCTA } from '@/components/ReflectCTA';
-import { ReportContent } from '@/components/ReportContent';
 import { Donut, RingMeter, RadarChart, TurnOffsetChart, EnergyWave } from '@/components/charts';
 import { FillerBars, SyncBars, OffsetZoneLegend } from '@/components/meters';
 import { colors, fonts } from '@/theme/tokens';
@@ -204,7 +203,6 @@ export function AnalyticsScreen() {
             {' '}to notice. {next}
           </Serif>
           <ReflectCTA subject={title.toLowerCase()} onPress={() => router.push({ pathname: '/reflect', params: selected ? { id: selected.id } : {} })} />
-          {selected && <ReportContent source="debrief" debriefId={selected.id} content={`${observation}\n${pattern}\n${next}`} />}
         </Card>
       </View>
 

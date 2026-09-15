@@ -394,7 +394,7 @@ function AccountMenu({
           <View style={styles.accountActionList}>
             <AccountActionRow
               label="Download my data"
-              hint="Conversations, settings and reports."
+              hint="Conversations and settings."
               loading={busy === 'export'}
               onPress={onExport}
             />
@@ -485,7 +485,7 @@ export function ProfileScreen() {
     if (isRecording || hasUnsavedRecording || isSavingRecording || isStartingRecording) {
       setAccountError('Stop and save your recording before deleting your account.'); return;
     }
-    if (!await confirmAction('Delete your account?', 'This permanently deletes your account, conversations, transcripts, reports, settings and recordings saved on this device. It cannot be undone.', 'Delete account', true)) return;
+    if (!await confirmAction('Delete your account?', 'This permanently deletes your account, conversations, transcripts, settings and recordings saved on this device. It cannot be undone.', 'Delete account', true)) return;
     setAccountBusy('delete'); setAccountError(null); pauseUploads();
     try {
       await deleteAccount(accessToken);

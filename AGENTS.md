@@ -149,12 +149,8 @@ The frontend is fully wired to the backend — no more mock data. `src/data/rece
 
 ## Release privacy and operations
 
-- Apply the September 14 deletion-tombstone and content-report migrations before deploying the current backend. `/health` reports liveness; `/ready` requires the deletion-marker and content-report tables, and AI credential.
+- Apply the September 14 deletion-tombstone migration before deploying the current backend. `/health` reports liveness; `/ready` requires the deletion-marker table and AI credential.
 - AI consent uses upstream’s `app/src/privacy/aiConsent.ts`: approval is stored per account on each device, recording/import/Reflect request it, queued uploads recheck it, and Profile can withdraw it on that device. There is no additional release-branch consent screen, server-side consent field or consent migration. Transcript defaults and username/Google onboarding follow upstream.
 - `DELETE /account` removes the authenticated Supabase user with cascading data deletion. `DELETE /debriefs/{id}` uses an account-scoped SQL RPC and a content-free tombstone. SQL advisory locks serialize deletion and replay; the insert trigger rejects resurrection. Tombstones disappear on account deletion and are included in account exports.
 - One pipeline/worker protects the stateful VAD model and memory budget. Reflect has a per-account 60-message/hour process-local limit. Move budgets to shared storage before scaling workers/instances.
 - Product/release evidence and external blockers are tracked in `docs/RELEASE.md`. The website and policy pages remain a clearly labeled prelaunch preview until the operator, private support contact and deployment are finalized.
-
-### Private content reporting
-
-`POST /content-reports` accepts an authenticated, size-limited selected response, reason and optional note. Debrief links are ownership-checked. Reports have a separate 20/hour process-local limit, are stored in `content_reports` behind owner-read RLS and backend-only writes, and appear in account export. Linked-conversation and account deletion cascade to reports. Apply `20260914030000_content_reports.sql` before deployment. `ReportContent` is shared by debrief and Reflect screens; no full transcript or audio is attached. A private report-review owner/process must exist before launch.
