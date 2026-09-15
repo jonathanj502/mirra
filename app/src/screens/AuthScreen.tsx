@@ -8,7 +8,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Body, Eyebrow, Serif, SerifItalic } from '@/components/Typography';
+import { Body, Eyebrow, Serif } from '@/components/Typography';
 import { colors, fonts } from '@/theme/tokens';
 import { isSupabaseConfigured } from '@/config/env';
 import { useAuth } from '@/auth/AuthContext';
@@ -83,7 +83,7 @@ export function AuthScreen() {
         <Eyebrow>Mirra</Eyebrow>
         <Serif style={styles.title}>
           {isSignUp ? 'Create your' : 'Sign in to'}{'\n'}
-          <SerifItalic style={styles.title}>your conversations.</SerifItalic>
+          your conversations.
         </Serif>
         <Body style={styles.copy}>
           Use a username and password, or continue with Google.
@@ -165,7 +165,7 @@ export function AuthScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.paper, justifyContent: 'center', padding: 24 },
   content: { gap: 16 },
-  title: { fontSize: 36, lineHeight: 39, color: colors.ink },
+  title: { fontSize: 36, lineHeight: 44, color: colors.ink },
   copy: { fontSize: 14, lineHeight: 21, color: colors.ink2, maxWidth: 330 },
   modeSwitch: {
     flexDirection: 'row',

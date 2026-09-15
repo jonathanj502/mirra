@@ -1,11 +1,12 @@
 import { useCallback, useState } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
-import { Audio } from 'expo-av';
+import { createAudioPlayer } from 'expo-audio';
 import { friendlyErrorMessage } from '@/api/http';
 import { uploadSession } from '@/api/client';
 import { useAuth } from '@/auth/AuthContext';
 import { DebriefCard } from '@/models/debrief';
 import { titleFromFilename } from '@/utils/timeFormat';
+import { requestAIConsent } from '@/privacy/aiConsent';
 
 const MAX_BYTES = 25 * 1024 * 1024;
 const AUDIO_TYPES = [
@@ -20,14 +21,26 @@ const AUDIO_TYPES = [
 ];
 
 async function getAudioDuration(uri: string): Promise<number> {
-  const { sound, status } = await Audio.Sound.createAsync({ uri }, { shouldPlay: false });
+  const player = createAudioPlayer({ uri });
   try {
-    if (status.isLoaded && status.durationMillis != null) {
-      return status.durationMillis / 1000;
+    if (!player.isLoaded) {
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          subscription.remove();
+          reject(new Error('Could not read the audio file. Try another format.'));
+        }, 10000);
+        const subscription = player.addListener('playbackStatusUpdate', (status) => {
+          if (status.isLoaded) {
+            clearTimeout(timeout);
+            subscription.remove();
+            resolve();
+          }
+        });
+      });
     }
-    return 0;
+    return Number.isFinite(player.duration) ? player.duration : 0;
   } finally {
-    await sound.unloadAsync();
+    player.remove();
   }
 }
 
@@ -43,7 +56,7 @@ function mimeTypeFor(name: string, provided?: string | null): string {
 }
 
 export function useImportAudio() {
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,6 +69,7 @@ export function useImportAudio() {
         return null;
       }
 
+      if (!await requestAIConsent(user?.id)) return null;
       const result = await DocumentPicker.getDocumentAsync({
         type: AUDIO_TYPES,
         copyToCacheDirectory: true,
@@ -72,6 +86,7 @@ export function useImportAudio() {
       }
 
       const durationSeconds = await getAudioDuration(asset.uri);
+      if (!await requestAIConsent(user?.id)) return null;
       const response = await uploadSession(
         accessToken,
         { uri: asset.uri, name: asset.name, type: mimeTypeFor(asset.name, asset.mimeType) },
@@ -89,7 +104,7 @@ export function useImportAudio() {
     } finally {
       setImporting(false);
     }
-  }, [accessToken]);
+  }, [accessToken, user?.id]);
 
   return { importAudio, importing, error };
 }

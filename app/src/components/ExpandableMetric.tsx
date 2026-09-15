@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 import Svg, { Circle, Rect, Path, Line, Polygon } from 'react-native-svg';
 import { Card } from './ui';
-import { Body, Serif, SerifItalic, Eyebrow } from './Typography';
+import { Body, Serif, Eyebrow } from './Typography';
 import { Icon } from './Icon';
 import { colors, fonts } from '@/theme/tokens';
 
@@ -113,7 +113,7 @@ export function ExpandableMetric({
               </Body>
             ) : null}
           </View>
-          {summary && !open ? <SerifItalic style={styles.summary}>{summary}</SerifItalic> : null}
+          {summary && !open ? <Serif style={styles.summary}>{summary}</Serif> : null}
         </View>
         <View style={{ transform: [{ rotate: open ? '90deg' : '0deg' }] }}>
           <Icon.chevron color="rgba(42,37,32,0.4)" />
@@ -122,7 +122,7 @@ export function ExpandableMetric({
       {open ? (
         <View style={styles.body}>
           <View style={styles.bodyInner}>{children}</View>
-          {blurb ? <SerifItalic style={styles.blurb}>{blurb}</SerifItalic> : null}
+          {blurb ? <Serif style={styles.blurb}>{blurb}</Serif> : null}
         </View>
       ) : null}
     </Card>
@@ -135,11 +135,11 @@ const styles = StyleSheet.create({
   glyph: { borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   headerMid: { flex: 1, minWidth: 0 },
   valueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 4, flexWrap: 'wrap' },
-  value: { fontSize: 24, lineHeight: 26 },
+  value: { fontSize: 24, lineHeight: 32 },
   unit: { fontSize: 11, color: colors.muted, letterSpacing: 0.6, textTransform: 'uppercase' },
   delta: { fontSize: 11, fontFamily: fonts.bodySemibold, marginLeft: 'auto', letterSpacing: 0.2 },
-  summary: { fontSize: 12.5, color: colors.ink2, marginTop: 4, lineHeight: 17 },
+  summary: { fontSize: 18, color: colors.ink2, marginTop: 6, lineHeight: 26 },
   body: { paddingHorizontal: 18, paddingBottom: 18, paddingTop: 4 },
   bodyInner: { borderTopWidth: 1, borderTopColor: colors.hairline, borderStyle: 'dashed', paddingTop: 14 },
-  blurb: { fontSize: 13.5, color: colors.ink2, lineHeight: 20, marginTop: 14 },
+  blurb: { fontSize: 18, color: colors.ink2, lineHeight: 26, marginTop: 16 },
 });

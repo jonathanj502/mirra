@@ -56,3 +56,27 @@ src/
 - Tweaks-panel theming (alt palettes / aesthetics / coaching tone) was a
   design-canvas affordance and is not part of the shipped app; the `dawn` /
   `soft` / `warm` defaults are applied directly.
+
+## SDK 57 development
+
+This app uses Expo SDK 57, React Native 0.86.3, and React 19.2.3.
+Use a matching SDK 57 Expo Go on your phone and run `npx expo start --go --lan`.
+The phone and backend must be reachable on the same network; set
+`EXPO_PUBLIC_MIRRA_BACKEND_URL` in `.env` to the backend's LAN URL.
+
+Recording uses `expo-audio`; native uploads use `expo-file-system` File objects
+with SDK 57's fetch implementation. Test microphone permission, record/stop,
+failed upload retry, and file import on a real device.
+
+Native projects are maintained in Git. Their startup/build templates have been
+updated for SDK 57, preserving app identifiers and custom native files. A native
+iOS build requires Xcode 26.4 or later and iOS 16.4 or later. Run `pod update`
+from `ios/` before building to regenerate the SDK 54 Podfile.lock/installed pods.
+Native compilation has not been verified on the current Mac (full Xcode is absent).
+Do not run `expo prebuild` blindly: SDK 57 clears native folders by default.
+If applying config plugins to existing native projects, use `--no-clean` and
+review the diff for custom extensions. The Expo Go build does not exercise those
+extensions or confirm standalone background recording behavior.
+
+Checks: `npm run typecheck`, `node --test tests/*.test.mjs`,
+`npx expo install --check`, and `npx expo export --platform all`.

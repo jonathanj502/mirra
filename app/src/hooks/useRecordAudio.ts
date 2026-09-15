@@ -1,19 +1,11 @@
-import { useCallback, useRef, useState } from 'react';
-import { NativeModules, Platform } from 'react-native';
-import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Platform } from 'react-native';
+import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
 import { friendlyErrorMessage } from '@/api/http';
 import { uploadSession } from '@/api/client';
 import { useAuth } from '@/auth/AuthContext';
 import { DebriefCard } from '@/models/debrief';
-
-// Android needs a foreground service holding the mic open once the app backgrounds;
-// optional so web/iOS (and stale native builds) just no-op.
-function setForegroundService(running: boolean) {
-  if (Platform.OS !== 'android') return;
-  const service = NativeModules.RecordingService;
-  if (running) service?.startForegroundService();
-  else service?.stopForegroundService();
-}
+import { requestAIConsent } from '@/privacy/aiConsent';
 
 function recordingName() {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -25,9 +17,11 @@ function recordingMimeType() {
 }
 
 export function useRecordAudio() {
-  const { accessToken } = useAuth();
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
-  const [recordingMs, setRecordingMs] = useState(0);
+  const { accessToken, user } = useAuth();
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorderState = useAudioRecorderState(recorder, 500);
+  const [recording, setRecording] = useState(false);
+  const recordingMs = recorderState.durationMillis;
   const [uploading, setUploading] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,9 +32,12 @@ export function useRecordAudio() {
   } | null>(null);
   const operationInProgress = useRef(false);
   const startedAt = useRef<number | null>(null);
-  // Null until createAsync fully resolves, so mid-creation status updates
-  // (canRecord && !isRecording) can't trigger a spurious resume; cleared again on stop.
-  const liveRecording = useRef<Audio.Recording | null>(null);
+  useEffect(() => {
+    if (recording && !operationInProgress.current && recorderState.canRecord && !recorderState.isRecording) {
+      // Resume a paused, still-valid recording after an audio interruption.
+      try { recorder.record(); } catch { /* Retry on the next status update. */ }
+    }
+  }, [recording, recorderState, recorder]);
 
   const startRecording = useCallback(async () => {
     if (operationInProgress.current || recording || pendingRecording) return;
@@ -53,47 +50,31 @@ export function useRecordAudio() {
     operationInProgress.current = true;
     setStarting(true);
     try {
-      const permission = await Audio.requestPermissionsAsync();
+      if (!await requestAIConsent(user?.id, Platform.OS !== 'web')) return;
+      const permission = await AudioModule.requestRecordingPermissionsAsync();
       if (!permission.granted) {
         setError('Allow microphone access to record a conversation.');
         return;
       }
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
-        interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-        interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-        shouldDuckAndroid: false,
-        playThroughEarpieceAndroid: false,
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+        allowsBackgroundRecording: Platform.OS !== 'web',
+        interruptionMode: 'doNotMix',
+        shouldRouteThroughEarpiece: false,
       });
-
-      setForegroundService(true);
-      const created = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY,
-        (status) => {
-          setRecordingMs(status.durationMillis ?? 0);
-          // Interruption (e.g. phone call) paused a still-valid recording: resume.
-          // Retries every status tick until the audio session is available again.
-          if (liveRecording.current && status.canRecord && !status.isRecording && !status.isDoneRecording) {
-            liveRecording.current.startAsync().catch(() => {});
-          }
-        },
-        500
-      );
-      liveRecording.current = created.recording;
+      await recorder.prepareToRecordAsync();
+      recorder.record();
       startedAt.current = Date.now();
-      setRecordingMs(created.status.durationMillis ?? 0);
-      setRecording(created.recording);
-    } catch {
-      setForegroundService(false);
-      setError('Could not start the microphone recording.');
+      setRecording(true);
+    } catch (err) {
+      setError(friendlyErrorMessage(err, 'Could not start the microphone recording.'));
     } finally {
       operationInProgress.current = false;
       setStarting(false);
     }
-  }, [accessToken, recording, pendingRecording]);
+  }, [accessToken, user?.id, recording, pendingRecording, recorder]);
 
   const stopRecording = useCallback(async (): Promise<DebriefCard | null> => {
     if (operationInProgress.current || (!recording && !pendingRecording) || !accessToken) return null;
@@ -104,21 +85,21 @@ export function useRecordAudio() {
     try {
       let pending = pendingRecording;
       if (!pending && recording) {
-        liveRecording.current = null;
-        await recording.stopAndUnloadAsync();
-        setRecording(null);
-        const uri = recording.getURI();
+        const durationMillis = recorder.getStatus().durationMillis;
+        await recorder.stop();
+        setRecording(false);
+        const uri = recorder.uri;
         if (!uri) throw new Error('Missing recording URI');
 
         pending = {
           audio: { uri, name: recordingName(), type: recordingMimeType() },
-          seconds: recordingMs > 0 ? recordingMs / 1000 : startedAt.current ? (Date.now() - startedAt.current) / 1000 : 0,
+          seconds: durationMillis > 0 ? durationMillis / 1000 : startedAt.current ? (Date.now() - startedAt.current) / 1000 : 0,
         };
         setPendingRecording(pending);
-        setForegroundService(false);
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
+        await setAudioModeAsync({ allowsRecording: false, allowsBackgroundRecording: false }).catch(() => {});
       }
       if (!pending) return null;
+      if (!await requestAIConsent(user?.id)) return null;
       const response = await uploadSession(
         accessToken,
         pending.audio,
@@ -134,14 +115,12 @@ export function useRecordAudio() {
       setError(message);
       return null;
     } finally {
-      setForegroundService(false);
-      setRecordingMs(0);
       startedAt.current = null;
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
+      await setAudioModeAsync({ allowsRecording: false, allowsBackgroundRecording: false }).catch(() => {});
       setUploading(false);
       operationInProgress.current = false;
     }
-  }, [accessToken, recording, recordingMs, pendingRecording]);
+  }, [accessToken, user?.id, recording, pendingRecording, recorder]);
 
   const discardRecording = useCallback(() => {
     if (operationInProgress.current || recording) return;
@@ -160,7 +139,7 @@ export function useRecordAudio() {
     hasPendingRecording: !!pendingRecording,
     error,
     discardRecording,
-    recordingSeconds: recordingMs / 1000,
+    recordingSeconds: recording ? recordingMs / 1000 : 0,
     startRecording,
     stopRecording,
     toggleRecording,

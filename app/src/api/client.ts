@@ -1,3 +1,4 @@
+import { File } from 'expo-file-system';
 import { endpoint, parseResponse } from '@/api/http';
 import {
   AccountExport,
@@ -339,6 +340,13 @@ export async function fetchDebrief(token: string, id: string): Promise<DebriefCa
   return toDebrief(raw);
 }
 
+export async function deleteDebrief(token: string, id: string): Promise<void> {
+  await fetch(endpoint(`/debriefs/${encodeURIComponent(id)}`), {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  }).then((r) => parseResponse<void>(r));
+}
+
 export async function fetchProgressSummary(token: string): Promise<ProgressSummary> {
   const raw = await fetch(endpoint('/analytics/progress'), {
     headers: { Authorization: `Bearer ${token}` },
@@ -425,7 +433,7 @@ export async function uploadSession(
     const blob = await fetch(audio.uri).then((response) => response.blob());
     form.append('audio', blob, audio.name);
   } else {
-    form.append('audio', audio as unknown as Blob);
+    form.append('audio', new File(audio.uri), audio.name);
   }
   form.append('started_at', new Date().toISOString());
   if (metadata.title) form.append('title', metadata.title);

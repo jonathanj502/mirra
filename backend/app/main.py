@@ -1,8 +1,8 @@
 import logging
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import httpx
@@ -372,6 +372,24 @@ def debrief_detail(
     if not row:
         raise HTTPException(status_code=404, detail="Debrief not found")
     return row
+
+
+@app.delete("/debriefs/{debrief_id}", status_code=204)
+def delete_debrief(
+    debrief_id: UUID,
+    user_id: str = Depends(verify_token),
+    db: Client = Depends(get_db),
+):
+    # Scope the service-role write to its owner. An absent row is already deleted,
+    # so retrying after a lost response is safe and never reveals another user's data.
+    (
+        db.table("debriefs")
+        .delete(returning="minimal")
+        .eq("user_id", user_id)
+        .eq("id", str(debrief_id))
+        .execute()
+    )
+    return Response(status_code=204)
 
 
 @app.post("/reflect", response_model=ReflectResponse)
