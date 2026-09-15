@@ -12,7 +12,7 @@ or physical-device gate. Keep failures and untested steps open.
 | --- | --- | --- | --- |
 | TF-1 | Signed production build processes in App Store Connect, installs through TestFlight, and cold-launches without a development server. | OPEN | EAS Simulator native build succeeded; production Hermes export passes (1,881 modules). Production store build stopped because distribution credentials are not configured. No TestFlight build yet. |
 | TF-2 | Installed build connects over public HTTPS to the intended backend; sign-up/sign-in, restored session, and authenticated reads work. | OPEN | Live Render health, sign-up/sign-in, JWT verification, history, and usage reads passed. Public URL and Supabase values saved to EAS production. Installed-device connection/session restoration remain untested. |
-| TF-3 | A real iPhone recording produces a saved, nonempty debrief; it reopens from history after relaunch and Reflect returns a model reply about it. | OPEN | Local HTTP smoke with real Supabase/OpenAI passed M4A → saved debrief → history/Reflect. The same valid 10.1-second synthetic M4A timed out after 600 seconds on Render. Production processing and physical recording remain blockers. |
+| TF-3 | A real iPhone recording produces a saved, nonempty debrief; it reopens from history after relaunch and Reflect returns a model reply about it. | OPEN | Render processed synthetic M4A → saved debrief → history → real Reflect reply in the live test. The service then exceeded its 512 MB memory limit and restarted; final usage read returned 502. Hosting capacity and physical recording checks remain open. |
 | TF-4 | Offline stopped clips survive force-quit/relaunch; reconnect uploads each exactly once without losing audio, duplicating debriefs, or charging usage twice. | OPEN | App queue/recovery tests pass; backend replay/usage tests pass. Physical device, token refresh, and account-switch checks remain. |
 | TF-5 | Denying microphone permission is recoverable; granting permission in Settings allows recording without a crash or stuck recorder. | OPEN | Device check pending. |
 | TF-6 | Recording continues for at least five minutes with the iPhone locked; after unlock/Stop, audio from before, during, and after lock reaches the debrief. | OPEN | Native audio background mode and Expo recording configuration exist. Real-device check pending. |
@@ -53,7 +53,8 @@ Run from `backend/`:
 ## Device test record
 
 Device: **iPhone 13 / iOS 26.6.2**, reported by the user via iMessage on 2026-09-15.
-Apple membership/team: **user unsure; checking developer.apple.com/account**.
+Apple membership/team: **unverified**. The user has a personal Apple Account;
+individual versus organization enrollment is being clarified before purchase.
 Session-only coordination: questions sent to the user's own number ending 3399;
 replies are checked through Messages. No ongoing messaging automation is set up.
 
@@ -63,7 +64,7 @@ the production attempt stopped at signing and did not create a binary.
 
 Backend: [mirra-backend-wp2b.onrender.com](https://mirra-backend-wp2b.onrender.com),
 [Render service](https://dashboard.render.com/web/srv-d9vp6orm8hqs73dvhd5g).
-Live deployment `dep-dakboh9srm7s73bt5ki0` serves commit
+Initial deployment `dep-dakboh9srm7s73bt5ki0` served commit
 `f628b73c09815af4895b744b6682c1a7ee8e1345`. Root directory `backend`, build command
 `pip install uv && uv sync`, start command
 `uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
@@ -77,29 +78,66 @@ settings reads, then stalled at `Audio pipeline: decoding` from 19:13:33 UTC.
 The client was interrupted after several minutes; verified temporary-account
 cleanup succeeded. An isolated Python 3.14.3 decode completed locally in 30.8
 seconds, with a timed stack trace showing Numba compilation during the first
-call. This is a lead, not yet a confirmed explanation of the Render stall.
+call. The build-time warm-up below subsequently reduced production decoding to
+26 seconds.
 Render's specific-commit deploy disables auto-deploy; restore the original
 setting once the tested release is integrated into `main`.
 [Draft PR #12](https://github.com/jonathanj502/mirra/pull/12) tracks the changes.
 
 Temporary diagnostic operation: the Render start command was changed to start
 Uvicorn through Python with `faulthandler.dump_traceback_later(60, repeat=True)`.
-The restart event was accepted, but new startup/stack logs were not observed.
-Replace this temporary command with the normal Uvicorn command below for the
-next build. The diagnostic prints code locations, not local variables.
+The restart reused the earlier deployment's original start command, so no timed
+trace ran. The temporary setting was removed before the next deploy; the live
+start command is the normal Uvicorn command with the generic CPU prefix below.
 
 At 19:22:14 UTC the original decoder advanced to Librosa's audioread fallback,
-8 minutes 41 seconds after entering decode. Candidate fix: precompile the
+8 minutes 41 seconds after entering decode. Fix: precompile the
 existing audio helpers during build using `scripts.warm_audio`. Local Python
 3.14 experiment passed pitch verification and took 6.98 seconds with a new
 generic CPU cache, then 1.01 seconds in a fresh process reusing that cache.
-Production effectiveness remains unverified until the next live smoke passes.
+Production decoding improvement is verified below; the full smoke remains open
+because the service subsequently exceeded its memory limit.
 
-Build command for the candidate:
+Current build command:
 `pip install uv && uv sync && NUMBA_CPU_NAME=generic uv run python -m scripts.warm_audio`
 
-Start command for the candidate:
+Current start command:
 `NUMBA_CPU_NAME=generic uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+
+Candidate deploy `dep-dakpolrl550s73cprvtg`, commit
+`f8cf5d7196654aff3ff578bb5503668aa3ff15cd`, became live at 19:33:24 UTC.
+Build warm-up passed in 12.6 seconds. The independent reviewer also exercised
+real M4A decoding and application resampling/pitch at 22.05/44.1/48 kHz in a new
+local process: 40 cache loads, zero new compilations, 1.64 seconds.
+
+First production request on this deploy reached decoding at 19:34:18 UTC,
+resampling at 19:34:44, speech detection at 19:34:44, and transcription at
+19:34:46. At 19:34:51 OpenAI returned 401 `invalid_api_key`: the Render key is
+still the placeholder `FILL_IN`. The API returned 500 and temporary-account
+cleanup succeeded. Log: `/private/tmp/mirra-render-warm-short-smoke.log`.
+The user chose to enter a key themselves, then confirmed at 19:39 UTC that they
+updated it and removed obsolete Anthropic/Stripe variables. Saved UI state was
+confirmed without revealing the value. Redeploy `dep-dakpvn61egvs73aqdb8g` applies
+that saved environment to the same reviewed commit and became live at
+19:48:10 UTC. Build warm-up passed in 12.1 seconds.
+
+Retest with the updated key: synthetic 10.103-second M4A processing passed in
+46.5 seconds, including speech transcription, coaching, persistence, replay
+returning the same debrief with one usage charge, history/detail reads, and a
+real Reflect model reply. Conversation deletion returned 204 and empty history.
+The final usage read returned 502; temporary-account cleanup passed. Render's
+Events page confirmed at 19:53 UTC: instance `xz6ls` ran out of memory, using
+over 512 MB. It recovered at 19:54 UTC. This run is a partial pass, not a stable
+production acceptance pass. Log:
+`/private/tmp/mirra-render-key-updated-short-smoke.log`.
+
+Hosting decision requested by iMessage: move to the existing 2 GB / 1 CPU plan
+at $25/month and rerun the short and five-minute production checks. The $7/month
+plan still has 512 MB. No paid upgrade has been made or approved yet.
+A local CPU-stage check of the 303-second stereo fixture peaked at 702.6 MiB
+RSS after decoding, resampling, VAD, and acoustic statistics (4.4 seconds).
+This is macOS evidence supporting the capacity concern, not a Linux/Render
+measurement. Log: `/private/tmp/mirra-audio-memory-check.log`.
 
 The live smoke command is `python -m scripts.smoke_beta --url
 https://mirra-backend-wp2b.onrender.com --audio /private/tmp/mirra-beta-speech.m4a`
@@ -118,11 +156,16 @@ Live service evidence on 2026-09-15:
   Log: `/private/tmp/mirra-local-http-smoke.log`.
   Repeated after the cleanup security fix: PASS, processing 9.7 seconds;
   `/private/tmp/mirra-local-http-smoke-verified-cleanup.log`.
-- Render smoke — FAIL: auth/history/usage passed; valid M4A upload hit the
+- Local five-minute HTTP smoke — PASS with real Supabase/OpenAI: 303.093-second
+  stereo AAC M4A at 44.1 kHz (Mirra's iOS preset), 3.97 MB. Full processing took
+  168.9 seconds; replay, one usage charge, history/detail, real Reflect reply,
+  deletion, and account cleanup passed. This checks backend handling of long
+  input, not screen-lock capture. Log: `/private/tmp/mirra-local-five-minute-smoke.log`.
+- Initial Render smoke — FAIL: auth/history/usage passed; valid M4A upload hit the
   600-second client read timeout. Temporary account cleanup succeeded.
   Log: `/private/tmp/mirra-beta-valid-smoke.log`. Health remained responsive.
-  Stage logging is prepared to isolate the production stall; its cause is not
-  established yet.
+  Later stage logs and build-time compilation isolated and improved the first
+  decoding delay, as recorded above.
 - Earlier `/private/tmp/mirra-beta-synthetic.m4a` had zero audio frames because
   speech generation was sandboxed. That run also timed out and cleaned up,
   but is invalid evidence for a speech-processing acceptance test.
