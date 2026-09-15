@@ -51,6 +51,13 @@ build variables; `npm run export:ios:production` clears Metro's cache, which can
 otherwise preserve a previous development endpoint in an export.
 Native projects remain checked in; restore SDK 57 pods with `pod install`.
 
+Render's small service instance must not compile Librosa/Numba on the first
+recording. After `uv sync`, build with
+`NUMBA_CPU_NAME=generic uv run python -m scripts.warm_audio`; use the same
+`NUMBA_CPU_NAME=generic` prefix on the Uvicorn start command so the compiled
+cache is portable between Render's build and runtime CPUs. The warm-up uses
+synthetic samples and checks the existing resampling/pitch functions.
+
 ### Audio Pipeline (the core product)
 
 All audio capture happens on-device via `expo-audio` (`useRecordAudio.ts`), encoded as `.m4a` (`.webm` on web) — not WAV; no streaming or on-device VAD. On stop, the app saves the file to its per-account device queue before uploading to `POST /sessions` when connected and AI consent is active. The backend accepts several container formats (`SUPPORTED_AUDIO_TYPES` in `main.py`: aac, mp4/m4a, mpeg, ogg, wav, webm) and decodes with `soundfile`, falling back to `librosa.load` for formats it can't parse (`coordinator.py`). The backend runs a synchronous pipeline in order:

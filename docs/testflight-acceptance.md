@@ -38,7 +38,11 @@ Run from `app/`:
   so this proves dependency resolution/integration, not native compilation.
 - EAS Simulator build — PASS, finished 2026-09-15 18:54 UTC:
   [59076232-fd8c-4f0c-800f-bffc631d4bc3](https://expo.dev/accounts/jjiang25/projects/mirra/builds/59076232-fd8c-4f0c-800f-bffc631d4bc3).
-  This proves native compilation; it is not a signed device/TestFlight build.
+  Downloaded artifact inspection confirms `com.mirra.app`, version 1.0.0 (1),
+  minimum iOS 16.4, audio background mode, and microphone permission copy.
+  Its actual `main.jsbundle` contains the Render URL and no old LAN URL.
+  This proves native compilation/configuration; it is not a signed
+  device/TestFlight build or a launch check.
 
 Run from `backend/`:
 
@@ -66,6 +70,37 @@ Live deployment `dep-dakboh9srm7s73bt5ki0` serves commit
 Current instance is Free and sleeps when inactive. Cold-start behavior needs
 device validation. No paid service upgrade has been made.
 
+Diagnostic deploy `dep-dakpf615efls73d5h5t0` was started at 19:08 UTC from
+independently reviewed commit `c4bb4591f86c5e81379978b4fe011c95d0c3c362`.
+It became live at 19:12:56 UTC. The next synthetic request completed usage and
+settings reads, then stalled at `Audio pipeline: decoding` from 19:13:33 UTC.
+The client was interrupted after several minutes; verified temporary-account
+cleanup succeeded. An isolated Python 3.14.3 decode completed locally in 30.8
+seconds, with a timed stack trace showing Numba compilation during the first
+call. This is a lead, not yet a confirmed explanation of the Render stall.
+Render's specific-commit deploy disables auto-deploy; restore the original
+setting once the tested release is integrated into `main`.
+[Draft PR #12](https://github.com/jonathanj502/mirra/pull/12) tracks the changes.
+
+Temporary diagnostic operation: the Render start command was changed to start
+Uvicorn through Python with `faulthandler.dump_traceback_later(60, repeat=True)`.
+The restart event was accepted, but new startup/stack logs were not observed.
+Replace this temporary command with the normal Uvicorn command below for the
+next build. The diagnostic prints code locations, not local variables.
+
+At 19:22:14 UTC the original decoder advanced to Librosa's audioread fallback,
+8 minutes 41 seconds after entering decode. Candidate fix: precompile the
+existing audio helpers during build using `scripts.warm_audio`. Local Python
+3.14 experiment passed pitch verification and took 6.98 seconds with a new
+generic CPU cache, then 1.01 seconds in a fresh process reusing that cache.
+Production effectiveness remains unverified until the next live smoke passes.
+
+Build command for the candidate:
+`pip install uv && uv sync && NUMBA_CPU_NAME=generic uv run python -m scripts.warm_audio`
+
+Start command for the candidate:
+`NUMBA_CPU_NAME=generic uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+
 The live smoke command is `python -m scripts.smoke_beta --url
 https://mirra-backend-wp2b.onrender.com --audio /private/tmp/mirra-beta-speech.m4a`
 from `backend/`. It checks replay/usage/history/Reflect and cleans up its temporary
@@ -81,6 +116,8 @@ Live service evidence on 2026-09-15:
   Supabase auth, M4A processing (10.8 seconds), persistence, replay with exactly
   one usage charge, history/detail, real Reflect reply, deletion, and cleanup.
   Log: `/private/tmp/mirra-local-http-smoke.log`.
+  Repeated after the cleanup security fix: PASS, processing 9.7 seconds;
+  `/private/tmp/mirra-local-http-smoke-verified-cleanup.log`.
 - Render smoke — FAIL: auth/history/usage passed; valid M4A upload hit the
   600-second client read timeout. Temporary account cleanup succeeded.
   Log: `/private/tmp/mirra-beta-valid-smoke.log`. Health remained responsive.
