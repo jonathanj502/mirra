@@ -15,6 +15,7 @@ Updated September 15, 2026. **Prelaunch; not approved for public app distributio
 
 ## Verified evidence
 
+- September 15 website redesign: original forest-green/ivory design, illustrated app preview, keyboard-accessible Record/Debrief/Reflect tabs, responsive navigation and FAQ. References reviewed: [Linear](https://linear.app/), [Granola](https://www.granola.ai/), [Willow](https://willowvoice.com/), [Touchy](https://touchyapp.com/) and [Apple](https://www.apple.com/airpods-pro/). Four website tests cover preview interactions, menu behavior, local links/assets/anchors and deletion protections. Browser checks cover 320, 393, 768, 1024 and 1440 pixel viewports. Demo content is explicitly illustrative; store links remain unavailable until real listings exist.
 - September 15 removal checks: TypeScript, 24 app tests (including upstream consent/queue/Reflect regressions), 135 backend tests, and 3 website tests pass. The upstream consent helper and authentication screen match `upstream/main` at `f628b73`; no hosted database mutation was performed.
 
 The native-build and published-website evidence below predates the September 15 removal of duplicate privacy/onboarding controls. The saved iOS sign-in screenshot shows the superseded email-link screen; it is historical evidence, not a screenshot of the current onboarding.
