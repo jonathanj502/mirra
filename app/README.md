@@ -13,8 +13,8 @@ npm install
 npx expo start          # then press i (iOS), a (Android), or scan in Expo Go
 ```
 
-> Fonts (Instrument Serif + Inter) are fetched from `@expo-google-fonts` at
-> first launch — the splash holds until they load.
+> Fonts (Instrument Serif + Inter) are bundled from `@expo-google-fonts` — the
+> splash holds until the local font assets load.
 
 ## Screens
 
@@ -88,9 +88,10 @@ failed upload retry, and file import on a real device.
 
 Native projects are maintained in Git. Their startup/build templates have been
 updated for SDK 57, preserving app identifiers and custom native files. A native
-iOS build requires Xcode 26.4 or later and iOS 16.4 or later. Run `pod update`
-from `ios/` before building to regenerate the SDK 54 Podfile.lock/installed pods.
-Native compilation has not been verified on the current Mac (full Xcode is absent).
+iOS build requires Xcode 26.4 or later and iOS 16.4 or later. The checked-in
+Podfile.lock now matches SDK 57; use `pod install` from `ios/` to restore it.
+Full Xcode is absent on the current Mac. Native build evidence from EAS is tracked
+in the acceptance ledger.
 Do not run `expo prebuild` blindly: SDK 57 clears native folders by default.
 If applying config plugins to existing native projects, use `--no-clean` and
 review the diff for custom extensions. The Expo Go build does not exercise those
@@ -98,3 +99,34 @@ extensions or confirm standalone background recording behavior.
 
 Checks: `npm run typecheck`, `node --test tests/*.test.mjs`,
 `npx expo install --check`, and `npx expo export --platform all`.
+
+## TestFlight beta
+
+Track release and physical-device evidence in
+[`docs/testflight-acceptance.md`](../docs/testflight-acceptance.md).
+EAS project: [`@jjiang25/mirra`](https://expo.dev/accounts/jjiang25/projects/mirra).
+
+The `production` EAS environment must contain these public build-time values:
+
+- `EXPO_PUBLIC_MIRRA_BACKEND_URL=https://mirra-backend-wp2b.onrender.com`
+- `EXPO_PUBLIC_SUPABASE_URL` for the same Supabase project as the backend.
+- `EXPO_PUBLIC_SUPABASE_ANON_KEY` (publishable/anon only, never a server key).
+
+For local release exports, put them in ignored `.env.production.local`. Run:
+
+```sh
+npm run check:production
+npm run export:ios:production
+npx eas-cli build --platform ios --profile production
+```
+
+The EAS post-install hook rejects missing configuration, HTTP/LAN endpoints,
+and privileged Supabase keys. The export command clears Metro's cache so an
+earlier development URL cannot remain in a reused bundle. Check live backend
+connectivity separately; config validation does not prove a working service.
+
+The `simulator` profile checks native compilation without Apple signing while
+credentials are being arranged. Only a signed `production` build submitted to
+App Store Connect can satisfy the TestFlight install gate. After a successful
+production build, submit that specific build with `eas submit --platform ios
+--profile production --id BUILD_ID` and complete the recorded device checks.
