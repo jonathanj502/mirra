@@ -54,7 +54,9 @@ Run from `backend/`:
 
 Device: **iPhone 13 / iOS 26.6.2**, reported by the user via iMessage on 2026-09-15.
 Apple membership/team: **unverified**. The user has a personal Apple Account;
-individual versus organization enrollment is being clarified before purchase.
+they confirmed Mirra is currently a personal project with company ambitions.
+Individual enrollment is recommended for the current beta; enrollment/payment
+and signing remain pending.
 Session-only coordination: questions sent to the user's own number ending 3399;
 replies are checked through Messages. No ongoing messaging automation is set up.
 
@@ -122,9 +124,9 @@ that saved environment to the same reviewed commit and became live at
 19:48:10 UTC. Build warm-up passed in 12.1 seconds.
 
 Retest with the updated key: synthetic 10.103-second M4A processing passed in
-46.5 seconds, including speech transcription, coaching, persistence, replay
-returning the same debrief with one usage charge, history/detail reads, and a
-real Reflect model reply. Conversation deletion returned 204 and empty history.
+46.5 seconds, including speech transcription, coaching, and persistence. Replay
+returned the same debrief with one usage charge; history/detail reads and a
+real Reflect model reply also passed. Conversation deletion returned 204 and empty history.
 The final usage read returned 502; temporary-account cleanup passed. Render's
 Events page confirmed at 19:53 UTC: instance `xz6ls` ran out of memory, using
 over 512 MB. It recovered at 19:54 UTC. This run is a partial pass, not a stable
