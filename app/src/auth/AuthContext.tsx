@@ -5,7 +5,7 @@ import * as QueryParams from 'expo-auth-session/build/QueryParams';
 import * as WebBrowser from 'expo-web-browser';
 import { Session, User } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { usernameSignIn } from '@/api/auth';
+import { usernameSignIn, usernameSignUp } from '@/api/auth';
 import { authStorageKey, supabase } from '@/api/supabase';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -17,6 +17,7 @@ interface AuthContextValue {
   user: User | null;
   accessToken: string | null;
   signInWithPassword: (username: string, password: string) => Promise<void>;
+  signUpWithPassword: (username: string, password: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   sendMagicLink: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -133,6 +134,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (error) throw error;
   }, []);
 
+  const signUpWithPassword = useCallback(async (username: string, password: string) => {
+    const session = await usernameSignUp(username, password);
+    const { error } = await supabase.auth.setSession({
+      access_token: session.access_token,
+      refresh_token: session.refresh_token,
+    });
+    if (error) throw error;
+  }, []);
+
   const signInWithGoogle = useCallback(async () => {
     const redirectTo = authRedirectUrl();
     const { data, error } = await supabase.auth.signInWithOAuth({
@@ -165,11 +175,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user: session?.user ?? null,
       accessToken: session?.access_token ?? null,
       signInWithPassword,
+      signUpWithPassword,
       signInWithGoogle,
       sendMagicLink,
       signOut,
     }),
-    [initializing, authError, session, signInWithPassword, signInWithGoogle, sendMagicLink, signOut]
+    [initializing, authError, session, signInWithPassword, signUpWithPassword, signInWithGoogle, sendMagicLink, signOut]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

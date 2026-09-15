@@ -7,21 +7,10 @@ from fastapi.testclient import TestClient
 from app.auth import verify_token
 from app.db import get_db
 from app.main import app
-from app.models.settings import UserSettings
-from app.privacy import CONSENT_VERSION, require_ai_consent
 
 
 def teardown_function():
     app.dependency_overrides.clear()
-
-
-def test_ai_requires_current_explicit_consent():
-    for version in (None, "", "old-policy"):
-        with pytest.raises(HTTPException) as error:
-            require_ai_consent(UserSettings(ai_consent_version=version))
-        assert error.value.status_code == 403
-    require_ai_consent(UserSettings(ai_consent_version=CONSENT_VERSION))
-    assert UserSettings().save_transcripts is False
 
 
 def test_account_deletion_uses_authenticated_owner_and_keeps_errors_visible():
@@ -35,17 +24,6 @@ def test_account_deletion_uses_authenticated_owner_and_keeps_errors_visible():
     db.auth.admin.delete_user.assert_called_once_with('owner')
     db.auth.admin.delete_user.side_effect = RuntimeError('database unavailable')
     assert client.delete('/account').status_code == 500
-
-
-def test_session_without_consent_never_sends_audio_to_ai_and_refunds_usage():
-    app.dependency_overrides[get_db] = lambda: MagicMock()
-    app.dependency_overrides[verify_token] = lambda: 'owner'
-    with patch('app.main.check_and_increment', return_value='2026-09'), patch('app.main.release') as refund, \
-         patch('app.main.fetch_user_settings', return_value=UserSettings()), patch('app.main.coordinator.run') as process:
-        response = TestClient(app).post('/sessions', files={'audio': ('test.wav', b'audio', 'audio/wav')})
-    assert response.status_code == 403
-    process.assert_not_called()
-    assert refund.call_args.args[1:] == ('owner', '2026-09')
 
 
 def test_reflect_rejects_system_messages_and_oversized_context():

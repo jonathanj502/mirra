@@ -24,11 +24,52 @@ def _response(status_code: int, body: dict | None = None) -> MagicMock:
     return response
 
 
-def test_legacy_sign_up_is_closed_without_creating_unverifiable_accounts():
+def test_username_sign_up_creates_confirmed_internal_user_and_returns_session():
     with patch("app.main.httpx.post") as post:
-        r = TestClient(app).post("/auth/username/sign-up", json={"username": "maya", "password": "secret123"})
-    assert r.status_code == 410
-    post.assert_not_called()
+        post.side_effect = [_response(200, {"id": "user-1"}), _response(200, SESSION)]
+
+        r = TestClient(app).post(
+            "/auth/username/sign-up",
+            json={"username": " Maya_1 ", "password": "secret123"},
+        )
+
+    assert r.status_code == 200
+    assert r.json()["access_token"] == "access-token"
+    create_call = post.call_args_list[0]
+    assert create_call.kwargs["json"] == {
+        "email": "maya_1@users.mirra.local",
+        "password": "secret123",
+        "email_confirm": True,
+        "user_metadata": {"username": "maya_1"},
+    }
+
+
+def test_username_sign_up_rejects_invalid_username():
+    r = TestClient(app).post(
+        "/auth/username/sign-up",
+        json={"username": "bad-name", "password": "secret123"},
+    )
+    assert r.status_code == 422
+
+
+def test_username_sign_up_reports_missing_service_role_key():
+    with patch("app.main.httpx.post", return_value=_response(403)):
+        r = TestClient(app).post(
+            "/auth/username/sign-up",
+            json={"username": "maya", "password": "secret123"},
+        )
+    assert r.status_code == 503
+    assert r.json()["detail"] == "Supabase service-role key is required for username sign-up"
+
+
+def test_username_sign_up_reports_taken_username():
+    with patch("app.main.httpx.post", return_value=_response(422)):
+        r = TestClient(app).post(
+            "/auth/username/sign-up",
+            json={"username": "maya", "password": "secret123"},
+        )
+    assert r.status_code == 409
+    assert r.json()["detail"] == "Username is already taken"
 
 
 def test_username_sign_in_exchanges_internal_email_for_session():

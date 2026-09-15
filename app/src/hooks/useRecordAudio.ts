@@ -5,8 +5,7 @@ import { friendlyErrorMessage } from '@/api/http';
 import { useAuth } from '@/auth/AuthContext';
 import { PendingRecording, recordingId } from '@/storage/pendingRecordings';
 import { usePendingRecordings } from './usePendingRecordings';
-import { usePrivacy } from '@/auth/PrivacyContext';
-import { confirmRecordingPermission } from '@/utils/confirm';
+import { requestAIConsent } from '@/privacy/aiConsent';
 
 // Android needs its native foreground service before opening the microphone.
 let askedForRecordingNotification = false;
@@ -40,7 +39,6 @@ function recordingMimeType() {
 
 function useRecorderState() {
   const { user } = useAuth();
-  const { canProcess, reviewConsent } = usePrivacy();
   const queue = usePendingRecordings();
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordingMs, setRecordingMs] = useState(0);
@@ -58,7 +56,6 @@ function useRecorderState() {
 
   const startRecording = async () => {
     if (operationInProgress.current || recording || unsaved.current) return;
-    if (!canProcess) { reviewConsent(); return; }
     setError(null);
     if (!user) {
       setError('Please sign in before recording a conversation.');
@@ -68,7 +65,7 @@ function useRecorderState() {
     operationInProgress.current = true;
     setStarting(true);
     try {
-      if (!await confirmRecordingPermission()) return;
+      if (!await requestAIConsent(user.id, true)) return;
       const permission = await Audio.requestPermissionsAsync();
       if (!permission.granted) {
         setError('Allow microphone access to record a conversation.');

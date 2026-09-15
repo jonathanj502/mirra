@@ -7,8 +7,7 @@ import { recordingId } from '@/storage/pendingRecordings';
 import { useAuth } from '@/auth/AuthContext';
 import { DebriefCard } from '@/models/debrief';
 import { titleFromFilename } from '@/utils/timeFormat';
-import { usePrivacy } from '@/auth/PrivacyContext';
-import { confirmRecordingPermission } from '@/utils/confirm';
+import { requestAIConsent } from '@/privacy/aiConsent';
 
 const MAX_BYTES = 25 * 1024 * 1024;
 const AUDIO_TYPES = [
@@ -49,14 +48,12 @@ function mimeTypeFor(name: string, provided?: string | null): string {
 export function useImportAudio() {
   const { user } = useAuth();
   const { enqueue } = useRecordAudio();
-  const { canProcess, reviewConsent } = usePrivacy();
   const selecting = useRef(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const importAudio = useCallback(async (): Promise<DebriefCard | null> => {
     if (selecting.current) return null;
-    if (!canProcess) { reviewConsent(); return null; }
     selecting.current = true;
     setImporting(true);
     setError(null);
@@ -66,6 +63,7 @@ export function useImportAudio() {
         return null;
       }
 
+      if (!await requestAIConsent(user.id)) return null;
       const result = await DocumentPicker.getDocumentAsync({
         type: AUDIO_TYPES,
         copyToCacheDirectory: true,
@@ -73,7 +71,6 @@ export function useImportAudio() {
       });
 
       if (result.canceled || !result.assets?.length) return null;
-      if (!await confirmRecordingPermission()) return null;
 
       const asset = result.assets[0];
       const size = asset.size ?? 0;
@@ -101,7 +98,7 @@ export function useImportAudio() {
       selecting.current = false;
       setImporting(false);
     }
-  }, [user, enqueue, canProcess, reviewConsent]);
+  }, [user, enqueue]);
 
   return { importAudio, importing, error };
 }

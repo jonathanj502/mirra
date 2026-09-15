@@ -126,7 +126,7 @@ export function HomeScreen() {
   const { listItems, loading, error, setDebriefs, refresh } = useDebriefs();
   const { importAudio, importing, error: importError } = useImportAudio();
   const { isRecording, isSavingRecording, isStartingRecording, hasUnsavedRecording, recordingSeconds,
-    pendingRecordings, uploadingId, latestDebrief, queueError, discard,
+    pendingRecordings, uploadingId, latestDebrief, queueError, needsAIConsent, resumeUploads, discard,
     toggleRecording, error: recordingError } = useRecordAudio();
   const busy = importing || isRecording || isSavingRecording || isStartingRecording || hasUnsavedRecording;
   useEffect(() => {
@@ -187,6 +187,7 @@ export function HomeScreen() {
         <RecordButton size={172} recording={isRecording} loading={isSavingRecording || isStartingRecording}
           disabled={importing} onPress={handleRecord} />
         <Body style={styles.heroHint}>{heroHint}</Body>
+        <Body style={styles.consentHint}>Get everyone’s consent to recording and AI analysis.</Body>
         {recordingError ? <Body accessibilityRole="alert" style={styles.audioError}>{recordingError}</Body> : null}
         {importError ? <Body accessibilityRole="alert" style={styles.audioError}>{importError}</Body> : null}
         {queueError ? <Body accessibilityRole="alert" style={styles.audioError}>{queueError}</Body> : null}
@@ -194,8 +195,14 @@ export function HomeScreen() {
           <View style={styles.pending}>
             <Body style={styles.pendingHint} accessibilityLiveRegion="polite">
               {pendingRecordings.length} {pendingRecordings.length === 1 ? 'recording' : 'recordings'} saved on this device.
-              {'\n'}Uploads automatically when Mirra is open and connected. You can keep recording.
+              {'\n'}{needsAIConsent ? 'AI analysis is paused until you allow sharing with OpenAI.'
+                : 'Uploads automatically when Mirra is open and connected. You can keep recording.'}
             </Body>
+            {needsAIConsent ? (
+              <Pressable accessibilityRole="button" onPress={resumeUploads} style={styles.recoveryButton}>
+                <Body>Review privacy choice</Body>
+              </Pressable>
+            ) : null}
             {pendingRecordings.map(recording => (
               <View key={recording.id} style={styles.pendingItem}>
                 <Body style={styles.pendingHint}>
@@ -259,6 +266,7 @@ const styles = StyleSheet.create({
   recordBtnDisabled: { opacity: 0.72 },
   micIcon: { zIndex: 2, elevation: 2 },
   stopIcon: { zIndex: 2, width: 42, height: 42, borderRadius: 12, backgroundColor: '#fff' },
+  consentHint: { fontSize: 12, lineHeight: 18, color: colors.ink2, textAlign: 'center', maxWidth: 280 },
   heroHint: { fontSize: 12.5, color: colors.muted, letterSpacing: 0.7, textTransform: 'uppercase', fontFamily: fonts.bodyMedium },
   recentSection: { paddingHorizontal: 24, paddingTop: 20 },
   recentHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4 },

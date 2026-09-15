@@ -43,8 +43,8 @@ function hooks() {
   };
 }
 
-const privacy = { usePrivacy: () => ({ canProcess: true, reviewConsent() {}, withdrawLocally: async () => {} }) };
-const confirmation = { confirmRecordingPermission: async () => true, confirmAction: async () => true };
+const privacy = { requestAIConsent: async () => true, withdrawAIConsent: async () => {} };
+const confirmation = { confirmAction: async () => true };
 
 const auth = { useAuth: () => ({ accessToken: 'test-token' }) };
 const http = load('api/http.ts', { '@/config/env': { env: { backendUrl: 'http://test.invalid' } } });
@@ -104,7 +104,7 @@ test('recording saves before upload, allows another offline clip, and retains th
     react: state.react, 'react-native': { Platform: { OS: 'web' }, NativeModules: {} },
     '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' }, accessToken: null }) }, '@/api/http': http,
     '@/storage/pendingRecordings': { recordingId: () => `recording-${starts}` },
-    '@/auth/PrivacyContext': privacy, '@/utils/confirm': confirmation,
+    '@/privacy/aiConsent': privacy, '@/utils/confirm': confirmation,
     './usePendingRecordings': { usePendingRecordings: () => ({ async enqueue(recording) {
       saved.push(recording);
       if (diskFull) throw new Error('Storage full');
@@ -168,7 +168,7 @@ test('Android offers recording notifications once per launch and denial does not
       } } },
     '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' } }) }, '@/api/http': http,
     '@/storage/pendingRecordings': { recordingId: () => 'recording' },
-    '@/auth/PrivacyContext': privacy, '@/utils/confirm': confirmation,
+    '@/privacy/aiConsent': privacy, '@/utils/confirm': confirmation,
     './usePendingRecordings': { usePendingRecordings: () => ({ async enqueue() {} }) },
     'expo-av': { InterruptionModeAndroid: {}, InterruptionModeIOS: {}, Audio: {
       requestPermissionsAsync: async () => ({ granted: true }), setAudioModeAsync: async () => {},
@@ -194,7 +194,7 @@ test('import failures are returned as visible error state on web', async () => {
   const { useImportAudio } = load('hooks/useImportAudio.ts', {
     react: state.react, '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' } }) }, '@/api/http': http,
     '@/hooks/useRecordAudio': { useRecordAudio: () => ({}) }, '@/storage/pendingRecordings': {}, '@/utils/timeFormat': {}, 'expo-av': {},
-    '@/auth/PrivacyContext': privacy, '@/utils/confirm': confirmation,
+    '@/privacy/aiConsent': privacy, '@/utils/confirm': confirmation,
     'expo-document-picker': { async getDocumentAsync() { throw new Error('Could not open audio file'); } },
   });
   assert.equal(await state.render(useImportAudio).importAudio(), null);
@@ -202,17 +202,15 @@ test('import failures are returned as visible error state on web', async () => {
   assert.equal(state.render(useImportAudio).importing, false);
 });
 
-test('import saves an account-owned copy to the offline queue and requires AI and participant consent', async () => {
+test('import saves an account-owned copy to the offline queue and uses upstream AI consent', async () => {
   const state = hooks();
-  let canProcess = false;
-  let permission = false;
+  let allowed = false;
   let asked = 0;
   let picks = 0;
   const saved = [];
   const { useImportAudio } = load('hooks/useImportAudio.ts', {
     react: state.react, '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' } }) }, '@/api/http': http,
-    '@/auth/PrivacyContext': { usePrivacy: () => ({ canProcess, reviewConsent: () => asked++ }) },
-    '@/utils/confirm': { confirmRecordingPermission: async () => permission },
+    '@/privacy/aiConsent': { requestAIConsent: async () => { asked++; return allowed; } },
     '@/storage/pendingRecordings': { recordingId: () => 'stable-id' },
     '@/hooks/useRecordAudio': { useRecordAudio: () => ({ enqueue: async row => saved.push(row) }) },
     '@/utils/timeFormat': { titleFromFilename: () => 'Imported conversation' },
@@ -222,10 +220,8 @@ test('import saves an account-owned copy to the offline queue and requires AI an
   const render = () => state.render(useImportAudio);
   await render().importAudio();
   assert.equal(asked, 1); assert.equal(picks, 0);
-  canProcess = true;
-  await render().importAudio();
   assert.equal(saved.length, 0);
-  permission = true;
+  allowed = true;
   const hook = render();
   await Promise.all([hook.importAudio(), hook.importAudio()]);
   assert.equal(saved.length, 1);
@@ -302,7 +298,7 @@ test('profile loads account data without a plan request', () => {
     '@/components/ui': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
     '@/theme/tokens': { colors: {}, fonts: {} }, '@/api/client': {}, '@/auth/AuthContext': auth,
     '@/utils/exportData': {}, '@/utils/confirm': confirmation, '@/storage/pendingRecordings': {}, '@/config/legal': {},
-    '@/auth/PrivacyContext': privacy, '@/hooks/useRecordAudio': { useRecordAudio: () => ({}) },
+    '@/privacy/aiConsent': privacy, '@/hooks/useRecordAudio': { useRecordAudio: () => ({}) },
     '@/hooks/useProfileSummary': { useProfileSummary: () => summaryState },
     '@/hooks/useUserSettings': { useUserSettings: () => ({ settings: {}, loadError: 'Offline' }) },
   });
@@ -339,10 +335,10 @@ test('account actions save audio before sign-out and clear local data only after
     '@/api/client': { deleteAccount: async token => { assert.equal(token, 'owner-token'); events.push('server-delete'); if (!deleteSucceeds) throw Error('Server unavailable'); } },
     '@/utils/confirm': { confirmAction: async () => true },
     '@/storage/pendingRecordings': { clearPendingRecordings: async user => { assert.equal(user, 'owner'); events.push('clear-local'); } },
-    '@/auth/PrivacyContext': { usePrivacy: () => ({ canProcess: true, withdrawLocally: async () => events.push('clear-consent') }) },
+    '@/privacy/aiConsent': { withdrawAIConsent: async () => events.push('clear-consent') },
     '@/hooks/useRecordAudio': { useRecordAudio: () => ({ isRecording: recording,
       stopRecording: async () => { events.push('save-recording'); return canSave; },
-      pauseUploads: () => events.push('pause'), resumeUploads: () => events.push('resume') }) },
+      pauseUploads: () => events.push('pause'), unpauseUploads: () => events.push('resume') }) },
     '@/hooks/useProfileSummary': { useProfileSummary: () => ({ summary: null }) },
     '@/hooks/useUserSettings': { useUserSettings: () => ({ settings: {} }) },
   });
@@ -485,4 +481,126 @@ test('conversation deletion confirms on web and native, retains failures, and na
   // A missing/deleted ID must never silently select another conversation to delete.
   id = 'missing-conversation';
   assert.equal(deleteButton(render()), undefined);
+});
+
+test('AI consent requires explicit approval, survives restart per account, and can be withdrawn', async () => {
+  const saved = new Map();
+  const dialogs = [];
+  let storageFails = false;
+  const storage = {
+    async getItem(key) { return saved.get(key) ?? null; },
+    async setItem(key, value) {
+      if (storageFails) throw new Error('Storage full');
+      saved.set(key, value);
+    },
+    async removeItem(key) { saved.delete(key); },
+  };
+  const dependencies = {
+    '@react-native-async-storage/async-storage': storage,
+    'react-native': { Platform: { OS: 'ios' }, Alert: { alert(title, message, buttons, options) {
+      dialogs.push({ title, message, buttons, options });
+    } } },
+  };
+  const consent = load('privacy/aiConsent.ts', dependencies);
+  const denied = consent.requestAIConsent('alice', true);
+  const duplicate = consent.requestAIConsent('alice', true);
+  await flush();
+  assert.equal(dialogs.length, 1);
+  assert.match(dialogs[0].message, /We don’t sell your data/);
+  assert.match(dialogs[0].message, /audio, transcripts, metrics, and chats with OpenAI/);
+  assert.match(dialogs[0].message, /Recording continues when your screen locks/);
+  dialogs[0].options.onDismiss();
+  assert.deepEqual(await Promise.all([denied, duplicate]), [false, false]);
+  assert.equal(saved.size, 0);
+  assert.equal(await consent.hasAIConsent('alice'), false);
+
+  const accepted = consent.requestAIConsent('alice', true);
+  await flush();
+  dialogs.at(-1).buttons.find(button => button.text === 'Allow').onPress();
+  assert.equal(await accepted, true);
+  assert.equal(await consent.hasAIConsent('alice'), true);
+  const restarted = load('privacy/aiConsent.ts', dependencies);
+  assert.equal(await restarted.requestAIConsent('alice', true), true);
+  assert.equal(dialogs.length, 2);
+
+  const bob = restarted.requestAIConsent('bob');
+  await flush();
+  assert.doesNotMatch(dialogs.at(-1).message, /screen locks/);
+  dialogs.at(-1).buttons[1].onPress();
+  assert.equal(await bob, true);
+  const firstRecording = restarted.requestAIConsent('bob', true);
+  await flush();
+  assert.equal(dialogs.at(-1).title, 'Background recording');
+  dialogs.at(-1).buttons[0].onPress();
+  assert.equal(await firstRecording, false);
+  assert.equal(await restarted.requestAIConsent('bob'), true);
+
+  await restarted.withdrawAIConsent('alice');
+  assert.equal(await restarted.hasAIConsent('alice'), false);
+  const revoked = restarted.requestAIConsent('alice');
+  await flush();
+  assert.equal(dialogs.at(-1).title, 'Privacy & AI');
+  dialogs.at(-1).buttons[0].onPress();
+  assert.equal(await revoked, false);
+  assert.equal(await restarted.requestAIConsent(), false);
+
+  storageFails = true;
+  const failed = assert.rejects(restarted.requestAIConsent('alice'), /Could not save your privacy choice/);
+  await flush();
+  dialogs.at(-1).buttons[1].onPress();
+  await failed;
+  assert.equal(saved.size, 1); // Only Bob's earlier approval remains.
+
+  storageFails = false;
+  let allowWeb = false;
+  const web = load('privacy/aiConsent.ts', {
+    ...dependencies, 'react-native': { Platform: { OS: 'web' } },
+  }, { confirm(message) { assert.match(message, /Privacy & AI/); return allowWeb; } });
+  assert.equal(await web.requestAIConsent('web-user'), false);
+  allowWeb = true;
+  assert.equal(await web.requestAIConsent('web-user'), true);
+});
+
+
+test('Reflect preserves the draft and sends no message or fallback when consent is declined or unavailable', async () => {
+  const state = hooks();
+  let choice = false;
+  const sent = [];
+  const { ReflectScreen } = load('screens/ReflectScreen.tsx', {
+    react: state.react,
+    'react-native': { TextInput: 'TextInput', Platform: { OS: 'ios' }, StyleSheet: { create: styles => styles } },
+    'react-native-safe-area-context': { useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) },
+    'expo-router': { useRouter: () => ({}), useLocalSearchParams: () => ({}) },
+    'react-native-svg': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
+    '@/theme/tokens': { colors: {}, fonts: {} }, '@/auth/AuthContext': auth, '@/hooks/useDebriefs': {},
+    '@/components/ReportContent': {}, '@/api/http': http,
+    '@/data/reflect': { SEED_MESSAGES: [], STARTER_PROMPTS: [], CANNED_REPLIES: ['fallback'] },
+    '@/privacy/aiConsent': { async requestAIConsent() { if (choice instanceof Error) throw choice; return choice; } },
+    '@/api/client': { async sendReflection(_, payload) { sent.push(payload); return { usedModel: true, reply: 'reply' }; } },
+  });
+  function findInput(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'TextInput') return node;
+    for (const child of React.Children.toArray(node.props?.children)) {
+      const input = findInput(child);
+      if (input) return input;
+    }
+  }
+  const render = () => state.render(ReflectScreen);
+  findInput(render()).props.onChangeText('Keep this draft');
+  await findInput(render()).props.onSubmitEditing();
+  assert.equal(sent.length, 0);
+  assert.equal(findInput(render()).props.value, 'Keep this draft');
+  assert.doesNotMatch(JSON.stringify(render()), /fallback/);
+  choice = new Error('Privacy choice unavailable');
+  await findInput(render()).props.onSubmitEditing();
+  assert.equal(sent.length, 0);
+  assert.equal(findInput(render()).props.value, 'Keep this draft');
+  assert.match(JSON.stringify(render()), /Privacy choice unavailable/);
+  choice = true;
+  await findInput(render()).props.onSubmitEditing();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].prompt, 'Keep this draft');
+  assert.deepEqual(sent[0].messages, []);
+  assert.equal(findInput(render()).props.value, '');
 });

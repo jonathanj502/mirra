@@ -1,5 +1,5 @@
 // You · profile — identity, stats, settings.
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Linking, Modal, Pressable, ScrollView, Switch, View, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -9,12 +9,12 @@ import { Card } from '@/components/ui';
 import { Body, Serif, SerifItalic, Eyebrow } from '@/components/Typography';
 import { Icon } from '@/components/Icon';
 import { colors, fonts } from '@/theme/tokens';
-import { deleteAccount, exportAccountData, updateUserSettings } from '@/api/client';
+import { deleteAccount, exportAccountData } from '@/api/client';
 import { saveJsonDownload } from '@/utils/exportData';
 import { confirmAction } from '@/utils/confirm';
 import { clearPendingRecordings } from '@/storage/pendingRecordings';
 import { PRIVACY_URL, TERMS_URL, SUPPORT_URL } from '@/config/legal';
-import { usePrivacy } from '@/auth/PrivacyContext';
+import { AI_DISCLAIMER, withdrawAIConsent } from '@/privacy/aiConsent';
 import { useRecordAudio } from '@/hooks/useRecordAudio';
 import { useAuth } from '@/auth/AuthContext';
 import { useProfileSummary } from '@/hooks/useProfileSummary';
@@ -215,6 +215,10 @@ function SettingsSheet({
   onChange: (patch: Partial<UserSettings>) => void;
 }) {
   const visible = panel !== null;
+  const { user } = useAuth();
+  const [privacyNote, setPrivacyNote] = useState<string | null>(null);
+  const [withdrawing, setWithdrawing] = useState(false);
+  useEffect(() => { setPrivacyNote(null); }, [panel]);
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.sheetScrim}>
@@ -242,20 +246,36 @@ function SettingsSheet({
             <View style={styles.sheetBody}>
               <SwitchRow
                 label="Save transcripts"
-                hint="Keep transcript text with each debrief."
+                hint="Keep future transcripts with each debrief."
                 value={settings.saveTranscripts}
                 onChange={(value) => onChange({ saveTranscripts: value })}
               />
               <SwitchRow
                 label="Use transcript in Reflect"
-                hint="Send saved transcript excerpts to OpenAI with your Reflect messages."
+                hint="Send short excerpts to OpenAI for context."
                 value={settings.includeTranscriptInReflect}
                 onChange={(value) => onChange({ includeTranscriptInReflect: value })}
               />
               <View style={styles.factBox}>
-                <Body style={styles.factTitle}>Audio handling</Body>
-                <Body style={styles.factText}>Audio goes to Mirra and OpenAI for transcription. Our backend deletes temporary audio after processing. OpenAI may retain text requests for abuse monitoring. AI estimates may be wrong; the loudest speaker is assumed to be you.</Body>
+                <Body style={styles.factTitle}>Privacy & AI</Body>
+                <Body style={styles.factText}>{AI_DISCLAIMER}</Body>
               </View>
+              <Pressable accessibilityRole="button" disabled={!user || withdrawing} style={styles.helpAction}
+                onPress={async () => {
+                  if (!user || withdrawing) return;
+                  setWithdrawing(true);
+                  try {
+                    await withdrawAIConsent(user.id);
+                    setPrivacyNote('AI consent withdrawn on this device.');
+                  } catch {
+                    setPrivacyNote('Could not withdraw consent. Please try again.');
+                  } finally {
+                    setWithdrawing(false);
+                  }
+                }}>
+                <Body style={styles.optionLabel}>Withdraw AI consent</Body>
+              </Pressable>
+              {privacyNote ? <Body accessibilityRole="alert" style={styles.factText}>{privacyNote}</Body> : null}
             </View>
           ) : null}
 
@@ -406,8 +426,7 @@ function AccountMenu({
 export function ProfileScreen() {
   const router = useRouter();
   const { user, accessToken, signOut } = useAuth();
-  const { canProcess, reviewConsent, withdrawLocally } = usePrivacy();
-  const { isRecording, hasUnsavedRecording, isSavingRecording, isStartingRecording, stopRecording, pauseUploads, resumeUploads } = useRecordAudio();
+  const { isRecording, hasUnsavedRecording, isSavingRecording, isStartingRecording, stopRecording, pauseUploads, unpauseUploads } = useRecordAudio();
   const { summary, loading: summaryLoading, error: summaryError, refresh: refreshSummary } = useProfileSummary();
   const { settings, loading: settingsLoading, saving: settingsSaving, error: settingsError, loadError: settingsLoadError,
     refresh: refreshSettings, updateSettings } = useUserSettings(accessToken);
@@ -471,19 +490,11 @@ export function ProfileScreen() {
     try {
       await deleteAccount(accessToken);
       await clearPendingRecordings(user.id);
-      await withdrawLocally();
+      await withdrawAIConsent(user.id);
       await signOut();
       setAccountMenuOpen(false);
     } catch (err) { setAccountError(err instanceof Error ? err.message : 'Could not finish account deletion. Please try again.'); }
-    finally { resumeUploads(); setAccountBusy(null); }
-  }
-
-  async function withdrawConsent() {
-    if (!accessToken) return;
-    try {
-      await updateUserSettings(accessToken, { aiConsentVersion: '' });
-      await withdrawLocally();
-    } catch (err) { setAccountError(err instanceof Error ? err.message : 'Could not save your privacy choice.'); }
+    finally { unpauseUploads(); setAccountBusy(null); }
   }
 
   return (
@@ -550,7 +561,6 @@ export function ProfileScreen() {
 
       <View style={{ paddingHorizontal: 24, gap: 8 }}>
         <SettingRow label="Open-source notices" onPress={() => router.push('/licenses')} />
-        <SettingRow label={canProcess ? 'Withdraw AI processing consent' : 'Review AI processing'} hint={canProcess ? 'Stop future uploads and Reflect requests. Saved data stays available.' : 'Required before recording, importing, or using Reflect.'} onPress={() => { if (canProcess) void withdrawConsent(); else reviewConsent(); }} />
         {accountError && !accountMenuOpen ? <Body accessibilityRole="alert">{accountError}</Body> : null}
         {[['Privacy Policy', PRIVACY_URL], ['Terms of Use', TERMS_URL]].map(([label, url]) => <SettingRow key={label} label={label} onPress={() => { void Linking.openURL(url); }} />)}
       </View>

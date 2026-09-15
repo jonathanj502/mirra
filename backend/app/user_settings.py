@@ -24,16 +24,15 @@ def fetch_user_settings(db: Client, user_id: str) -> UserSettings:
 
 
 def save_user_settings(db: Client, user_id: str, payload: UserSettingsUpdate) -> UserSettings:
+    current = fetch_user_settings(db, user_id)
     values = payload.model_dump(exclude_none=True, exclude_unset=True)
-    if "ai_consent_version" in values:
-        values["ai_consent_at"] = datetime.now(timezone.utc).isoformat() if values["ai_consent_version"] else None
+    next_settings = current.model_copy(update=values)
     row = {
         "user_id": user_id,
-        # Update only supplied fields. A concurrent coaching change must never restore withdrawn consent.
-        **values,
+        **next_settings.model_dump(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     result = db.table("user_settings").upsert(row).execute()
     if result and result.data:
         return _settings_from_row(result.data[0])
-    return fetch_user_settings(db, user_id)
+    return next_settings

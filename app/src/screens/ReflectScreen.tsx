@@ -13,7 +13,7 @@ import { ReportContent } from '@/components/ReportContent';
 import { colors, fonts } from '@/theme/tokens';
 import { SEED_MESSAGES, STARTER_PROMPTS, ChatMessage } from '@/data/reflect';
 import { friendlyErrorMessage } from '@/api/http';
-import { usePrivacy } from '@/auth/PrivacyContext';
+import { requestAIConsent } from '@/privacy/aiConsent';
 import { fetchDebrief, sendReflection } from '@/api/client';
 import { useAuth } from '@/auth/AuthContext';
 import { titleForDebrief } from '@/hooks/useDebriefs';
@@ -60,8 +60,8 @@ export function ReflectScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id?: string }>();
-  const { accessToken } = useAuth();
-  const { canProcess, reviewConsent } = usePrivacy();
+  const { accessToken, user } = useAuth();
+  const sending = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>(SEED_MESSAGES);
   const [input, setInput] = useState('');
@@ -95,9 +95,19 @@ export function ReflectScreen() {
 
   const send = async (text?: string) => {
     const msg = (text ?? input).trim();
-    if (!msg || thinking) return;
-    if (!canProcess) { reviewConsent(); return; }
+    if (!msg || thinking || sending.current || !accessToken) return;
+    sending.current = true;
     setError(null);
+    try {
+      if (!await requestAIConsent(user?.id)) {
+        sending.current = false;
+        return;
+      }
+    } catch (err) {
+      setError(friendlyErrorMessage(err, 'Could not save your privacy choice. Please try again.'));
+      sending.current = false;
+      return;
+    }
     setInput('');
     const nextMessages = [...messages, { from: 'you' as const, text: msg }];
     setMessages(nextMessages);
@@ -119,6 +129,7 @@ export function ReflectScreen() {
       setError(friendlyErrorMessage(err, 'Could not get a reply. Your message is ready to send again.'));
     } finally {
       setThinking(false);
+      sending.current = false;
     }
   };
 

@@ -22,7 +22,6 @@ from app.models.debrief import Debrief, SessionResponse
 from app.models.settings import UserSettings, UserSettingsUpdate
 from app.models.report import ContentReportRequest
 from app.reflection import generate_reflection
-from app.privacy import require_ai_consent
 from app.rate_limit import check_reflect_limit, check_request_limit
 from app.pipeline import coordinator
 from app.pipeline.transcription import TranscriptionInputTooLarge
@@ -97,7 +96,6 @@ def ready(db: Client = Depends(get_db)):
     try:
         if not settings.openai_api_key:
             raise ValueError('Missing AI credential')
-        db.table('user_settings').select('ai_consent_version,ai_consent_at').limit(0).execute()
         db.table('debrief_deletions').select('debrief_id').limit(0).execute()
         db.table('content_reports').select('id').limit(0).execute()
     except Exception:
@@ -194,9 +192,36 @@ def _fetch_debrief_row(db: Client, user_id: str, debrief_id: str) -> dict | None
     return enrich_debrief_row(result.data) if result and result.data else None
 
 
+# TODO: sign-up has no real email today (fabricates <username>@users.mirra.local, no
+# verification). Tighten before wider launch: add a required, verified email field so
+# accounts are recoverable and can't be thrown away in one curl call. Decide whether
+# username stays as the login handle or is replaced by email+password outright.
 @app.post("/auth/username/sign-up", response_model=UsernameAuthResponse)
 async def username_sign_up(payload: UsernameAuthRequest):
-    raise HTTPException(status_code=410, detail="Use email sign-up so you can verify and recover your account.")
+    username = _normalize_username(payload.username)
+    email = _username_email(username)
+    response = httpx.post(
+        f"{settings.supabase_url.rstrip('/')}/auth/v1/admin/users",
+        headers={
+            "apikey": settings.supabase_service_role_key,
+            "Authorization": f"Bearer {settings.supabase_service_role_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "email": email,
+            "password": payload.password,
+            "email_confirm": True,
+            "user_metadata": {"username": username},
+        },
+        timeout=15,
+    )
+    if response.status_code in {401, 403}:
+        raise HTTPException(status_code=503, detail="Supabase service-role key is required for username sign-up")
+    if response.status_code == 422:
+        raise HTTPException(status_code=409, detail="Username is already taken")
+    if response.status_code >= 400:
+        raise HTTPException(status_code=502, detail="Could not create account")
+    return await _password_token(email, payload.password)
 
 
 @app.post("/auth/username/sign-in", response_model=UsernameAuthResponse)
@@ -350,7 +375,6 @@ def _process_session(audio, started_at, client_duration_seconds, title, user_id,
     inserting = False
     try:
         user_settings = fetch_user_settings(db, user_id)
-        require_ai_consent(user_settings)
         try:
             result = coordinator.run(audio_bytes, content_type=content_type)
         except TranscriptionInputTooLarge as exc:
@@ -457,7 +481,6 @@ def reflect(
         rows = _fetch_debrief_rows(db, user_id, limit=1)
 
     user_settings = fetch_user_settings(db, user_id)
-    require_ai_consent(user_settings)
     check_reflect_limit(user_id)
     text = generate_reflection(
         rows,

@@ -129,8 +129,6 @@ type RawProfileSummary = {
 };
 
 type RawUserSettings = {
-  ai_consent_version: string | null;
-  ai_consent_at: string | null;
   notifications_enabled: boolean;
   weekly_summary_day: UserSettings['weeklySummaryDay'];
   weekly_summary_time: UserSettings['weeklySummaryTime'];
@@ -293,7 +291,6 @@ function toAccountExport(raw: RawAccountExport): AccountExport {
 
 function toRawUserSettingsPatch(patch: Partial<UserSettings>): Partial<RawUserSettings> {
   const raw: Partial<RawUserSettings> = {};
-  if (patch.aiConsentVersion !== undefined) raw.ai_consent_version = patch.aiConsentVersion;
   if (patch.notificationsEnabled !== undefined) raw.notifications_enabled = patch.notificationsEnabled;
   if (patch.weeklySummaryDay !== undefined) raw.weekly_summary_day = patch.weeklySummaryDay;
   if (patch.weeklySummaryTime !== undefined) raw.weekly_summary_time = patch.weeklySummaryTime;

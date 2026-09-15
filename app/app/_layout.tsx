@@ -18,7 +18,6 @@ import { colors } from '@/theme/tokens';
 import { AuthProvider, useAuth } from '@/auth/AuthContext';
 import { AuthScreen } from '@/screens/AuthScreen';
 import { RecordingProvider } from '@/hooks/useRecordAudio';
-import { PrivacyProvider } from '@/auth/PrivacyContext';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -46,9 +45,9 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <StatusBar style="dark" />
         <AuthProvider>
-          <PrivacyProvider><RecordingProvider>
+          <RecordingProvider>
             <AuthenticatedStack />
-          </RecordingProvider></PrivacyProvider>
+          </RecordingProvider>
         </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

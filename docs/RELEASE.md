@@ -1,12 +1,12 @@
 # Mirra release record
 
-Updated September 14, 2026. **Prelaunch; not approved for public app distribution.** This record distinguishes implemented controls from external setup and physical-device evidence. A working web preview is not an iOS release test.
+Updated September 15, 2026. **Prelaunch; not approved for public app distribution.** This record distinguishes implemented controls from external setup and physical-device evidence. A working web preview is not an iOS release test.
 
 ## What is prepared
 
 - Expo 54 app with a generated native project, branded icon/splash, EAS preview/production profiles, and a production build guard against local or insecure endpoints.
-- Permission before audio collection and explicit, versioned consent before OpenAI processing. The backend independently enforces consent. Transcript saving is off for new accounts. Profile supports withdrawal, export, conversation deletion and account deletion.
-- Recoverable email-link sign-in. Existing username accounts can sign in; new username-only accounts are disabled. iOS uses the app's email account system; Google is offered only on Android/web when enabled.
+- Upstream owns privacy choices through `app/src/privacy/aiConsent.ts`: approval and withdrawal are per account on the current device. Recording/import/Reflect request approval and queued uploads recheck it before sending. The duplicate release-branch consent provider, age/terms gate, server enforcement and schema migration have been removed. Transcript saving follows upstream’s enabled default; the existing switches remain available.
+- Username/password sign-up, sign-in and configured Google OAuth follow upstream. The release branch no longer replaces onboarding with email links. Account export and deletion remain implemented.
 - Durable, account-isolated recording and import queues. Uploads refresh authentication, are idempotent by recording ID, and retain unacknowledged audio. Android has a foreground microphone service and offers notification visibility permission on Android 13+ when recording starts; declining leaves the service visible in the OS Task Manager. Pending audio is excluded from Android backup; the iOS config plugin excludes Documents from backup.
 - FFmpeg decoding is limited to supported audio demuxers, mono 16 kHz output, 60 minutes and a 120-second decoder timeout. Uploads remain limited to 25 MB. A single pipeline runs at a time because the shared VAD model has mutable state. Busy requests preserve queued audio.
 - In-app private reporting for debriefs and Reflect replies. Reports contain only the reviewed response, reason and optional note, are limited to 20 per hour separately from Reflect, appear in account export, and cascade on linked-conversation/account deletion. A report-review owner and response process must be assigned before launch.
@@ -15,6 +15,10 @@ Updated September 14, 2026. **Prelaunch; not approved for public app distributio
 - Container build, automated app/backend/database checks, Android and unsigned iOS simulator builds, dependency notices and store copy below. Account/settings sheets scroll on small screens, and shared navigation and controls expose accessible roles and state.
 
 ## Verified evidence
+
+- September 15 removal checks: TypeScript, 25 app tests (including upstream consent/queue/Reflect regressions), 137 backend tests, and 3 website tests pass. The upstream consent helper and authentication screen match `upstream/main` at `f628b73`; no hosted database mutation was performed.
+
+The native-build and published-website evidence below predates the September 15 removal of duplicate privacy/onboarding controls. The saved iOS sign-in screenshot shows the superseded email-link screen; it is historical evidence, not a screenshot of the current onboarding.
 
 - Expo Doctor passed all 18 checks. Local TypeScript validation and 23 passing checks cover callback-token cleanup, account isolation, offline recovery, consent, imports, both sign-out paths, deletion, archive rules, loading errors and shared color contrast. Production JavaScript export passed for web and both native platforms, including Hermes bytecode. CI now runs all-platform export as well as native compilation.
 - Shared text colors meet 4.5:1 contrast on all four paper surfaces; primary button labels meet 4.5:1. Inactive tabs and chart labels no longer use faded text. Decorative recording loops are removed, Reflect uses the native progress indicator, and report forms avoid the iOS keyboard. This does not replace the physical-device accessibility matrix below.
@@ -29,7 +33,7 @@ Updated September 14, 2026. **Prelaunch; not approved for public app distributio
 
 | Requirement | State and reason |
 |---|---|
-| Consent schema migration | `20260914010000_processing_consent.sql`, `20260914020000_deletion_tombstones.sql` and `20260914030000_content_reports.sql` are prepared but not applied to the hosted project. Available service-role credentials access application data, not SQL administration. No linked database credential or Supabase management session was available. `/ready` fails until the migration is present. |
+| Release schema migrations | `20260914020000_deletion_tombstones.sql` and `20260914030000_content_reports.sql` are prepared but not applied to the hosted project. Available service-role credentials access application data, not SQL administration. No linked database credential or Supabase management session was available. `/ready` fails until the migration is present. |
 | Production API hosting | No authenticated hosting account or production HTTPS endpoint was available. `backend/Dockerfile` is built by CI. The current app development address is a LAN address and cannot be shipped. |
 | Email delivery and redirects | Supabase public configuration is readable, but production SMTP, delivery, redirect allowlists and recovery need an authenticated project configuration session and an actual inbox round trip. These are not verified. Legacy username-only accounts use non-deliverable local addresses and need a verified real-email migration before they can recover a lost password. |
 | Operator and private support | The legal operator, business contact, release territories, support mailbox, private report-review owner, retention schedule and processor agreements are not established by the repository. The website deliberately leaves them unconfirmed. Do not turn `privacyApproved` on based only on these draft texts. |
@@ -46,11 +50,11 @@ Missing account sessions, legally attributable facts and device evidence are not
 1. Apply all three September 14 migrations to the intended Supabase project using a migration-capable database connection. Verify the live schema, read policies, removal of direct settings write policies, and the existing `auth.users` cascading foreign keys.
 2. Configure the backend's `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`, `ENVIRONMENT=production` and explicit `CORS_ORIGINS`. Keep service-role and OpenAI keys entirely server-side.
 3. Deploy the tested container behind HTTPS with a 26 MB request-body limit and a request timeout greater than the app's processing window. Run one worker and one instance initially; the current request budget and VAD serialization are process-local. Provision at least 4 GB RAM and measure peak memory with supported long audio. Set provider spending alerts and an OpenAI project budget. Never log bearer tokens, audio, transcripts or prompts.
-4. Verify `/health`, `/ready`, signed-in history/settings, a consented upload, usage reservation/refund, Reflect, export and deletion in the deployed environment. `/ready` checks credentials are present and the consent columns are queryable; it is not proof that OpenAI billing or every provider is healthy.
+4. Verify `/health`, `/ready`, signed-in history/settings, a consented upload, usage reservation/refund, Reflect, export and deletion in the deployed environment. `/ready` checks credentials are present and the deletion-marker and content-report tables are queryable; it is not proof that OpenAI billing or every provider is healthy.
 5. Configure Supabase production SMTP, SPF/DKIM/DMARC where applicable, and only intended redirect URLs. Native sign-in uses `mirra://auth`; web deletion uses the exact public `/delete-account.html` URL. Test a real email round trip. Keep development localhost/LAN redirect entries out of a dedicated production project.
 6. Finalize operator/support/territories/provider retention, review the actual privacy policy and terms, update `website/release.json`, rebuild, and publish. Align app privacy disclosures, the Apple privacy questionnaire and Google Data safety answers with the deployed behavior.
 7. Configure the EAS project and production public environment. Run the production build guard, native CI, the device matrix below, then build and submit a signed iOS binary. Stage through internal TestFlight before public release. Add verified store URLs to the website only when the corresponding app records are available.
-8. Release manually after review. Keep the previous signed build and container revision available for rollback. Preserve schema/consent records during rollback; never roll back to an AI-processing path that bypasses consent.
+8. Release manually after review. Keep the previous signed build and container revision available for rollback. Preserve data-deletion protections and upstream’s device privacy choices during rollback.
 
 ## Acceptance matrix
 
@@ -59,7 +63,7 @@ Record device, OS, build number and result for every row. Use synthetic or expli
 | Flow | Required outcome |
 |---|---|
 | Fresh install, email sign-in, expired link | Successful link opens Mirra; invalid links show an error without leaking URL credentials. |
-| Consent decline/accept/withdraw | Decline allows account management; no upload or Reflect request reaches OpenAI. Accepted version has a server timestamp. Withdrawal stops subsequent processing on all clients when online. |
+| Consent decline/accept/withdraw | Decline keeps drafts and local audio; queued uploads and Reflect remain paused on that device. Acceptance persists for the current account on that device. Withdrawal pauses subsequent uploads, including after reading queued audio. There is no cross-device server-consent record. |
 | Record, lock screen 5+ minutes, foreground, stop | Audible complete recording, preserved timing, microphone indicator and Android ongoing notification. Notification returns to the app. |
 | Phone call, Bluetooth disconnect, mic permission revoked | No crash or silently lost clip. Available audio can be saved; errors explain the real state. |
 | Airplane mode, stop, force-quit, relaunch | After Stop/save completes the clip survives; uploading resumes when foregrounded and online. A force-quit during active recording is not guaranteed recoverable. |
@@ -95,13 +99,13 @@ Use Reflect to explore a moment with an AI conversation coach. Review saved conv
 
 Recordings you stop and save can wait on your device until you are back online. Keep Mirra open to finish uploading. The first release includes five debriefs per month, with no subscriptions or paid plans.
 
-Mirra uses OpenAI for transcription and coaching. You review and agree to this processing before using it, and you can withdraw consent in Profile. Transcript saving is off by default for new accounts.
+Mirra uses OpenAI for transcription and coaching. The app asks before sharing with OpenAI, and you can withdraw that device’s approval in Profile. You control transcript saving in Voice & privacy.
 
 AI can be wrong. Mirra estimates that the loudest speaker is you; microphone placement, overlapping voices and transcription errors can affect results. These are prompts for reflection, not verified assessments of a person. Mirra is not medical or mental-health care. For adults 18 and over. Always obtain permission from everyone involved before recording or uploading their conversation.
 
 **Keywords:** conversation,listening,reflection,communication,habits,coaching,questions
 
-**Review notes:** Explain microphone/background audio as user-initiated conversation recording; there is no passive listening. Identify the consent screen, the permanent deletion path and the offline queue. Provide an authenticated disposable review account or another working review-access method in App Store Connect's private review fields, never in this repository. Explain the free five-debrief limit and reset review usage before review. No purchases, subscriptions, ads or tracking are implemented. Do not advertise widgets, Apple Watch, notifications or speaker correction; these are not shipped.
+**Review notes:** Explain microphone/background audio as user-initiated conversation recording; there is no passive listening. Identify the upstream Privacy & AI prompt, the permanent deletion path and the offline queue. Provide an authenticated disposable review account or another working review-access method in App Store Connect's private review fields, never in this repository. Explain the free five-debrief limit and reset review usage before review. No purchases, subscriptions, ads or tracking are implemented. Do not advertise widgets, Apple Watch, notifications or speaker correction; these are not shipped.
 
 **Screenshot sequence:** (1) actual Home/record screen, (2) consent disclosure, (3) completed synthetic conversation debrief, (4) Reflect response, (5) weekly insights, (6) Profile privacy/deletion controls. Capture at Apple's required dimensions from the current release build. Remove test identities and personal content; clearly distinguish synthetic demonstration content. Include an Android feature graphic/screenshots only when the Android build is validated.
 

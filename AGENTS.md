@@ -54,7 +54,7 @@ See `backend/app/pipeline/README.md` for request limits, timing caveats, and val
 
 The backend verifies Supabase JWTs on every request (`app/auth.py`). Uses `python-jose` to verify ES256 signatures against the project's public JWKS (`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`), cached for ten minutes and refreshed on an unknown signing-key ID (at most once per 30 seconds) — no per-request network call and no shared secret. The Supabase project uses asymmetric signing keys; there is no `SUPABASE_JWT_SECRET` setting. `user_id` comes from the token's `sub` claim and is threaded through all DB operations.
 
-Username/password sign-in is a thin wrapper: the backend maps `<username>` to the fake email `<username>@users.mirra.local` and drives Supabase's REST auth API directly. New username sign-up is disabled (410); existing users can still sign in through the password grant. New accounts use email links. `GET /auth/status` reports whether username sign-up and Google OAuth are currently available so the app can gate its UI.
+Username/password sign-in is a thin wrapper: the backend maps `<username>` to the fake email `<username>@users.mirra.local` and drives Supabase's REST auth API directly. Username sign-up and sign-in follow upstream’s username/password flow; Google OAuth is available when configured. `GET /auth/status` reports whether username sign-up and Google OAuth are currently available so the app can gate its UI.
 
 ### Data Models
 
@@ -87,7 +87,7 @@ The optional `recording_id` form field on `POST /sessions` produces an account-s
 
 ### Audio file import
 
-`useImportAudio.ts` uses `expo-document-picker`. It validates supported MIME types/extensions and the 25 MB cap, confirms participant permission, then copies audio into the same durable account queue as a recording. The queue refreshes auth and uses an idempotent recording ID. Import does not use an OS share-sheet intent. Duration probing is best effort; FFmpeg performs authoritative server decoding.
+`useImportAudio.ts` uses `expo-document-picker`. It validates supported MIME types/extensions and the 25 MB cap, uses the upstream AI-consent helper, then copies audio into the same durable account queue as a recording. The queue refreshes auth and uses an idempotent recording ID. Import does not use an OS share-sheet intent. Duration probing is best effort; FFmpeg performs authoritative server decoding.
 
 ## Critical Gotchas
 
@@ -97,7 +97,7 @@ The optional `recording_id` form field on `POST /sessions` produces an account-s
 
 - **OpenAI structured output** — use `responses.parse` with the `CoachingOutput` Pydantic schema, never free-text JSON parsing. Keep two retries for invalid output in `coaching.py`; reject missing or incomplete output rather than saving an invalid debrief.
 
-- **Speaker classification accuracy** — diarization groups voices but does not identify the recording owner. `speaker.py` still assumes the user is closer to the mic and chooses the loudest speaker by duration-weighted RMS. Document this constraint in onboarding. All turns of the chosen label are retained; speaker splitting and mixed-voice overlap can still affect metrics. `stats.metadata.diarization.user_speaker_confirmed` is false; there is no voice enrollment or speaker-correction UI.
+- **Speaker classification accuracy** — diarization groups voices but does not identify the recording owner. `speaker.py` still assumes the user is closer to the mic and chooses the loudest speaker by duration-weighted RMS. Keep this constraint in the product’s AI limitations disclosure. All turns of the chosen label are retained; speaker splitting and mixed-voice overlap can still affect metrics. `stats.metadata.diarization.user_speaker_confirmed` is false; there is no voice enrollment or speaker-correction UI.
 
 - **Transcription 25MB limit** — `main.py` limits uploaded bytes before processing. `transcription.py` separately checks encoded PCM against the API's 25,000,000-byte limit and uses the original supported compressed recording when PCM is too large. If neither fits, return 413 and refund reserved usage. Do not split into independent requests without a strategy to reconcile speaker IDs; labels are local to each request.
 
@@ -149,8 +149,8 @@ The frontend is fully wired to the backend — no more mock data. `src/data/rece
 
 ## Release privacy and operations
 
-- Apply all three September 14 release migrations before deploying the current backend. `/health` reports liveness; `/ready` requires the consent columns, deletion-marker and content-report tables, and AI credential.
-- AI consent uses version `2026-09-14`, is opt-in and checked server-side for sessions/Reflect. Consent timestamps are written by the backend. Settings updates only write supplied fields, so an unrelated change cannot restore withdrawn consent.
+- Apply the September 14 deletion-tombstone and content-report migrations before deploying the current backend. `/health` reports liveness; `/ready` requires the deletion-marker and content-report tables, and AI credential.
+- AI consent uses upstream’s `app/src/privacy/aiConsent.ts`: approval is stored per account on each device, recording/import/Reflect request it, queued uploads recheck it, and Profile can withdraw it on that device. There is no additional release-branch consent screen, server-side consent field or consent migration. Transcript defaults and username/Google onboarding follow upstream.
 - `DELETE /account` removes the authenticated Supabase user with cascading data deletion. `DELETE /debriefs/{id}` uses an account-scoped SQL RPC and a content-free tombstone. SQL advisory locks serialize deletion and replay; the insert trigger rejects resurrection. Tombstones disappear on account deletion and are included in account exports.
 - One pipeline/worker protects the stateful VAD model and memory budget. Reflect has a per-account 60-message/hour process-local limit. Move budgets to shared storage before scaling workers/instances.
 - Product/release evidence and external blockers are tracked in `docs/RELEASE.md`. The website and policy pages remain a clearly labeled prelaunch preview until the operator, private support contact and deployment are finalized.
