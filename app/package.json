@@ -7,7 +7,10 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:production": "node scripts/check-production-env.cjs",
+    "export:ios:production": "npm run check:production && expo export --platform ios --clear",
+    "eas-build-post-install": "npm run check:production"
   },
   "dependencies": {
     "@expo-google-fonts/instrument-serif": "^0.4.1",

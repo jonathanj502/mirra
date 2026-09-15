@@ -1,4 +1,5 @@
 import io
+import logging
 from pathlib import Path
 import tempfile
 
@@ -13,6 +14,7 @@ from app.pipeline.transcription import TRANSCRIPTION_MODEL, transcribe
 from app.pipeline.vad import detect_segments
 
 ANALYSIS_SAMPLE_RATE = 16000
+logger = logging.getLogger("uvicorn.error")
 CONTENT_TYPE_SUFFIXES = {
     "audio/aac": ".aac",
     "audio/mp4": ".m4a",
@@ -61,20 +63,26 @@ def _analysis_audio(audio: np.ndarray, sample_rate: int) -> tuple[np.ndarray, in
 
 
 def run(audio_bytes: bytes, content_type: str | None = None) -> dict:
+    # Stage names only: never log the audio, transcript, or coaching content.
+    logger.info("Audio pipeline: decoding")
     original_audio, original_sr = _decode_audio(audio_bytes, content_type)
+    logger.info("Audio pipeline: resampling")
     audio, sr = _analysis_audio(original_audio, original_sr)
     total_seconds = len(audio) / sr
 
     # Local VAD is only a no-speech check. The recognizer gets the complete
     # recording and handles its own chunking while retaining speaker identity.
     turns = []
+    logger.info("Audio pipeline: checking speech")
     if detect_segments(audio, sr):
+        logger.info("Audio pipeline: transcribing")
         turns = transcribe(audio, sr, source_audio=audio_bytes, content_type=content_type)
     all_segs = audio_segments(turns, audio, sr)
     user_speaker = select_user_speaker(all_segs)
     user_segs = [segment for segment in all_segs if segment.speaker == user_speaker]
     user_transcript = " ".join(turn.text for turn in turns if turn.speaker == user_speaker)
     transcript = "\n".join(f"Speaker {turn.speaker}: {turn.text}" for turn in turns)
+    logger.info("Audio pipeline: computing metrics")
     stats = compute_stats(all_segs, user_segs, user_transcript, total_seconds, audio=audio, sample_rate=sr)
     speakers = list(dict.fromkeys(segment.speaker for segment in all_segs))
     stats["metadata"] = {"diarization": {
@@ -89,10 +97,12 @@ def run(audio_bytes: bytes, content_type: str | None = None) -> dict:
             for speaker in speakers
         },
     }}
+    logger.info("Audio pipeline: coaching")
     coaching = analyze(transcript, stats) if turns else {
         "observation": "No speech was detected in this recording.",
         "pattern_to_reduce": "There is not enough speech to identify a conversational pattern.",
         "thing_to_try_next": "Try another recording with the microphone closer to the conversation.",
     }
 
+    logger.info("Audio pipeline: complete")
     return {**coaching, "stats": stats, "transcript": transcript}

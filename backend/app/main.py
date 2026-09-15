@@ -41,7 +41,7 @@ SUPPORTED_AUDIO_TYPES = {
 
 USERNAME_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789_")
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 _session_lock = Lock()
 _processing_sessions: set[str] = set()
@@ -301,9 +301,11 @@ def _process_session(audio, started_at, client_duration_seconds, title, user_id,
     if len(audio_bytes) > MAX_AUDIO_BYTES:
         raise HTTPException(status_code=413, detail="Audio file is too large")
 
+    logger.info("Session pipeline: reserving usage")
     reservation_month = check_and_increment(db, user_id)
     inserting = False
     try:
+        logger.info("Session pipeline: loading settings")
         user_settings = fetch_user_settings(db, user_id)
         try:
             result = coordinator.run(audio_bytes, content_type=content_type)
