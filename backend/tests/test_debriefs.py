@@ -1,6 +1,8 @@
 from unittest.mock import MagicMock
 
+import httpx
 from fastapi.testclient import TestClient
+from supabase import ClientOptions, create_client
 
 from app.auth import verify_token
 from app.db import get_db
@@ -66,53 +68,66 @@ def test_debriefs_pagination_params():
     db.table.return_value.select.return_value.eq.return_value.order.return_value.range.assert_called_once_with(20, 29)
 
 
-def test_delete_debrief_is_scoped_idempotent_and_validates_id():
-    own_id = SAMPLE["id"]
-    other_id = "00000000-0000-0000-0000-000000000002"
-    kept_id = "00000000-0000-0000-0000-000000000003"
+def test_delete_removes_only_the_owned_conversation_and_is_safe_to_retry():
     rows = [
-        {"id": own_id, "user_id": "user-1", "transcript": "private transcript"},
-        {"id": other_id, "user_id": "user-2"},
-        {"id": kept_id, "user_id": "user-1"},
+        {**SAMPLE, "transcript": "Private conversation text"},
+        {**SAMPLE, "id": "00000000-0000-0000-0000-000000000002"},
+        {**SAMPLE, "id": "00000000-0000-0000-0000-000000000003", "user_id": "user-2"},
     ]
+    kept_id, other_id = rows[1]["id"], rows[2]["id"]
+    requests = []
+
+    def database(request):
+        requests.append(request)
+        assert request.url.path == "/rest/v1/debriefs"  # No usage refund or other table mutations.
+        filters = {key: value[3:] for key, value in request.url.params.items() if value.startswith("eq.")}
+        matches = [row for row in rows if all(row[key] == value for key, value in filters.items())]
+        if request.method == "DELETE":
+            assert set(filters) == {"user_id", "id"}
+            assert "return=minimal" in request.headers["prefer"]
+            rows[:] = [row for row in rows if row not in matches]
+            return httpx.Response(204)
+        assert request.method == "GET"
+        return httpx.Response(200, json=matches)
+
+    # Exercise the installed Supabase query builder against an isolated HTTP transport.
+    with httpx.Client(transport=httpx.MockTransport(database)) as transport:
+        db = create_client("https://test.supabase.co", "test-key", options=ClientOptions(httpx_client=transport))
+        app.dependency_overrides[get_db] = lambda: db
+        app.dependency_overrides[verify_token] = lambda: "user-1"
+        client = TestClient(app)
+
+        response = client.delete(f"/debriefs/{SAMPLE['id']}")
+        assert response.status_code == 204
+        assert response.content == b""
+        assert {row["id"] for row in rows} == {kept_id, other_id}
+        assert requests[-1].url.params["user_id"] == "eq.user-1"
+        assert requests[-1].url.params["id"] == f"eq.{SAMPLE['id']}"
+        assert [row["id"] for row in client.get("/debriefs").json()] == [kept_id]
+
+        assert client.delete(f"/debriefs/{SAMPLE['id']}").status_code == 204
+        assert client.delete(f"/debriefs/{other_id}").status_code == 204
+        assert {row["id"] for row in rows} == {kept_id, other_id}
+        app.dependency_overrides[verify_token] = lambda: "user-2"
+        assert client.delete(f"/debriefs/{kept_id}").status_code == 204
+        assert {row["id"] for row in rows} == {kept_id, other_id}
+
+
+def test_delete_requires_authentication_and_a_valid_id():
     db = MagicMock()
-    query = db.table.return_value.delete.return_value
-    filters = {}
-
-    def eq(key, value):
-        filters[key] = value
-        return query
-
-    def execute():
-        rows[:] = [row for row in rows if not all(row[key] == value for key, value in filters.items())]
-
-    query.eq.side_effect = eq
-    query.execute.side_effect = execute
     app.dependency_overrides[get_db] = lambda: db
+    client = TestClient(app)
+    assert client.delete(f"/debriefs/{SAMPLE['id']}").status_code == 401
     app.dependency_overrides[verify_token] = lambda: "user-1"
-    client = TestClient(app)
-
-    assert client.delete(f"/debriefs/{other_id}").status_code == 204
-    assert len(rows) == 3
-    response = client.delete(f"/debriefs/{own_id}")
-    assert response.status_code == 204 and response.content == b""
-    assert rows == [{"id": other_id, "user_id": "user-2"}, {"id": kept_id, "user_id": "user-1"}]
-    assert client.delete(f"/debriefs/{own_id}").status_code == 204
     assert client.delete("/debriefs/not-a-uuid").status_code == 422
-    assert query.execute.call_count == 3
-    # Deletion never touches usage counters or any other account data.
-    assert all(call.args == ("debriefs",) for call in db.table.call_args_list)
-
-
-def test_delete_requires_auth_and_does_not_report_database_failure_as_success():
-    db = MagicMock()
-    app.dependency_overrides[get_db] = lambda: db
-    client = TestClient(app)
-    assert client.delete(f'/debriefs/{SAMPLE["id"]}').status_code == 401
     db.table.assert_not_called()
 
+
+def test_delete_database_failure_is_not_reported_as_success():
+    db = MagicMock()
+    db.table.return_value.delete.return_value.eq.return_value.eq.return_value.execute.side_effect = RuntimeError("offline")
+    app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[verify_token] = lambda: "user-1"
-    db.table.return_value.delete.return_value.eq.return_value.eq.return_value.execute.side_effect = RuntimeError("database unavailable")
-    response = client.delete(f'/debriefs/{SAMPLE["id"]}')
+    response = TestClient(app).delete(f"/debriefs/{SAMPLE['id']}")
     assert response.status_code == 500
     assert response.json() == {"detail": "Internal server error"}

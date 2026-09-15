@@ -7,13 +7,14 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import Svg, { Circle, Path } from 'react-native-svg';
-import { Body, Serif, SerifItalic, Eyebrow } from '@/components/Typography';
+import { Body, Serif, Eyebrow } from '@/components/Typography';
 import { Icon } from '@/components/Icon';
 import { colors, fonts } from '@/theme/tokens';
 import { SEED_MESSAGES, STARTER_PROMPTS, CANNED_REPLIES, ChatMessage } from '@/data/reflect';
 import { fetchDebrief, sendReflection } from '@/api/client';
 import { useAuth } from '@/auth/AuthContext';
 import { titleForDebrief } from '@/hooks/useDebriefs';
+import { requestAIConsent } from '@/privacy/aiConsent';
 
 function ChatBubble({ from, text }: ChatMessage) {
   const isYou = from === 'you';
@@ -75,11 +76,13 @@ export function ReflectScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id?: string }>();
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>(SEED_MESSAGES);
   const [input, setInput] = useState('');
   const [subject, setSubject] = useState('recent conversation');
   const [thinking, setThinking] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
+  const sending = useRef(false);
   const replyIdx = useRef(0);
   const scrollerRef = useRef<ScrollView>(null);
 
@@ -109,13 +112,24 @@ export function ReflectScreen() {
 
   const send = async (text?: string) => {
     const msg = (text ?? input).trim();
-    if (!msg || thinking) return;
+    if (!msg || thinking || sending.current || !accessToken) return;
+    sending.current = true;
+    setConsentError(null);
+    try {
+      if (!await requestAIConsent(user?.id)) {
+        sending.current = false;
+        return;
+      }
+    } catch (err) {
+      setConsentError(err instanceof Error ? err.message : 'Could not save your privacy choice. Please try again.');
+      sending.current = false;
+      return;
+    }
     setInput('');
     const nextMessages = [...messages, { from: 'you' as const, text: msg }];
     setMessages(nextMessages);
     setThinking(true);
     try {
-      if (!accessToken) throw new Error('Missing access token');
       const reply = await sendReflection(accessToken, {
         conversationId: id,
         prompt: msg,
@@ -131,6 +145,7 @@ export function ReflectScreen() {
       setMessages((m) => [...m, { from: 'ai', text: reply }]);
     } finally {
       setThinking(false);
+      sending.current = false;
     }
   };
 
@@ -155,7 +170,7 @@ export function ReflectScreen() {
         <Pressable onPress={goBack} hitSlop={8}><Icon.back color={colors.muted} /></Pressable>
         <View style={{ alignItems: 'center', gap: 2 }}>
           <Eyebrow>Reflect with</Eyebrow>
-          <SerifItalic style={styles.headerName}>Mirra</SerifItalic>
+          <Serif style={styles.headerName}>Mirra</Serif>
         </View>
         <Icon.dots color={colors.muted} />
       </View>
@@ -180,6 +195,7 @@ export function ReflectScreen() {
 
       {/* Input bar */}
       <View style={[styles.inputBar, { paddingBottom: bottomPad }]}>
+        {consentError ? <Body accessibilityRole="alert" style={styles.consentError}>{consentError}</Body> : null}
         <View style={styles.inputWrap}>
           <TextInput
             value={input}
@@ -204,7 +220,7 @@ export function ReflectScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.paper },
   header: { paddingHorizontal: 18, paddingBottom: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  headerName: { fontSize: 18, lineHeight: 18, color: colors.ink },
+  headerName: { fontSize: 22, lineHeight: 30, color: colors.ink },
   messages: { padding: 16, paddingTop: 14 },
   bubbleRow: { flexDirection: 'row', marginBottom: 10 },
   bubbleYou: { maxWidth: '78%', backgroundColor: colors.terracotta, paddingVertical: 11, paddingHorizontal: 14, borderRadius: 18, borderBottomRightRadius: 4 },
@@ -214,11 +230,12 @@ const styles = StyleSheet.create({
   typingDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.terracotta, opacity: 0.55 },
   contextPill: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 14, backgroundColor: 'rgba(208,136,102,0.10)', borderRadius: 14, marginBottom: 14 },
   contextLabel: { fontSize: 10, color: colors.muted, letterSpacing: 1, textTransform: 'uppercase' },
-  contextSubject: { fontSize: 15, color: colors.ink, marginTop: 2, lineHeight: 17 },
+  contextSubject: { fontSize: 20, color: colors.ink, marginTop: 4, lineHeight: 28 },
   startersWrap: { flexGrow: 0, paddingBottom: 8 },
   starter: { borderWidth: 1, borderColor: colors.hairline, backgroundColor: colors.card, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999 },
   starterText: { fontSize: 12, color: colors.ink2 },
   inputBar: { paddingHorizontal: 14, paddingTop: 10 },
+  consentError: { fontSize: 12, lineHeight: 18, color: colors.ink2, marginBottom: 8 },
   inputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.card, borderRadius: 22, paddingLeft: 16, paddingRight: 6, ...{ shadowColor: '#2A2520', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 2, elevation: 1 } },
   input: { flex: 1, fontFamily: fonts.body, fontSize: 14, paddingVertical: 12, color: colors.ink },
   sendBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },

@@ -7,16 +7,14 @@
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "backgroundColor": "#F6EFE0",
-    "splash": {
-      "resizeMode": "contain",
-      "backgroundColor": "#ECE2D2"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.mirra.app",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Mirra uses your microphone to record conversations you choose to debrief.",
-        "UIBackgroundModes": ["audio"]
+        "UIBackgroundModes": [
+          "audio"
+        ]
       }
     },
     "android": {
@@ -24,12 +22,33 @@
       "adaptiveIcon": {
         "backgroundColor": "#ECE2D2"
       },
-      "permissions": ["RECORD_AUDIO", "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_MICROPHONE"]
+      "permissions": [
+        "RECORD_AUDIO",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_MICROPHONE"
+      ]
     },
     "plugins": [
       "expo-router",
       "expo-asset",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "resizeMode": "contain",
+          "backgroundColor": "#ECE2D2"
+        }
+      ],
+      "expo-status-bar",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Mirra uses your microphone to record conversations you choose to debrief.",
+          "enableBackgroundRecording": true,
+          "enableBackgroundPlayback": false
+        }
+      ]
     ]
   }
 }

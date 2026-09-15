@@ -96,6 +96,7 @@ test('durable native queue survives restart, isolates accounts, serializes recon
           session: { user: { id: sessionAccount }, access_token: 'refreshed-token' },
         } }) } } },
         '@/api/http': http, '@/storage/pendingRecordings': storage(),
+        '@/privacy/aiConsent': { hasAIConsent: async () => true },
         '@/api/client': { async uploadSession(token, audio, metadata) {
           uploads.push({ token, metadata });
           assert.equal(await fs.readFile(audio.uri, 'utf8'), 'actual saved audio bytes');
@@ -149,6 +150,85 @@ test('durable native queue survives restart, isolates accounts, serializes recon
     mounted?.unmount();
     assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep + 'mirra-recording-test-'));
     await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('queued recordings wait for consent and remain saved when consent is withdrawn during preparation or between uploads', async () => {
+  const state = hooks();
+  const choices = new Map();
+  const dialogs = [];
+  const privacy = load('privacy/aiConsent.ts', {
+    '@react-native-async-storage/async-storage': {
+      getItem: async key => choices.get(key) ?? null,
+      setItem: async (key, value) => { choices.set(key, value); },
+      removeItem: async key => { choices.delete(key); },
+    },
+    'react-native': { Platform: { OS: 'ios' }, Alert: {
+      alert: (_, __, buttons) => dialogs.push(buttons),
+    } },
+  });
+  let rows = ['one', 'two'].map(id => ({ id, userId: 'owner', seconds: 5,
+    startedAt: '2026-09-13T12:00:00Z', audio: { uri: `file:///${id}.m4a`, name: `${id}.m4a`, type: 'audio/mp4' } }));
+  const uploads = [];
+  let withdrawOnRead = true;
+  let released = 0;
+  let tick;
+  const { usePendingRecordings } = load('hooks/usePendingRecordings.ts', {
+    react: state.react,
+    'react-native': { Platform: { OS: 'ios' }, AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) } },
+    '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' } }) },
+    '@/api/supabase': { supabase: { auth: { getSession: async () => ({ data: {
+      session: { user: { id: 'owner' }, access_token: 'token' },
+    } }) } } },
+    '@/privacy/aiConsent': privacy, '@/api/http': http,
+    '@/storage/pendingRecordings': {
+      listPendingRecordings: async () => [...rows],
+      async readPendingAudio(row) {
+        if (withdrawOnRead) { withdrawOnRead = false; await privacy.withdrawAIConsent('owner'); }
+        return row.audio;
+      },
+      releasePendingAudio() { released++; },
+      async removePendingRecording(row) { rows = rows.filter(item => item.id !== row.id); },
+    },
+    '@/api/client': { async uploadSession(_, audio, metadata) {
+      uploads.push(metadata.recordingId);
+      if (metadata.recordingId === 'one') await privacy.withdrawAIConsent('owner');
+      return { debrief: { id: metadata.recordingId } };
+    } },
+  }, { setInterval: callback => { tick = callback; return 1; }, clearInterval() {} });
+  const render = () => state.render(usePendingRecordings);
+  async function choose(allow) {
+    const action = render().resumeUploads();
+    const count = dialogs.length;
+    await until(() => dialogs.length > count);
+    dialogs.at(-1)[allow ? 1 : 0].onPress();
+    await action;
+  }
+  try {
+    render();
+    await until(() => render().needsAIConsent);
+    assert.equal(dialogs.length, 0, 'Automatic retries must not open consent dialogs');
+    assert.equal(uploads.length, 0);
+    assert.equal(rows.length, 2);
+    await choose(false);
+    tick();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(uploads.length, 0);
+    assert.equal(dialogs.length, 1);
+
+    await choose(true);
+    await until(() => released === 1 && render().needsAIConsent);
+    assert.equal(uploads.length, 0, 'Withdrawing while loading audio must prevent the request');
+    assert.equal(rows.length, 2);
+    await choose(true);
+    await until(() => uploads.length === 1 && render().needsAIConsent);
+    assert.deepEqual(rows.map(row => row.id), ['two']);
+    assert.equal(dialogs.length, 3, 'Withdrawal pauses remaining uploads without prompting');
+    await choose(true);
+    await until(() => rows.length === 0);
+    assert.deepEqual(uploads, ['one', 'two']);
+  } finally {
+    state.unmount();
   }
 });
 

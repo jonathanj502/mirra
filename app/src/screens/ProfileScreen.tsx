@@ -13,6 +13,7 @@ import { useAuth } from '@/auth/AuthContext';
 import { useProfileSummary } from '@/hooks/useProfileSummary';
 import { useUserSettings } from '@/hooks/useUserSettings';
 import { CoachingDepth, CoachingTone, UserSettings, WeeklySummaryDay, WeeklySummaryTime } from '@/models/debrief';
+import { AI_DISCLAIMER, withdrawAIConsent } from '@/privacy/aiConsent';
 
 type SettingsPanelId = 'notifications' | 'privacy' | 'coaching' | 'help';
 type AccountActionId = 'export' | 'signOut';
@@ -80,7 +81,7 @@ function Avatar({ initials = 'MC', size = 84 }: { initials?: string; size?: numb
 function StatPill({ value, label, accent }: { value: string; label: string; accent: string }) {
   return (
     <View style={styles.statPill}>
-      <Serif style={{ fontSize: 24, lineHeight: 24, color: accent }}>{value}</Serif>
+      <Serif style={{ fontSize: 24, lineHeight: 32, color: accent }}>{value}</Serif>
       <Body style={styles.statLabel}>{label}</Body>
     </View>
   );
@@ -231,7 +232,7 @@ function HelpAction({ label, hint, subject }: { label: string; hint: string; sub
 const SETTINGS_TITLES: Record<SettingsPanelId, string> = {
   notifications: 'Notifications',
   privacy: 'Voice & Privacy',
-  coaching: 'Coaching Tone',
+  coaching: 'Mirra Tone',
   help: 'Help & Feedback',
 };
 
@@ -250,7 +251,7 @@ function summaryTimeValue(value: WeeklySummaryTime) {
 }
 
 function privacyHint(settings: UserSettings) {
-  if (!settings.saveTranscripts) return 'Transcripts off · audio discarded';
+  if (!settings.saveTranscripts) return 'Transcripts off';
   return settings.includeTranscriptInReflect ? 'Transcripts saved · Reflect can use excerpts' : 'Transcripts saved · Reflect uses summaries';
 }
 
@@ -287,11 +288,15 @@ function SettingsSheet({
   onChange: (patch: Partial<UserSettings>) => void;
 }) {
   const visible = panel !== null;
+  const { user } = useAuth();
+  const [privacyNote, setPrivacyNote] = useState<string | null>(null);
+  const [withdrawing, setWithdrawing] = useState(false);
   const [schedulePicker, setSchedulePicker] = useState<SchedulePickerId | null>(null);
   const pickingSchedule = panel === 'notifications' && schedulePicker !== null;
   const sheetTitle = pickingSchedule ? (schedulePicker === 'day' ? 'Summary Day' : 'Summary Time') : settingsTitle(panel);
 
   useEffect(() => {
+    setPrivacyNote(null);
     if (panel !== 'notifications') {
       setSchedulePicker(null);
     }
@@ -402,20 +407,36 @@ function SettingsSheet({
             <View style={styles.sheetBody}>
               <SwitchRow
                 label="Save transcripts"
-                hint="Keep transcript text with each debrief."
+                hint="Keep future transcripts with each debrief."
                 value={settings.saveTranscripts}
                 onChange={(value) => onChange({ saveTranscripts: value })}
               />
               <SwitchRow
                 label="Use transcript in Reflect"
-                hint="Let Mirra use short excerpts for context."
+                hint="Send short excerpts to OpenAI for context."
                 value={settings.includeTranscriptInReflect}
                 onChange={(value) => onChange({ includeTranscriptInReflect: value })}
               />
               <View style={styles.factBox}>
-                <Body style={styles.factTitle}>Audio handling</Body>
-                <Body style={styles.factText}>Audio is uploaded for debrief processing, then discarded by the backend.</Body>
+                <Body style={styles.factTitle}>Privacy & AI</Body>
+                <Body style={styles.factText}>{AI_DISCLAIMER}</Body>
               </View>
+              <Pressable accessibilityRole="button" disabled={!user || withdrawing} style={styles.helpAction}
+                onPress={async () => {
+                  if (!user || withdrawing) return;
+                  setWithdrawing(true);
+                  try {
+                    await withdrawAIConsent(user.id);
+                    setPrivacyNote('AI consent withdrawn on this device.');
+                  } catch {
+                    setPrivacyNote('Could not withdraw consent. Please try again.');
+                  } finally {
+                    setWithdrawing(false);
+                  }
+                }}>
+                <Body style={styles.optionLabel}>Withdraw AI consent</Body>
+              </Pressable>
+              {privacyNote ? <Body accessibilityRole="alert" style={styles.factText}>{privacyNote}</Body> : null}
             </View>
           ) : null}
 
@@ -638,7 +659,7 @@ export function ProfileScreen() {
         <Avatar initials={initials} size={84} />
         <View style={{ alignItems: 'center' }}>
           <Serif style={styles.name}>
-            Mirra <SerifItalic style={styles.name}>Member</SerifItalic>
+            Mirra Member
           </Serif>
           <Body style={styles.email}>{label}</Body>
         </View>
@@ -658,7 +679,7 @@ export function ProfileScreen() {
         <Card style={styles.settingsCard}>
           <SettingRow label="Notifications" disabled={!settingsReady} hint={settingsReady ? notificationsHint(settings) : settingsHint} onPress={() => setActivePanel('notifications')} />
           <SettingRow label="Voice & privacy" disabled={!settingsReady} hint={settingsReady ? privacyHint(settings) : settingsHint} onPress={() => setActivePanel('privacy')} />
-          <SettingRow label="Coaching tone" disabled={!settingsReady} hint={settingsReady ? toneLabel[settings.coachingTone] : settingsHint} onPress={() => setActivePanel('coaching')} />
+          <SettingRow label="Mirra tone" disabled={!settingsReady} hint={settingsReady ? toneLabel[settings.coachingTone] : settingsHint} onPress={() => setActivePanel('coaching')} />
           <SettingRow label="Help & feedback" hint="Contact, issues, privacy" onPress={() => setActivePanel('help')} isLast />
         </Card>
       </View>
@@ -709,9 +730,9 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     shadowColor: '#BA7253', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 22, elevation: 8,
   },
-  name: { fontSize: 28, lineHeight: 31, color: colors.ink },
+  name: { fontSize: 28, lineHeight: 36, color: colors.ink },
   email: { fontSize: 12.5, color: colors.muted, marginTop: 4 },
-  tagline: { fontSize: 13.5, color: colors.ink2, lineHeight: 20, maxWidth: 280, marginTop: 2, textAlign: 'center' },
+  tagline: { fontSize: 18, color: colors.ink2, lineHeight: 26, maxWidth: 280, marginTop: 2, textAlign: 'center' },
   stats: { paddingHorizontal: 22, paddingTop: 18, flexDirection: 'row', gap: 10 },
   statPill: { flex: 1, paddingVertical: 14, paddingHorizontal: 12, backgroundColor: colors.card, borderRadius: 16, alignItems: 'center' },
   statLabel: { fontSize: 10.5, color: colors.muted, letterSpacing: 0.8, textTransform: 'uppercase', marginTop: 6 },
@@ -729,7 +750,7 @@ const styles = StyleSheet.create({
   sheetHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14 },
   sheetTitleCluster: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 10 },
   sheetBackButton: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(42,37,32,0.06)' },
-  sheetTitle: { fontSize: 24, lineHeight: 28, color: colors.ink, marginTop: 4 },
+  sheetTitle: { fontSize: 24, lineHeight: 32, color: colors.ink, marginTop: 4 },
   closeButton: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: colors.card },
   closeText: { fontSize: 12.5, color: colors.ink2, fontFamily: fonts.bodyMedium },
   sheetLoading: { paddingVertical: 36, alignItems: 'center' },

@@ -1,3 +1,4 @@
+import { File } from 'expo-file-system';
 import { endpoint, parseResponse } from '@/api/http';
 import {
   AccountExport,
@@ -390,7 +391,8 @@ export async function uploadSession(
     const blob = await fetch(audio.uri).then((response) => response.blob());
     form.append('audio', blob, audio.name);
   } else {
-    form.append('audio', audio as unknown as Blob);
+    const file = new File(audio.uri);
+    form.append('audio', file.slice(0, file.size, audio.type), audio.name);
   }
   form.append('started_at', metadata.startedAt ?? new Date().toISOString());
   if (metadata.recordingId) form.append('recording_id', metadata.recordingId);

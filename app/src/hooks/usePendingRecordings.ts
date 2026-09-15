@@ -5,6 +5,7 @@ import { ApiError, friendlyErrorMessage } from '@/api/http';
 import { supabase } from '@/api/supabase';
 import { useAuth } from '@/auth/AuthContext';
 import { DebriefCard } from '@/models/debrief';
+import { hasAIConsent, requestAIConsent } from '@/privacy/aiConsent';
 import {
   PendingRecording, listPendingRecordings, savePendingRecording,
   readPendingAudio, releasePendingAudio, removePendingRecording,
@@ -17,6 +18,7 @@ export function usePendingRecordings() {
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const [completed, setCompleted] = useState<{ userId: string; debrief: DebriefCard } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [needsAIConsent, setNeedsAIConsent] = useState(false);
   const running = useRef(false);
   const busyId = useRef<string | null>(null);
   const failures = useRef(new Map<string, { retryAt: number; message: string }>());
@@ -28,6 +30,14 @@ export function usePendingRecordings() {
     setPending([]);
     setUploadingId(null);
     setError(null);
+    setNeedsAIConsent(false);
+
+    async function checkConsent() {
+      const allowed = await hasAIConsent(userId!);
+      if (cancelled) return false;
+      setNeedsAIConsent(!allowed);
+      return allowed;
+    }
 
     async function pump() {
       if (!userId || running.current || cancelled) return;
@@ -50,10 +60,14 @@ export function usePendingRecordings() {
             if (cancelled) break;
             if (authError) throw authError;
             if (!data.session || data.session.user.id !== row.userId) break;
+            stage = 'privacy';
+            if (!await checkConsent()) break;
             setUploadingId(row.id);
             stage = 'storage';
             audio = await readPendingAudio(row);
             if (cancelled) break;
+            stage = 'privacy';
+            if (!await checkConsent()) break;
             stage = 'upload';
             const controller = new AbortController();
             activeRequest = controller;
@@ -81,7 +95,8 @@ export function usePendingRecordings() {
             if (cancelled) break;
             const status = err instanceof ApiError ? err.status : 0;
             const delay = [413, 415, 422].includes(status) ? Infinity : status === 402 ? 300_000 : status >= 500 || status === 429 ? 60_000 : 15_000;
-            const message = status || stage === 'storage' ? friendlyErrorMessage(err, 'Could not access saved audio.')
+            const message = stage === 'privacy' ? 'Could not check your privacy choice. Upload is paused.'
+              : status || stage === 'storage' ? friendlyErrorMessage(err, 'Could not access saved audio.')
               : 'Waiting for a connection. Upload resumes automatically.';
             failures.current.set(row.id, { retryAt: Date.now() + delay, message });
             setPending(items => items.map(item => item.id === row.id ? { ...item, error: message } : item));
@@ -137,9 +152,20 @@ export function usePendingRecordings() {
     }
   }
 
+  async function resumeUploads() {
+    try {
+      if (await requestAIConsent(userId)) {
+        setNeedsAIConsent(false);
+        wake.current();
+      }
+    } catch (err) {
+      setError(friendlyErrorMessage(err, 'Could not save your privacy choice.'));
+    }
+  }
+
   return {
     pendingRecordings: pending.filter(row => row.userId === userId),
-    uploadingId, queueError: error, enqueue, discard,
+    uploadingId, queueError: error, needsAIConsent, resumeUploads, enqueue, discard,
     latestDebrief: completed && completed.userId === userId ? completed.debrief : null,
   };
 }

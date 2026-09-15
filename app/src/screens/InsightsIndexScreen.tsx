@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Screen } from '@/components/Screen';
-import { Body, Serif, SerifItalic, Eyebrow } from '@/components/Typography';
+import { Body, Serif, Eyebrow } from '@/components/Typography';
 import { Icon } from '@/components/Icon';
 import { WeekPaginator } from '@/components/WeekPaginator';
 import { colors } from '@/theme/tokens';
@@ -17,8 +17,9 @@ function ConvRow({ item, isLast, onPress }: { item: ConvListItem; isLast: boolea
       <View style={{ flex: 1, minWidth: 0 }}>
         <Serif style={styles.title}>{item.title}</Serif>
         <Body style={styles.meta}>
-          {item.when} · {item.duration} · <SerifItalic style={styles.note}>{item.note}</SerifItalic>
+          {item.when} · {item.duration}
         </Body>
+        <Serif style={styles.note}>{item.note}</Serif>
       </View>
       <Icon.chevron color="rgba(42,37,32,0.35)" />
     </Pressable>
@@ -62,9 +63,7 @@ export function InsightsIndexScreen() {
         <Eyebrow>Conversations</Eyebrow>
         <Serif style={styles.bigTitle}>
           {error ? 'Conversations unavailable' : `${convs.length} ${convs.length === 1 ? 'conversation' : 'conversations'},`}{'\n'}
-          <SerifItalic style={styles.bigTitle}>
-            {error ? 'Please try again.' : `${hours > 0 ? `${hours}h ` : ''}${mins} min total.`}
-          </SerifItalic>
+          {error ? 'Please try again.' : `${hours > 0 ? `${hours}h ` : ''}${mins} min total.`}
         </Serif>
         <Body style={styles.intro}>
           {loading
@@ -96,7 +95,7 @@ export function InsightsIndexScreen() {
         ))}
 
         {!loading && !error && convs.length === 0 && (
-          <SerifItalic style={styles.empty}>No conversations yet this week.</SerifItalic>
+          <Serif style={styles.empty}>No conversations yet this week.</Serif>
         )}
       </View>
       <View style={{ height: 12 }} />
@@ -106,7 +105,7 @@ export function InsightsIndexScreen() {
 
 const styles = StyleSheet.create({
   titleBlock: { paddingHorizontal: 22, paddingTop: 20 },
-  bigTitle: { fontSize: 30, lineHeight: 32, color: colors.ink, marginTop: 8 },
+  bigTitle: { fontSize: 30, lineHeight: 38, color: colors.ink, marginTop: 8 },
   intro: { fontSize: 13, color: colors.ink2, marginTop: 12, lineHeight: 20, maxWidth: 320 },
   list: { paddingHorizontal: 24, paddingTop: 18 },
   groupHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: colors.hairline2, paddingBottom: 4, marginBottom: 2 },
@@ -114,8 +113,8 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14 },
   rowBorder: { borderBottomWidth: 1, borderBottomColor: colors.hairline2 },
   dot: { width: 8, height: 8, borderRadius: 4 },
-  title: { fontSize: 18, lineHeight: 21, color: colors.ink },
+  title: { fontSize: 22, lineHeight: 30, color: colors.ink },
   meta: { fontSize: 11.5, color: colors.muted, marginTop: 4, letterSpacing: 0.2 },
-  note: { fontSize: 13, color: colors.muted },
-  empty: { textAlign: 'center', paddingVertical: 40, color: colors.muted, fontSize: 13 },
+  note: { fontSize: 18, lineHeight: 26, color: colors.ink2, marginTop: 6 },
+  empty: { textAlign: 'center', paddingVertical: 40, color: colors.ink2, fontSize: 18, lineHeight: 26 },
 });

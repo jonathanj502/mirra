@@ -12,6 +12,7 @@ export function Serif({ style, ...rest }: TextProps) {
   return <Text {...rest} style={[styles.serif, style]} />;
 }
 
+// Reserve italics for quotations or short, intentional emphasis.
 export function SerifItalic({ style, ...rest }: TextProps) {
   return <Text {...rest} style={[styles.serifItalic, style]} />;
 }
@@ -28,12 +29,12 @@ const styles = StyleSheet.create({
   serif: {
     fontFamily: fonts.serif,
     color: colors.ink,
-    letterSpacing: -0.4,
+    letterSpacing: 0,
   },
   serifItalic: {
     fontFamily: fonts.serifItalic,
     color: colors.ink,
-    letterSpacing: -0.4,
+    letterSpacing: 0,
   },
   eyebrow: {
     fontFamily: fonts.bodyMedium,

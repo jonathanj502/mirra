@@ -4,7 +4,7 @@ import { View, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Screen } from '@/components/Screen';
 import { Card, Pip } from '@/components/ui';
-import { Body, Serif, SerifItalic, Eyebrow } from '@/components/Typography';
+import { Body, Serif, Eyebrow } from '@/components/Typography';
 import { WeekPaginator } from '@/components/WeekPaginator';
 import { ReflectCTA } from '@/components/ReflectCTA';
 import { ExpandableMetric, Delta } from '@/components/ExpandableMetric';
@@ -214,7 +214,7 @@ export function ProgressScreen() {
       <View style={styles.titleBlock}>
         <Serif style={styles.bigTitle}>
           {w.title[0]}{'\n'}
-          <SerifItalic style={styles.bigTitle}>{w.title[1]}</SerifItalic>
+          {w.title[1]}
         </Serif>
         <Body style={styles.intro}>{intro}</Body>
         <ReflectCTA subject={reflectSubject} onPress={() => router.push('/reflect')} />
@@ -362,9 +362,9 @@ export function ProgressScreen() {
           summary={`${comma(w.ttrCounts.unique)} unique across ${comma(w.ttrCounts.total)} words this week.`}
           accent={colors.sand} chartKind="bar"
         >
-          <SerifItalic style={styles.vocabLine}>
+          <Serif style={styles.vocabLine}>
             {comma(w.ttrCounts.unique)} unique words across {comma(w.ttrCounts.total)} spoken — dynamic, not loopy.
-          </SerifItalic>
+          </Serif>
           <View>
             <View style={styles.vocabHead}>
               <Eyebrow>Top lexical paddings this week</Eyebrow>
@@ -388,7 +388,7 @@ export function ProgressScreen() {
           <View style={{ gap: 12, marginTop: 12 }}>
             {visibleNudges.map((line, i) => <InsightLine key={i} accent={colors.coral}>{line}</InsightLine>)}
           </View>
-          <SerifItalic style={styles.nudgeClose}>Nothing urgent. Just things to notice — not to fix.</SerifItalic>
+          <Serif style={styles.nudgeClose}>Nothing urgent. Just things to notice — not to fix.</Serif>
         </Card>
       </View>
       <View style={{ height: 12 }} />
@@ -407,12 +407,12 @@ function InsightLine({ accent, children }: { accent: string; children: React.Rea
 
 const styles = StyleSheet.create({
   titleBlock: { paddingHorizontal: 22, paddingTop: 20 },
-  bigTitle: { fontSize: 30, lineHeight: 32, color: colors.ink },
+  bigTitle: { fontSize: 30, lineHeight: 38, color: colors.ink },
   intro: { fontSize: 13, color: colors.ink2, marginTop: 12, lineHeight: 20, maxWidth: 320 },
   section: { paddingHorizontal: 18, paddingTop: 18 },
   dailyHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },
   dailyAvgRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 6 },
-  dailyAvg: { fontSize: 28, lineHeight: 28, color: colors.ink },
+  dailyAvg: { fontSize: 28, lineHeight: 36, color: colors.ink },
   dailyAvgUnit: { fontSize: 11, color: colors.muted, letterSpacing: 0.6, textTransform: 'uppercase' },
   dailyDelta: { fontSize: 13, fontFamily: fonts.bodySemibold },
   dailyDeltaSub: { fontSize: 10, color: colors.muted, letterSpacing: 0.3, marginTop: 2 },
@@ -428,12 +428,12 @@ const styles = StyleSheet.create({
   energyDimHead: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
   energyDimTrack: { height: 6, backgroundColor: 'rgba(42,37,32,0.06)', borderRadius: 999 },
   energyDimFill: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: colors.lavender, borderRadius: 999 },
-  vocabLine: { fontSize: 13.5, color: colors.ink2, lineHeight: 20, marginBottom: 16 },
+  vocabLine: { fontSize: 18, color: colors.ink2, lineHeight: 26, marginBottom: 16 },
   vocabHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 },
   vocabHeadMeta: { fontSize: 10.5, color: colors.muted, letterSpacing: 0.6 },
   insightsBlock: { paddingHorizontal: 22, paddingTop: 20, gap: 12 },
   lineRow: { flexDirection: 'row', gap: 10, alignItems: 'stretch' },
   lineBar: { width: 4, borderRadius: 999, opacity: 0.75, marginVertical: 2 },
   lineText: { fontSize: 13.5, color: colors.ink, lineHeight: 20, flex: 1 },
-  nudgeClose: { fontSize: 13, color: colors.ink2, marginTop: 14, lineHeight: 20, opacity: 0.85 },
+  nudgeClose: { fontSize: 18, color: colors.ink2, marginTop: 16, lineHeight: 26 },
 });

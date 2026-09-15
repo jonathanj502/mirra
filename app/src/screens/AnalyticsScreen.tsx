@@ -4,7 +4,7 @@ import { Alert, Platform, View, Pressable, StyleSheet } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Screen } from '@/components/Screen';
 import { Card, Pip } from '@/components/ui';
-import { Body, Serif, SerifItalic, Eyebrow } from '@/components/Typography';
+import { Body, Serif, Eyebrow } from '@/components/Typography';
 import { Icon } from '@/components/Icon';
 import { FloatingTabBar, TabId } from '@/components/FloatingTabBar';
 import { ExpandableMetric } from '@/components/ExpandableMetric';
@@ -56,24 +56,30 @@ export function AnalyticsScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { accessToken } = useAuth();
-  const { debriefs, loading } = useDebriefs();
+  const { debriefs, loading, setDebriefs } = useDebriefs();
   const [remoteDebrief, setRemoteDebrief] = useState<DebriefCard | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const deleteInFlight = useRef(false);
+  const deletionInProgress = useRef(false);
   const localDebrief = debriefs.find((d) => d.id === id) ?? null;
 
   useEffect(() => {
     let mounted = true;
     setRemoteDebrief(null);
+    setLoadingDetail(false);
     if (!id || localDebrief || !accessToken) return;
 
+    setLoadingDetail(true);
     fetchDebrief(accessToken, id)
       .then((debrief) => {
         if (mounted) setRemoteDebrief(debrief);
       })
       .catch(() => {
         if (mounted) setRemoteDebrief(null);
+      })
+      .finally(() => {
+        if (mounted) setLoadingDetail(false);
       });
 
     return () => {
@@ -84,49 +90,18 @@ export function AnalyticsScreen() {
   const selected = id
     ? localDebrief ?? (remoteDebrief?.id === id ? remoteDebrief : null)
     : debriefs[0] ?? null;
-
-  async function removeConversation(conversationId: string) {
-    if (deleteInFlight.current || !accessToken) return;
-    deleteInFlight.current = true;
-    setDeleting(true);
-    setDeleteError(null);
-    try {
-      await deleteDebrief(accessToken, conversationId);
-      router.replace('/insights');
-    } catch (err) {
-      setDeleteError(friendlyErrorMessage(err, 'Could not delete conversation. Please try again.'));
-    } finally {
-      deleteInFlight.current = false;
-      setDeleting(false);
-    }
-  }
-
-  function confirmDelete() {
-    if (!selected || deleting) return;
-    const conversationId = selected.id;
-    const message = 'Permanently delete this conversation, including its debrief and saved transcript? This cannot be undone.';
-    if (Platform.OS === 'web') {
-      if (window.confirm(message)) void removeConversation(conversationId);
-    } else {
-      Alert.alert('Delete conversation?', message, [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => { void removeConversation(conversationId); } },
-      ]);
-    }
-  }
-
   if (!selected) {
     return (
       <Screen topOffset={50}>
         <View style={styles.header}>
           <Pressable onPress={() => router.back()} hitSlop={8}><Icon.back color={colors.muted} /></Pressable>
           <Eyebrow>Conversation</Eyebrow>
-          <View style={{ width: 44 }} />
+          <Icon.dots color={colors.muted} />
         </View>
         <View style={styles.emptyState}>
-          <SerifItalic style={styles.emptyTitle}>{loading ? 'Loading conversation.' : 'No conversation selected.'}</SerifItalic>
+          <Serif style={styles.emptyTitle}>{loading || loadingDetail ? 'Loading conversation.' : 'Conversation unavailable.'}</Serif>
           <Body style={styles.emptyBody}>
-            {loading ? 'Mirra is checking your saved debriefs.' : 'Record or import a conversation, then open it from Insights.'}
+            {loading || loadingDetail ? 'Mirra is checking your saved debriefs.' : 'Open another conversation from Insights.'}
           </Body>
         </View>
       </Screen>
@@ -167,21 +142,45 @@ export function AnalyticsScreen() {
   const lsmReferenceValues = LSM_AXES.map((axis) => selected.stats.lsmDimensionsReference[axis.key] ?? 0);
   const goTab = (id: TabId) => router.navigate(TAB_HREF[id]);
 
+  async function handleDelete() {
+    if (!selected || !accessToken || deletionInProgress.current) return;
+    const debriefId = selected.id;
+    deletionInProgress.current = true;
+    try {
+      const message = `“${title}” and its saved transcript and insights will be deleted. This can’t be undone.`;
+      const confirmed = Platform.OS === 'web'
+        ? window.confirm(`Delete conversation?\n\n${message}`)
+        : await new Promise<boolean>((resolve) => {
+          Alert.alert('Delete conversation?', message, [
+            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+            { text: 'Delete', style: 'destructive', onPress: () => resolve(true) },
+          ], { cancelable: true, onDismiss: () => resolve(false) });
+        });
+      if (!confirmed) return;
+      setDeleting(true);
+      setDeleteError(null);
+      await deleteDebrief(accessToken, debriefId);
+      setDebriefs((items) => items.filter((item) => item.id !== debriefId));
+      setRemoteDebrief(null);
+      router.replace('/insights');
+    } catch (err) {
+      setDeleteError(friendlyErrorMessage(err, 'Could not delete this conversation. Please try again.'));
+    } finally {
+      deletionInProgress.current = false;
+      setDeleting(false);
+    }
+  }
+
   return (
     <Screen topOffset={50} error={deleteError} tabBar={<FloatingTabBar active="insights" onPress={goTab} />}>
       {/* Header */}
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} hitSlop={8}><Icon.back color={colors.muted} /></Pressable>
         <Eyebrow>Conversation</Eyebrow>
-        <Pressable
-          onPress={confirmDelete}
-          disabled={deleting || !accessToken}
-          accessibilityRole="button"
-          accessibilityLabel="Delete conversation"
+        <Pressable accessibilityRole="button" accessibilityLabel="Delete conversation" disabled={deleting || !accessToken}
           accessibilityState={{ disabled: deleting || !accessToken, busy: deleting }}
-          style={{ minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'center' }}
-        >
-          <Body style={{ color: colors.coral, fontSize: 13 }}>{deleting ? 'Deleting…' : 'Delete'}</Body>
+          onPress={handleDelete} style={styles.deleteButton}>
+          <Body style={styles.deleteText}>{deleting ? 'Deleting…' : 'Delete'}</Body>
         </Pressable>
       </View>
 
@@ -196,11 +195,11 @@ export function AnalyticsScreen() {
       <View style={styles.reflectWrap}>
         <Card tone="card-2" style={{ padding: 18 }}>
           <Eyebrow style={{ marginBottom: 8 }}>A few things I noticed</Eyebrow>
-          <Serif style={styles.reflectText}>
-            {observation} — {listenPct}% of the time was theirs. There were{' '}
-            <SerifItalic style={[styles.reflectText, { color: colors.terracotta }]}>{pattern}</SerifItalic>
-            {' '}to notice. {next}
-          </Serif>
+          <View style={styles.reflectParagraphs}>
+            <Serif style={styles.reflectText}>{observation}</Serif>
+            <Serif style={[styles.reflectText, { color: colors.ink2 }]}>{pattern}</Serif>
+            <Serif style={styles.reflectText}>{next}</Serif>
+          </View>
           <ReflectCTA subject={title.toLowerCase()} onPress={() => router.push({ pathname: '/reflect', params: selected ? { id: selected.id } : {} })} />
         </Card>
       </View>
@@ -260,7 +259,7 @@ export function AnalyticsScreen() {
                   <Serif style={[styles.miniNum, { color: colors.sage }]}>{(questions / Math.max(durationMin, 1)).toFixed(1)}</Serif>
                   <Body style={styles.miniUnit}>questions / min</Body>
                 </View>
-                <SerifItalic style={styles.miniItalic}>Based on this debrief's transcript.</SerifItalic>
+                <Serif style={styles.miniNote}>Based on this debrief's transcript.</Serif>
               </View>
             </View>
           </View>
@@ -359,7 +358,7 @@ export function AnalyticsScreen() {
               <View style={styles.lsmScore}>
                 <View style={styles.lsmScoreHead}>
                   <Body style={{ fontSize: 11, color: colors.ink }}>Overall LSM</Body>
-                  <Serif style={{ fontSize: 16, color: colors.lavender }}>{lsmScore.toFixed(2)}</Serif>
+                  <Serif style={{ fontSize: 20, lineHeight: 28, color: colors.lavender }}>{lsmScore.toFixed(2)}</Serif>
                 </View>
                 <View style={styles.lsmTrack}>
                   <View style={styles.lsmBand} />
@@ -382,7 +381,7 @@ export function AnalyticsScreen() {
           eyebrow="Vocabulary" value={`${uniquePct}%`} unit="unique / spoken"
           summary={`${uniqueWords.toLocaleString('en-US')} unique across ${totalWords.toLocaleString('en-US')} words.`} accent={colors.sand} chartKind="bar"
         >
-          <SerifItalic style={styles.vocabLine}>{uniqueWords.toLocaleString('en-US')} unique words across {totalWords.toLocaleString('en-US')} spoken.</SerifItalic>
+          <Serif style={styles.vocabLine}>{uniqueWords.toLocaleString('en-US')} unique words across {totalWords.toLocaleString('en-US')} spoken.</Serif>
           <View>
             <View style={styles.vocabHead}>
               <Eyebrow>Top lexical paddings</Eyebrow>
@@ -400,14 +399,17 @@ export function AnalyticsScreen() {
 
 const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingTop: 4 },
+  deleteButton: { minHeight: 44, minWidth: 44, alignItems: 'flex-end', justifyContent: 'center' },
+  deleteText: { color: '#9C4F40', fontSize: 13, fontFamily: fonts.bodyMedium },
   emptyState: { paddingHorizontal: 26, paddingTop: 80, alignItems: 'center' },
-  emptyTitle: { color: colors.ink, fontSize: 24, lineHeight: 28, textAlign: 'center' },
+  emptyTitle: { color: colors.ink, fontSize: 24, lineHeight: 32, textAlign: 'center' },
   emptyBody: { color: colors.muted, fontSize: 13.5, lineHeight: 20, textAlign: 'center', marginTop: 10, maxWidth: 280 },
   titleBlock: { paddingHorizontal: 22, paddingTop: 16, paddingBottom: 6 },
-  bigTitle: { fontSize: 30, lineHeight: 32, color: colors.ink },
+  bigTitle: { fontSize: 30, lineHeight: 38, color: colors.ink },
   meta: { fontSize: 12, color: colors.muted, marginTop: 6, letterSpacing: 0.4 },
   reflectWrap: { paddingHorizontal: 18, paddingTop: 14 },
-  reflectText: { fontSize: 17, lineHeight: 23, color: colors.ink },
+  reflectParagraphs: { gap: 16, marginBottom: 8 },
+  reflectText: { fontSize: 22, lineHeight: 32, color: colors.ink },
   patterns: { paddingHorizontal: 18, paddingTop: 18 },
   patternsHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 },
   tapHint: { fontSize: 10.5, color: colors.muted, letterSpacing: 0.6 },
@@ -419,18 +421,18 @@ const styles = StyleSheet.create({
   qBars: { flexDirection: 'row', gap: 8, width: 128 },
   qBarTrack: { height: 130, backgroundColor: 'rgba(42,37,32,0.04)', borderRadius: 10, overflow: 'hidden', justifyContent: 'flex-end' },
   qBarFill: { width: '100%', borderRadius: 10, alignItems: 'center', paddingTop: 8 },
-  qBarVal: { fontSize: 22, color: '#FBF6EA', lineHeight: 24 },
+  qBarVal: { fontSize: 22, color: '#FBF6EA', lineHeight: 28 },
   qBarLabel: { fontSize: 10, color: colors.muted, letterSpacing: 0.8, textTransform: 'uppercase', textAlign: 'center', lineHeight: 14 },
   qBarSub: { fontSize: 9, color: colors.muted, opacity: 0.7 },
-  qAnalysis: { flex: 1, gap: 8, height: 130 },
+  qAnalysis: { flex: 1, gap: 8, minHeight: 130 },
   miniCard: { borderRadius: 10, paddingVertical: 8, paddingHorizontal: 10, flex: 1, justifyContent: 'center' },
   miniLabel: { fontSize: 9.5, color: colors.muted, letterSpacing: 1, textTransform: 'uppercase' },
-  miniRow: { flexDirection: 'row', alignItems: 'baseline', gap: 5, marginTop: 3 },
-  miniNum: { fontSize: 17, lineHeight: 18 },
+  miniRow: { flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: 5, marginTop: 3 },
+  miniNum: { fontSize: 20, lineHeight: 28 },
   miniUnit: { fontSize: 10, color: colors.muted },
   miniDotSep: { color: colors.hairline, marginHorizontal: 1 },
   miniBar: { height: 4, marginTop: 6, borderRadius: 999, backgroundColor: 'rgba(42,37,32,0.08)', overflow: 'hidden', flexDirection: 'row' },
-  miniItalic: { fontSize: 11, color: colors.ink2, marginTop: 4, lineHeight: 14 },
+  miniNote: { fontSize: 18, color: colors.ink2, marginTop: 6, lineHeight: 26 },
 
   // Energy
   energyRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 14 },
@@ -458,7 +460,7 @@ const styles = StyleSheet.create({
   lsmScaleText: { fontSize: 10, color: colors.muted, letterSpacing: 0.3 },
 
   // Vocabulary
-  vocabLine: { fontSize: 13.5, color: colors.ink2, lineHeight: 20, marginBottom: 16 },
+  vocabLine: { fontSize: 18, color: colors.ink2, lineHeight: 26, marginBottom: 16 },
   unavailableText: { fontSize: 13, color: colors.muted, lineHeight: 20 },
   vocabHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 },
   vocabHeadMeta: { fontSize: 10.5, color: colors.muted, letterSpacing: 0.6 },

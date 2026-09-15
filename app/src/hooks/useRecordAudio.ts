@@ -1,19 +1,11 @@
-import { createContext, createElement, useContext, useRef, useState, ReactNode } from 'react';
-import { NativeModules, Platform } from 'react-native';
-import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
+import { createContext, createElement, useContext, useEffect, useRef, useState, ReactNode } from 'react';
+import { Platform } from 'react-native';
+import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
 import { friendlyErrorMessage } from '@/api/http';
 import { useAuth } from '@/auth/AuthContext';
 import { PendingRecording, recordingId } from '@/storage/pendingRecordings';
+import { requestAIConsent } from '@/privacy/aiConsent';
 import { usePendingRecordings } from './usePendingRecordings';
-
-// Android needs a foreground service holding the mic open once the app backgrounds;
-// optional so web/iOS (and stale native builds) just no-op.
-function setForegroundService(running: boolean) {
-  if (Platform.OS !== 'android') return;
-  const service = NativeModules.RecordingService;
-  if (running) service?.startForegroundService();
-  else service?.stopForegroundService();
-}
 
 function recordingName() {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -27,22 +19,40 @@ function recordingMimeType() {
 function useRecorderState() {
   const { user } = useAuth();
   const queue = usePendingRecordings();
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
-  const [recordingMs, setRecordingMs] = useState(0);
+  const [recording, setRecording] = useState(false);
   const [saving, setSaving] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Keep the original if device storage is full; do not allow another capture to overwrite it.
+  // Keep the original if device storage is full; another capture must not overwrite it.
   const unsaved = useRef<PendingRecording | null>(null);
-  const owner = useRef<string | null>(null);
+  const activeRecording = useRef<PendingRecording | null>(null);
   const operationInProgress = useRef(false);
-  const startedAt = useRef<number | null>(null);
-  // Null until createAsync fully resolves, so mid-creation status updates
-  // (canRecord && !isRecording) can't trigger a spurious resume; cleared again on stop.
-  const liveRecording = useRef<Audio.Recording | null>(null);
+  const stoppingManually = useRef(false);
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY, (status) => {
+    const active = activeRecording.current;
+    if (!status.isFinished || !active || stoppingManually.current
+      || (status.url && active.audio.uri && status.url !== active.audio.uri)) return;
+    activeRecording.current = null;
+    setRecording(false);
+    if (status.url) {
+      unsaved.current = { ...active, audio: { ...active.audio, uri: status.url } };
+      // A notification Stop saves through the same durable queue as the app Stop button.
+      void stopRecording();
+    } else {
+      setError(status.error || 'The microphone stopped unexpectedly. Please try recording again.');
+      void setAudioModeAsync({ allowsRecording: false, allowsBackgroundRecording: false }).catch(() => {});
+    }
+  });
+  const recorderState = useAudioRecorderState(recorder, 500);
+  useEffect(() => {
+    if (activeRecording.current && recorderState.durationMillis > 0) {
+      activeRecording.current.seconds = recorderState.durationMillis / 1000;
+    }
+    // Expo handles interruption pause/resume natively; do not compete for the microphone.
+  }, [recorderState]);
 
-  const startRecording = async () => {
-    if (operationInProgress.current || recording || unsaved.current) return;
+  async function startRecording() {
+    if (operationInProgress.current || activeRecording.current || unsaved.current) return;
     setError(null);
     if (!user) {
       setError('Please sign in before recording a conversation.');
@@ -52,72 +62,53 @@ function useRecorderState() {
     operationInProgress.current = true;
     setStarting(true);
     try {
-      const permission = await Audio.requestPermissionsAsync();
+      if (!await requestAIConsent(user.id, Platform.OS !== 'web')) return;
+      const permission = await AudioModule.requestRecordingPermissionsAsync();
       if (!permission.granted) {
         setError('Allow microphone access to record a conversation.');
         return;
       }
-
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
-        interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-        interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-        shouldDuckAndroid: false,
-        playThroughEarpieceAndroid: false,
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+        allowsBackgroundRecording: Platform.OS !== 'web',
+        interruptionMode: 'doNotMix',
+        shouldRouteThroughEarpiece: false,
       });
-
-      setForegroundService(true);
-      const created = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY,
-        (status) => {
-          setRecordingMs(status.durationMillis ?? 0);
-          // Interruption (e.g. phone call) paused a still-valid recording: resume.
-          // Retries every status tick until the audio session is available again.
-          if (liveRecording.current && status.canRecord && !status.isRecording && !status.isDoneRecording) {
-            liveRecording.current.startAsync().catch(() => {});
-          }
-        },
-        500
-      );
-      liveRecording.current = created.recording;
-      owner.current = user.id;
-      startedAt.current = Date.now();
-      setRecordingMs(created.status.durationMillis ?? 0);
-      setRecording(created.recording);
-    } catch {
-      setForegroundService(false);
-      setError('Could not start the microphone recording.');
+      await recorder.prepareToRecordAsync();
+      activeRecording.current = {
+        id: recordingId(), userId: user.id, startedAt: new Date().toISOString(), seconds: 0,
+        audio: { uri: Platform.OS === 'web' ? '' : recorder.uri ?? '', name: recordingName(), type: recordingMimeType() },
+      };
+      recorder.record();
+      setRecording(!!activeRecording.current);
+    } catch (err) {
+      activeRecording.current = null;
+      await setAudioModeAsync({ allowsRecording: false, allowsBackgroundRecording: false }).catch(() => {});
+      setError(friendlyErrorMessage(err, 'Could not start the microphone recording.'));
     } finally {
       operationInProgress.current = false;
       setStarting(false);
+      if (unsaved.current) void stopRecording();
     }
-  };
+  }
 
-  const stopRecording = async () => {
-    if (operationInProgress.current || (!recording && !unsaved.current)) return;
-
+  async function stopRecording() {
+    if (operationInProgress.current || (!activeRecording.current && !unsaved.current)) return;
     operationInProgress.current = true;
     setSaving(true);
     setError(null);
     try {
-      if (!unsaved.current && recording) {
-        liveRecording.current = null;
-        const status = await recording.stopAndUnloadAsync();
-        setRecording(null);
-        const uri = recording.getURI();
+      const active = activeRecording.current;
+      if (!unsaved.current && active) {
+        active.seconds = recorder.getStatus().durationMillis / 1000 || active.seconds;
+        stoppingManually.current = true;
+        await recorder.stop();
+        const uri = recorder.uri;
         if (!uri) throw new Error('Missing recording URI');
-
-        if (!owner.current) throw new Error('Missing recording owner');
-        unsaved.current = {
-          id: recordingId(), userId: owner.current,
-          startedAt: new Date(startedAt.current ?? Date.now()).toISOString(),
-          audio: { uri, name: recordingName(), type: recordingMimeType() },
-          seconds: (status.durationMillis || recordingMs) / 1000,
-        };
-        setForegroundService(false);
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
+        unsaved.current = { ...active, audio: { ...active.audio, uri } };
+        activeRecording.current = null;
+        setRecording(false);
       }
       if (!unsaved.current) return;
       await queue.enqueue(unsaved.current);
@@ -128,25 +119,25 @@ function useRecorderState() {
         ? 'Recording is not saved yet. Keep Mirra open, free some device storage, then save again.'
         : friendlyErrorMessage(err, 'Could not finish recording. Please try stopping it again.'));
     } finally {
-      setForegroundService(false);
-      setRecordingMs(0);
-      startedAt.current = null;
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
+      if (!activeRecording.current) {
+        await setAudioModeAsync({ allowsRecording: false, allowsBackgroundRecording: false }).catch(() => {});
+      }
+      stoppingManually.current = false;
       setSaving(false);
       operationInProgress.current = false;
     }
-  };
+  }
 
-  const toggleRecording = () => recording || unsaved.current ? stopRecording() : startRecording();
+  const toggleRecording = () => activeRecording.current || unsaved.current ? stopRecording() : startRecording();
 
   return {
-    isRecording: !!recording,
+    isRecording: recording,
     ...queue,
     isSavingRecording: saving,
     isStartingRecording: starting,
     hasUnsavedRecording: !!unsaved.current,
     error,
-    recordingSeconds: recordingMs / 1000,
+    recordingSeconds: recording ? recorderState.durationMillis / 1000 : 0,
     startRecording,
     stopRecording,
     toggleRecording,

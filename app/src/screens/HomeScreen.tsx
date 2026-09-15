@@ -4,7 +4,7 @@ import { View, Pressable, StyleSheet, Animated, Easing, ActivityIndicator, Alert
 import Svg, { Defs, RadialGradient, Stop, Circle, Rect, Path } from 'react-native-svg';
 import { useRouter } from 'expo-router';
 import { Screen } from '@/components/Screen';
-import { Body, Serif, SerifItalic, Eyebrow } from '@/components/Typography';
+import { Body, Serif, Eyebrow } from '@/components/Typography';
 import { Icon } from '@/components/Icon';
 import { colors, fonts } from '@/theme/tokens';
 import { ConversationListItem } from '@/models/conversation';
@@ -100,8 +100,9 @@ function RecentRow({ item, isLast, onPress }: { item: ConversationListItem; isLa
       <View style={{ flex: 1, minWidth: 0 }}>
         <Serif style={styles.recentTitle}>{item.title}</Serif>
         <Body style={styles.recentMeta}>
-          {item.when} · {item.duration} · <SerifItalic style={styles.recentNote}>{item.note}</SerifItalic>
+          {item.when} · {item.duration}
         </Body>
+        <Serif style={styles.recentNote}>{item.note}</Serif>
       </View>
       <Icon.chevron color="rgba(42,37,32,0.35)" />
     </Pressable>
@@ -136,7 +137,7 @@ export function HomeScreen() {
   const { listItems, loading, error, setDebriefs, refresh } = useDebriefs();
   const { importAudio, importing, error: importError } = useImportAudio();
   const { isRecording, isSavingRecording, isStartingRecording, hasUnsavedRecording, recordingSeconds,
-    pendingRecordings, uploadingId, latestDebrief, queueError, discard,
+    pendingRecordings, uploadingId, latestDebrief, queueError, needsAIConsent, resumeUploads, discard,
     toggleRecording, error: recordingError } = useRecordAudio();
   const busy = importing || isRecording || isSavingRecording || isStartingRecording || hasUnsavedRecording;
   useEffect(() => {
@@ -185,7 +186,7 @@ export function HomeScreen() {
           <Eyebrow>{today}</Eyebrow>
           <Serif style={styles.greetingTitle}>
             Good evening,{'\n'}
-            <SerifItalic style={styles.greetingTitle}>{name}.</SerifItalic>
+            {name}.
           </Serif>
         </View>
         <ImportButton onPress={handleImport} loading={importing} disabled={busy && !importing} />
@@ -197,6 +198,7 @@ export function HomeScreen() {
         <RecordButton size={172} recording={isRecording} loading={isSavingRecording || isStartingRecording}
           disabled={importing} onPress={handleRecord} />
         <Body style={styles.heroHint}>{heroHint}</Body>
+        <Body style={styles.consentHint}>Get everyone’s consent to recording and AI analysis.</Body>
         {recordingError ? <Body accessibilityRole="alert" style={styles.audioError}>{recordingError}</Body> : null}
         {importError ? <Body accessibilityRole="alert" style={styles.audioError}>{importError}</Body> : null}
         {queueError ? <Body accessibilityRole="alert" style={styles.audioError}>{queueError}</Body> : null}
@@ -204,8 +206,14 @@ export function HomeScreen() {
           <View style={styles.pending}>
             <Body style={styles.pendingHint} accessibilityLiveRegion="polite">
               {pendingRecordings.length} {pendingRecordings.length === 1 ? 'recording' : 'recordings'} saved on this device.
-              {'\n'}Uploads automatically when Mirra is open and connected. You can keep recording.
+              {'\n'}{needsAIConsent ? 'AI analysis is paused until you allow sharing with OpenAI.'
+                : 'Uploads automatically when Mirra is open and connected. You can keep recording.'}
             </Body>
+            {needsAIConsent ? (
+              <Pressable accessibilityRole="button" onPress={resumeUploads} style={styles.recoveryButton}>
+                <Body>Review privacy choice</Body>
+              </Pressable>
+            ) : null}
             {pendingRecordings.map(recording => (
               <View key={recording.id} style={styles.pendingItem}>
                 <Body style={styles.pendingHint}>
@@ -241,7 +249,7 @@ export function HomeScreen() {
             />
           ))}
           {!loading && !error && listItems.length === 0 && (
-            <SerifItalic style={styles.emptyRecent}>No conversations yet.</SerifItalic>
+            <Serif style={styles.emptyRecent}>No conversations yet.</Serif>
           )}
         </View>
       </View>
@@ -252,7 +260,7 @@ export function HomeScreen() {
 const styles = StyleSheet.create({
   pendingItem: { borderTopWidth: 1, borderTopColor: colors.hairline, paddingTop: 12, width: '100%' },
   header: { paddingHorizontal: 24, flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
-  greetingTitle: { fontSize: 34, lineHeight: 36, marginTop: 8, color: colors.ink },
+  greetingTitle: { fontSize: 34, lineHeight: 42, marginTop: 8, color: colors.ink },
   greet: { fontSize: 13.5, color: colors.muted, marginTop: 10, lineHeight: 20, maxWidth: 300, paddingHorizontal: 24 },
   importBtn: {
     marginTop: 2, width: 44, height: 44, borderRadius: 22,
@@ -270,16 +278,17 @@ const styles = StyleSheet.create({
   micIcon: { zIndex: 2, elevation: 2 },
   stopIcon: { zIndex: 2, width: 42, height: 42, borderRadius: 12, backgroundColor: '#fff' },
   heroHint: { fontSize: 12.5, color: colors.muted, letterSpacing: 0.7, textTransform: 'uppercase', fontFamily: fonts.bodyMedium },
+  consentHint: { fontSize: 12, lineHeight: 18, color: colors.ink2, textAlign: 'center', maxWidth: 280 },
   recentSection: { paddingHorizontal: 24, paddingTop: 20 },
   recentHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4 },
   recentCount: { fontSize: 11.5, color: colors.muted },
   recentRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14 },
   rowBorder: { borderBottomWidth: 1, borderBottomColor: colors.hairline2 },
   dot: { width: 8, height: 8, borderRadius: 4 },
-  recentTitle: { fontSize: 19, lineHeight: 21, color: colors.ink },
+  recentTitle: { fontSize: 22, lineHeight: 30, color: colors.ink },
   recentMeta: { fontSize: 11.5, color: colors.muted, marginTop: 4, letterSpacing: 0.2 },
-  recentNote: { fontSize: 13, color: colors.muted },
-  emptyRecent: { textAlign: 'center', paddingVertical: 34, color: colors.muted, fontSize: 13, lineHeight: 20 },
+  recentNote: { fontSize: 18, lineHeight: 26, color: colors.ink2, marginTop: 6 },
+  emptyRecent: { textAlign: 'center', paddingVertical: 34, color: colors.ink2, fontSize: 18, lineHeight: 26 },
   audioError: { textAlign: 'center', paddingHorizontal: 24, color: colors.coral, fontSize: 13, lineHeight: 19 },
   pending: { padding: 16, marginHorizontal: 24, borderRadius: 16, backgroundColor: colors.card, alignSelf: 'stretch' },
   pendingHint: { fontSize: 13, lineHeight: 19, textAlign: 'center', color: colors.muted },

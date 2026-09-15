@@ -386,8 +386,15 @@ def delete_debrief(
     user_id: str = Depends(verify_token),
     db: Client = Depends(get_db),
 ):
-    # Scope the mutation itself: service-role access bypasses database RLS.
-    db.table("debriefs").delete().eq("user_id", user_id).eq("id", str(debrief_id)).execute()
+    # Scope the service-role write to its owner. An absent row is already deleted,
+    # so retrying after a lost response is safe and never reveals another user's data.
+    (
+        db.table("debriefs")
+        .delete(returning="minimal")
+        .eq("user_id", user_id)
+        .eq("id", str(debrief_id))
+        .execute()
+    )
     return Response(status_code=204)
 
 
