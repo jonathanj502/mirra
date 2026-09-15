@@ -433,7 +433,8 @@ export async function uploadSession(
     const blob = await fetch(audio.uri).then((response) => response.blob());
     form.append('audio', blob, audio.name);
   } else {
-    form.append('audio', new File(audio.uri), audio.name);
+    const file = new File(audio.uri);
+    form.append('audio', file.type === audio.type ? file : file.slice(0, file.size, audio.type), audio.name);
   }
   form.append('started_at', new Date().toISOString());
   if (metadata.title) form.append('title', metadata.title);

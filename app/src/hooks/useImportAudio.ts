@@ -22,24 +22,24 @@ const AUDIO_TYPES = [
 
 async function getAudioDuration(uri: string): Promise<number> {
   const player = createAudioPlayer({ uri });
+  let subscription: ReturnType<typeof player.addListener> | undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     if (!player.isLoaded) {
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          subscription.remove();
+        timeout = setTimeout(() => {
           reject(new Error('Could not read the audio file. Try another format.'));
         }, 10000);
-        const subscription = player.addListener('playbackStatusUpdate', (status) => {
-          if (status.isLoaded) {
-            clearTimeout(timeout);
-            subscription.remove();
-            resolve();
-          }
+        subscription = player.addListener('playbackStatusUpdate', (status) => {
+          if (status.isLoaded) resolve();
         });
+        if (player.isLoaded) resolve();
       });
     }
     return Number.isFinite(player.duration) ? player.duration : 0;
   } finally {
+    clearTimeout(timeout);
+    subscription?.remove();
     player.remove();
   }
 }

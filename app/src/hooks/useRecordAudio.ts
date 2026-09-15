@@ -18,10 +18,7 @@ function recordingMimeType() {
 
 export function useRecordAudio() {
   const { accessToken, user } = useAuth();
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const recorderState = useAudioRecorderState(recorder, 500);
   const [recording, setRecording] = useState(false);
-  const recordingMs = recorderState.durationMillis;
   const [uploading, setUploading] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,13 +28,31 @@ export function useRecordAudio() {
     seconds: number;
   } | null>(null);
   const operationInProgress = useRef(false);
-  const startedAt = useRef<number | null>(null);
-  useEffect(() => {
-    if (recording && !operationInProgress.current && recorderState.canRecord && !recorderState.isRecording) {
-      // Resume a paused, still-valid recording after an audio interruption.
-      try { recorder.record(); } catch { /* Retry on the next status update. */ }
+  const activeRecording = useRef<{ uri: string | null; durationMillis: number } | null>(null);
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY, (status) => {
+    const active = activeRecording.current;
+    if (!status.isFinished || !active || (status.url && active.uri && status.url !== active.uri)) return;
+    activeRecording.current = null;
+    setRecording(false);
+    if (status.url) {
+      setPendingRecording({
+        audio: { uri: status.url, name: recordingName(), type: recordingMimeType() },
+        seconds: active.durationMillis / 1000,
+      });
     }
-  }, [recording, recorderState, recorder]);
+    if (status.hasError || !status.url) {
+      setError(status.error || 'The microphone stopped unexpectedly. Please try recording again.');
+    }
+    void setAudioModeAsync({ allowsRecording: false, allowsBackgroundRecording: false }).catch(() => {});
+  });
+  const recorderState = useAudioRecorderState(recorder, 500);
+  const recordingMs = recorderState.durationMillis;
+  useEffect(() => {
+    if (activeRecording.current && recorderState.durationMillis > 0) {
+      activeRecording.current.durationMillis = recorderState.durationMillis;
+    }
+    // Expo handles interruption pause/resume natively; do not restart while another app owns the mic.
+  }, [recorderState]);
 
   const startRecording = useCallback(async () => {
     if (operationInProgress.current || recording || pendingRecording) return;
@@ -66,7 +81,7 @@ export function useRecordAudio() {
       });
       await recorder.prepareToRecordAsync();
       recorder.record();
-      startedAt.current = Date.now();
+      activeRecording.current = { uri: recorder.uri, durationMillis: 0 };
       setRecording(true);
     } catch (err) {
       setError(friendlyErrorMessage(err, 'Could not start the microphone recording.'));
@@ -85,7 +100,9 @@ export function useRecordAudio() {
     try {
       let pending = pendingRecording;
       if (!pending && recording) {
-        const durationMillis = recorder.getStatus().durationMillis;
+        const durationMillis = recorder.getStatus().durationMillis || activeRecording.current?.durationMillis || 0;
+        // This path handles the app's Stop button; ignore its duplicate native completion event.
+        activeRecording.current = null;
         await recorder.stop();
         setRecording(false);
         const uri = recorder.uri;
@@ -93,7 +110,7 @@ export function useRecordAudio() {
 
         pending = {
           audio: { uri, name: recordingName(), type: recordingMimeType() },
-          seconds: durationMillis > 0 ? durationMillis / 1000 : startedAt.current ? (Date.now() - startedAt.current) / 1000 : 0,
+          seconds: durationMillis / 1000,
         };
         setPendingRecording(pending);
         await setAudioModeAsync({ allowsRecording: false, allowsBackgroundRecording: false }).catch(() => {});
@@ -115,7 +132,6 @@ export function useRecordAudio() {
       setError(message);
       return null;
     } finally {
-      startedAt.current = null;
       await setAudioModeAsync({ allowsRecording: false, allowsBackgroundRecording: false }).catch(() => {});
       setUploading(false);
       operationInProgress.current = false;

@@ -352,6 +352,146 @@ test('audio import waits for metadata and releases the SDK 57 player without pla
   assert.equal(unsubscribed, 1);
 });
 
+test('audio import handles metadata becoming ready before its listener is attached', async () => {
+  const state = hooks();
+  let released = 0;
+  let unsubscribed = 0;
+  const player = {
+    isLoaded: false, duration: 8,
+    addListener() {
+      this.isLoaded = true; // The native ready event was already emitted.
+      return { remove() { unsubscribed++; } };
+    },
+    remove() { released++; },
+  };
+  const { useImportAudio } = load('hooks/useImportAudio.ts', {
+    react: state.react, '@/auth/AuthContext': auth, '@/api/http': http,
+    '@/privacy/aiConsent': consentGranted,
+    '@/utils/timeFormat': { titleFromFilename: () => 'Conversation' },
+    '@/api/client': { async uploadSession(_, audio, metadata) {
+      assert.equal(metadata.clientDurationSeconds, 8);
+      return { debrief: { id: 'imported' } };
+    } },
+    'expo-audio': { createAudioPlayer: () => player },
+    'expo-document-picker': { async getDocumentAsync() {
+      return { canceled: false, assets: [{ uri: 'file:///clip.m4a', name: 'clip.m4a', size: 100 }] };
+    } },
+  });
+  assert.deepEqual(await state.render(useImportAudio).importAudio(), { id: 'imported' });
+  assert.equal(released, 1);
+  assert.equal(unsubscribed, 1);
+});
+
+test('native uploads preserve the supplied MIME and bytes for files with missing or different inferred types', async (t) => {
+  let inferredType;
+  const { uploadSession } = load('api/client.ts', {
+    '@/api/http': http,
+    'expo-file-system': { File: class extends Blob {
+      constructor(uri) {
+        assert.equal(uri, 'file:///cache/provider-audio');
+        super(['audio bytes'], { type: inferredType });
+      }
+    } },
+  });
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(url, 'http://test.invalid/sessions');
+    assert.equal(options.headers.Authorization, 'Bearer test-token');
+    const audio = options.body.get('audio');
+    assert.equal(audio.type, 'audio/mpeg');
+    assert.equal(audio.name, 'provider-audio');
+    assert.equal(await audio.text(), 'audio bytes');
+    return Response.json({ debrief: { id: 'saved', stats: {} }, used_this_month: 1, remaining: 4 });
+  });
+  for (inferredType of ['', 'application/octet-stream', 'audio/mpeg']) {
+    assert.equal((await uploadSession('test-token', {
+      uri: 'file:///cache/provider-audio', name: 'provider-audio', type: 'audio/mpeg',
+    }, {})).debrief.id, 'saved');
+  }
+});
+
+test('native interruptions do not force resume; notification stop retains one clip and native errors clear recording', async () => {
+  const state = hooks();
+  const effects = [];
+  const uploads = [];
+  let listener;
+  let starts = 0;
+  let stops = 0;
+  let status = { durationMillis: 0, isRecording: false, canRecord: false };
+  const recorder = {
+    uri: null,
+    async prepareToRecordAsync() { this.uri = `file:///clip-${starts + 1}.m4a`; },
+    record() { starts++; status = { durationMillis: 0, isRecording: true, canRecord: true }; },
+    async stop() {
+      stops++;
+      status = { durationMillis: 0, isRecording: false, canRecord: false };
+      listener({ isFinished: true, hasError: false, url: this.uri });
+    },
+    getStatus: () => status,
+  };
+  const { useRecordAudio } = load('hooks/useRecordAudio.ts', {
+    react: { ...state.react, useEffect: effect => effects.push(effect) },
+    'react-native': { Platform: { OS: 'android' } },
+    '@/auth/AuthContext': auth, '@/api/http': http, '@/privacy/aiConsent': consentGranted,
+    '@/api/client': { async uploadSession(_, audio, metadata) {
+      uploads.push({ audio, metadata });
+      return { debrief: { id: 'saved' } };
+    } },
+    'expo-audio': {
+      AudioModule: { requestRecordingPermissionsAsync: async () => ({ granted: true }) },
+      setAudioModeAsync: async () => {}, RecordingPresets: { HIGH_QUALITY: {} },
+      // SDK 57 retains the first callback for the lifetime of this recorder.
+      useAudioRecorder: (_, callback) => { listener ??= callback; return recorder; },
+      useAudioRecorderState: () => status,
+    },
+  });
+  function render() {
+    const result = state.render(useRecordAudio);
+    effects.splice(0).forEach(effect => effect());
+    return result;
+  }
+  await render().startRecording();
+  status = { durationMillis: 7500, isRecording: false, canRecord: true };
+  render(); // A phone call has paused the recorder; Expo owns its eventual resume.
+  assert.equal(starts, 1);
+  const completed = { isFinished: true, hasError: false, url: recorder.uri };
+  status = { durationMillis: 0, isRecording: false, canRecord: false };
+  listener(completed); // Android's notification Stop bypasses the app Stop button.
+  assert.equal(render().isRecording, false);
+  assert.equal(render().hasPendingRecording, true);
+  assert.equal(uploads.length, 0);
+  await render().startRecording();
+  assert.equal(starts, 1);
+  assert.deepEqual(await render().stopRecording(), { id: 'saved' });
+  assert.equal(stops, 0);
+  assert.equal(uploads[0].audio.uri, completed.url);
+  assert.equal(uploads[0].metadata.clientDurationSeconds, 7.5);
+  listener(completed);
+  assert.equal(render().hasPendingRecording, false);
+
+  await render().startRecording();
+  listener(completed); // A late event for the previous file cannot stop the new clip.
+  assert.equal(render().isRecording, true);
+  listener({ isFinished: true, hasError: true, url: null, error: 'Microphone disconnected' });
+  assert.equal(render().isRecording, false);
+  assert.equal(render().hasPendingRecording, false);
+  assert.equal(render().error, 'Microphone disconnected');
+
+  await render().startRecording();
+  status = { durationMillis: 2500, isRecording: true, canRecord: true };
+  await render().stopRecording();
+  listener({ isFinished: true, hasError: false, url: recorder.uri });
+  assert.equal(render().hasPendingRecording, false);
+  assert.equal(stops, 1);
+  assert.equal(uploads.length, 2);
+  assert.equal(uploads[1].metadata.clientDurationSeconds, 2.5);
+
+  await render().startRecording();
+  listener({ isFinished: true, hasError: false, mediaServicesDidReset: true, url: null });
+  assert.equal(render().isRecording, false);
+  assert.equal(render().hasPendingRecording, false);
+  assert.match(render().error, /microphone stopped unexpectedly/);
+});
+
 test('AI consent requires explicit approval, survives restart per account, and can be withdrawn', async () => {
   const saved = new Map();
   const dialogs = [];
