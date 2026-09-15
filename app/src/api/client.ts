@@ -434,7 +434,7 @@ export async function uploadSession(
     form.append('audio', blob, audio.name);
   } else {
     const file = new File(audio.uri);
-    form.append('audio', file.type === audio.type ? file : file.slice(0, file.size, audio.type), audio.name);
+    form.append('audio', file.slice(0, file.size, audio.type), audio.name);
   }
   form.append('started_at', new Date().toISOString());
   if (metadata.title) form.append('title', metadata.title);

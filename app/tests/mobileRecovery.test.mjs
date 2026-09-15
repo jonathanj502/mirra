@@ -382,14 +382,21 @@ test('audio import handles metadata becoming ready before its listener is attach
   assert.equal(unsubscribed, 1);
 });
 
-test('native uploads preserve the supplied MIME and bytes for files with missing or different inferred types', async (t) => {
+test('native uploads preserve the supplied filename, MIME and bytes independently of the cache filename', async (t) => {
   let inferredType;
   const { uploadSession } = load('api/client.ts', {
     '@/api/http': http,
-    'expo-file-system': { File: class extends Blob {
+    // Expo's filesystem File implements Blob without extending it. FormData only
+    // honors the third filename argument for real Blobs, so model that distinction.
+    'expo-file-system': { File: class {
       constructor(uri) {
-        assert.equal(uri, 'file:///cache/provider-audio');
-        super(['audio bytes'], { type: inferredType });
+        assert.equal(uri, 'file:///cache/cached-uuid');
+        this.name = 'cached-uuid';
+        this.type = inferredType;
+        this.size = 11;
+      }
+      slice(start, end, type) {
+        return new Blob(['audio bytes']).slice(start, end, type);
       }
     } },
   });
@@ -404,7 +411,7 @@ test('native uploads preserve the supplied MIME and bytes for files with missing
   });
   for (inferredType of ['', 'application/octet-stream', 'audio/mpeg']) {
     assert.equal((await uploadSession('test-token', {
-      uri: 'file:///cache/provider-audio', name: 'provider-audio', type: 'audio/mpeg',
+      uri: 'file:///cache/cached-uuid', name: 'provider-audio', type: 'audio/mpeg',
     }, {})).debrief.id, 'saved');
   }
 });
