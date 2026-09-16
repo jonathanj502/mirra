@@ -12,7 +12,7 @@ const esc = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt
 for (const [key, host] of [['appStoreUrl', 'apps.apple.com'], ['playStoreUrl', 'play.google.com']]) {
   if (config[key] && (new URL(config[key]).protocol !== 'https:' || new URL(config[key]).hostname !== host)) throw Error(`Invalid ${key}`);
 }
-for (const file of ['styles.css', 'mark.svg', 'delete-account.js', 'site.js', 'conversation.webp', 'conversation-small.webp']) copyFileSync(join(root, file), join(out, file));
+for (const file of ['styles.css', 'mark.svg', 'delete-account.js', 'site.js']) copyFileSync(join(root, file), join(out, file));
 for (const [folder, file, target] of [
   ['instrument-serif', '400Regular/InstrumentSerif_400Regular.ttf', 'InstrumentSerif-Regular.ttf'],
   ['inter', '400Regular/Inter_400Regular.ttf', 'Inter-Regular.ttf'],
