@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
-import { uploadSession } from '@/api/client';
+import { discardRecording, uploadSession } from '@/api/client';
 import { ApiError, friendlyErrorMessage } from '@/api/http';
 import { supabase } from '@/api/supabase';
 import { useAuth } from '@/auth/AuthContext';
@@ -19,11 +19,13 @@ export function usePendingRecordings() {
   const userId = user?.id;
   const [pending, setPending] = useState<(PendingRecording & { error?: string })[]>([]);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const [uploadMessage, setUploadMessage] = useState('Uploading and analyzing…');
   const [completed, setCompleted] = useState<{ userId: string; debrief: DebriefCard } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [needsAIConsent, setNeedsAIConsent] = useState(false);
   const running = useRef(false);
   const busyId = useRef<string | null>(null);
+  const discarding = useRef(new Set<string>());
   const failures = useRef(new Map<string, { retryAt: number; message: string }>());
   const wake = useRef<() => void>(() => {});
 
@@ -54,6 +56,7 @@ export function usePendingRecordings() {
         for (const row of rows) {
           if (cancelled || pauseRequested.current || (AppState.currentState && AppState.currentState !== 'active')) break;
           if ((failures.current.get(row.id)?.retryAt ?? 0) > Date.now()) continue;
+          if (discarding.current.has(row.id)) continue;
           let audio: PendingRecording['audio'] | undefined;
           let stage = 'auth';
           busyId.current = row.id;
@@ -66,6 +69,7 @@ export function usePendingRecordings() {
             stage = 'privacy';
             if (!await checkConsent()) break;
             setUploadingId(row.id);
+            setUploadMessage('Preparing upload…');
             stage = 'storage';
             audio = await readPendingAudio(row);
             if (cancelled || pauseRequested.current) break;
@@ -75,29 +79,38 @@ export function usePendingRecordings() {
             const controller = new AbortController();
             activeRequest = controller;
             abortUpload.current = controller;
-            // Bound a stalled connection. Retrying this ID returns the same server debrief.
-            const timeout = setTimeout(() => controller.abort(), 10 * 60_000);
             let response;
             try {
               response = await uploadSession(data.session.access_token, audio, {
                 title: row.title || 'Recorded conversation', clientDurationSeconds: row.seconds,
                 recordingId: row.id, startedAt: row.startedAt,
-              }, controller.signal);
+              }, controller.signal, {
+                onProgress: message => { if (!cancelled) setUploadMessage(message); },
+                accessToken: async () => {
+                  const refreshed = await supabase.auth.getSession();
+                  if (cancelled || pauseRequested.current || refreshed.data.session?.user.id !== row.userId) {
+                    throw new ApiError('Upload is paused until you sign in to this account.', 401);
+                  }
+                  if (refreshed.error) throw refreshed.error;
+                  if (!await checkConsent()) throw new ApiError('AI processing is paused until you allow it.', 403);
+                  return refreshed.data.session.access_token;
+                },
+              });
             } finally {
-              clearTimeout(timeout);
               activeRequest = undefined;
               abortUpload.current = null;
             }
             // Delete only after the server acknowledges a saved debrief, even if sign-out intervened.
+            if (discarding.current.has(row.id)) break;
             stage = 'storage';
             await removePendingRecording(row);
             failures.current.delete(row.id);
-            if (!cancelled) {
+            if (!cancelled && !discarding.current.has(row.id)) {
               setCompleted({ userId, debrief: response.debrief });
               setPending(items => items.filter(item => item.id !== row.id));
             }
           } catch (err) {
-            if (cancelled || pauseRequested.current) break;
+            if (cancelled || pauseRequested.current || discarding.current.has(row.id)) break;
             const status = err instanceof ApiError ? err.status : 0;
             const delay = [410, 413, 415, 422].includes(status) ? Infinity : status === 402 ? 300_000 : status >= 500 || status === 429 ? 60_000 : 15_000;
             const message = stage === 'privacy' ? 'Could not check your privacy choice. Upload is paused.'
@@ -147,13 +160,21 @@ export function usePendingRecordings() {
   }
 
   async function discard(recording: PendingRecording) {
-    if (busyId.current === recording.id || recording.userId !== userId) return;
+    if (recording.userId !== userId || discarding.current.has(recording.id)) return;
+    discarding.current.add(recording.id);
+    if (busyId.current === recording.id) abortUpload.current?.abort();
     try {
+      const { data, error: authError } = await supabase.auth.getSession();
+      if (authError) throw authError;
+      if (data.session?.user.id !== recording.userId) throw new Error('Sign in to this account to discard its recording.');
+      await discardRecording(data.session.access_token, recording.id);
       await removePendingRecording(recording);
       failures.current.delete(recording.id);
       setPending(items => items.filter(item => item.id !== recording.id));
     } catch (err) {
       setError(friendlyErrorMessage(err, 'Could not discard the recording.'));
+    } finally {
+      discarding.current.delete(recording.id);
     }
   }
 
@@ -173,7 +194,7 @@ export function usePendingRecordings() {
     pauseUploads: () => { pauseRequested.current = true; abortUpload.current?.abort(); setPaused(true); },
     unpauseUploads: () => { pauseRequested.current = false; setPaused(false); wake.current(); },
     pendingRecordings: pending.filter(row => row.userId === userId),
-    uploadingId, queueError: error, enqueue, discard,
+    uploadingId, uploadMessage, queueError: error, enqueue, discard,
     latestDebrief: completed && completed.userId === userId ? completed.debrief : null,
   };
 }

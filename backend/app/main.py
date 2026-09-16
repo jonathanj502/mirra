@@ -1,5 +1,6 @@
 import logging
 import traceback
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from threading import Lock, BoundedSemaphore
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -24,22 +25,21 @@ from app.reflection import generate_reflection
 from app.rate_limit import check_reflect_limit
 from app.pipeline import coordinator
 from app.pipeline.transcription import TranscriptionInputTooLarge
+from app.recording_jobs import RecordingJobs, RecordingUpload, recording_key, UPLOAD_CHUNK_BYTES, SUPPORTED_AUDIO_TYPES
 from app.usage import check_and_increment, get_usage, release
 from app.user_settings import fetch_user_settings, save_user_settings
 
-app = FastAPI(title="Mirra Backend")
+recording_jobs = RecordingJobs(settings.recording_storage_dir)
 
-MAX_AUDIO_BYTES = 25 * 1024 * 1024
-SUPPORTED_AUDIO_TYPES = {
-    "audio/aac",
-    "audio/mp4",
-    "audio/mpeg",
-    "audio/ogg",
-    "audio/wav",
-    "audio/x-m4a",
-    "audio/x-wav",
-    "audio/webm",
-}
+
+@asynccontextmanager
+async def lifespan(_app):
+    recording_jobs.start(_run_recording_job)
+    yield
+    recording_jobs.stop()
+
+
+app = FastAPI(title="Mirra Backend", lifespan=lifespan)
 
 USERNAME_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789_")
 
@@ -97,6 +97,8 @@ def ready(db: Client = Depends(get_db)):
             raise ValueError('Missing AI credential')
         db.table('debrief_deletions').select('debrief_id').limit(0).execute()
         db.table('user_settings').select('coaching_goal').limit(0).execute()
+        if not db.rpc('recording_uploads_ready').execute().data:
+            raise ValueError('Missing long-recording migration')
     except Exception:
         return JSONResponse(status_code=503, content={'status': 'not_ready'})
     return {'status': 'ready'}
@@ -261,17 +263,20 @@ def account_export(user_id: str = Depends(verify_token), db: Client = Depends(ge
         settings=fetch_user_settings(db, user_id),
         debriefs=rows,
         deleted_conversation_ids=deleted_ids,
+        pending_recordings=recording_jobs.export(user_id),
     )
 
 
 @app.delete("/account", status_code=204)
 def delete_account(user_id: str = Depends(verify_token), db: Client = Depends(get_db)):
     # Auth deletion cascades to debriefs, usage, and settings via their foreign keys.
-    try:
-        db.auth.admin.delete_user(user_id)
-    except Exception as exc:
-        if str(getattr(exc, "status", "")) != "404":
-            raise
+    with recording_jobs.lock:
+        try:
+            db.auth.admin.delete_user(user_id)
+        except Exception as exc:
+            if str(getattr(exc, "status", "")) != "404":
+                raise
+        recording_jobs.remove_user(user_id)
     return Response(status_code=204)
 
 
@@ -348,16 +353,17 @@ def _process_session(audio, started_at, client_duration_seconds, title, user_id,
     if content_type not in SUPPORTED_AUDIO_TYPES:
         raise HTTPException(status_code=415, detail="Unsupported audio type")
 
-    audio_bytes = audio.file.read(MAX_AUDIO_BYTES + 1)
-    if len(audio_bytes) > MAX_AUDIO_BYTES:
+    audio.file.seek(0, 2)
+    if audio.file.tell() > 25 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Audio file is too large")
+    audio.file.seek(0)
 
     reservation_month = check_and_increment(db, user_id)
     inserting = False
     try:
         user_settings = fetch_user_settings(db, user_id)
         try:
-            result = coordinator.run(audio_bytes, content_type=content_type, coaching_goal=user_settings.coaching_goal)
+            result = coordinator.run(audio.file, content_type=content_type, coaching_goal=user_settings.coaching_goal)
         except TranscriptionInputTooLarge as exc:
             raise HTTPException(status_code=413, detail="Recording is too large to transcribe. Use a shorter recording or upload M4A, MP3, or WebM.") from exc
         except coordinator.AudioDurationTooLong as exc:
@@ -445,7 +451,104 @@ def delete_debrief(
 ):
     # Scope the mutation itself: service-role access bypasses database RLS.
     db.rpc('delete_debrief_permanently', {'owner_id': user_id, 'target_id': str(debrief_id)}).execute()
+    recording_jobs.cancel(user_id, str(debrief_id))
     return Response(status_code=204)
+
+
+def _recording_result(db, user_id, key):
+    deleted = db.table('debrief_deletions').select('debrief_id').eq('user_id', user_id).eq('debrief_id', key).maybe_single().execute()
+    if deleted and isinstance(deleted.data, dict) and deleted.data.get('debrief_id') == key:
+        raise HTTPException(410, 'This conversation was deleted. Discard its saved audio copy.')
+    row = _fetch_debrief_row(db, user_id, key)
+    return {"status": "completed", **_session_response(db, user_id, row)} if row else None
+
+
+@app.post('/recordings')
+def start_recording_upload(payload: RecordingUpload, user_id: str = Depends(verify_token), db: Client = Depends(get_db)):
+    completed = _recording_result(db, user_id, recording_key(user_id, payload.recording_id))
+    if completed:
+        return completed
+    if get_usage(db, user_id)['remaining'] <= 0:
+        raise HTTPException(402, 'Monthly debrief limit reached')
+    with recording_jobs.lock:
+        # A signed JWT can outlive account deletion. Do not recreate server audio for it.
+        try:
+            account = db.auth.admin.get_user_by_id(user_id)
+        except Exception as exc:
+            if str(getattr(exc, 'status', '')) == '404':
+                raise HTTPException(401, 'This account is no longer available.') from exc
+            raise
+        if not account.user or account.user.id != user_id:
+            raise HTTPException(401, 'This account is no longer available.')
+        return recording_jobs.create(user_id, payload)
+
+
+@app.get('/recordings/{recording_id}')
+def recording_status(recording_id: str, user_id: str = Depends(verify_token), db: Client = Depends(get_db)):
+    key = recording_key(user_id, recording_id)
+    return _recording_result(db, user_id, key) or recording_jobs.status(user_id, key)
+
+
+@app.put('/recordings/{recording_id}/audio')
+async def upload_recording_chunk(recording_id: str, request: Request, offset: int = Query(ge=0), user_id: str = Depends(verify_token)):
+    # Authenticate before reading a bounded body. Byte offsets make lost acknowledgements resumable.
+    key = recording_key(user_id, recording_id)
+    recording_jobs.status(user_id, key)
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > UPLOAD_CHUNK_BYTES:
+            raise HTTPException(413, 'Audio upload chunk is too large')
+        data.extend(chunk)
+    return recording_jobs.append(user_id, key, offset, data)
+
+
+@app.post('/recordings/{recording_id}/complete')
+def finish_recording_upload(recording_id: str, user_id: str = Depends(verify_token), db: Client = Depends(get_db)):
+    key = recording_key(user_id, recording_id)
+    return _recording_result(db, user_id, key) or recording_jobs.enqueue(user_id, key)
+
+
+@app.delete('/recordings/{recording_id}', status_code=204)
+def discard_recording(recording_id: str, user_id: str = Depends(verify_token), db: Client = Depends(get_db)):
+    key = recording_key(user_id, recording_id)
+    db.rpc('delete_debrief_permanently', {'owner_id': user_id, 'target_id': key}).execute()
+    recording_jobs.cancel(user_id, key)
+    return Response(status_code=204)
+
+
+def _run_recording_job(job, path, progress):
+    db = get_db()
+    user_id, key = job['user_id'], job['id']
+    with _pipeline_slot:
+        if _recording_result(db, user_id, key):
+            return
+        if get_usage(db, user_id)['remaining'] <= 0:
+            raise HTTPException(402, 'Monthly debrief limit reached')
+        # Auth tokens can expire while a job runs. Work is bound to its authenticated upload owner.
+        user_settings = fetch_user_settings(db, user_id)
+        try:
+            result = coordinator.run(path, content_type=job['content_type'], coaching_goal=user_settings.coaching_goal, progress=progress)
+        except coordinator.AudioDurationTooLong as exc:
+            raise HTTPException(413, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, 'Could not decode audio') from exc
+        progress(100)  # Recheck cancellation before committing.
+        metadata = {k: job[k] for k in ('started_at', 'client_duration_seconds', 'title', 'content_type') if job.get(k) is not None}
+        metadata.update(original_filename=job['filename'], coaching_goal=user_settings.coaching_goal)
+        save_transcripts = fetch_user_settings(db, user_id).save_transcripts
+        payload = {**result, 'session_id': str(uuid4()),
+                   'transcript': result['transcript'] if save_transcripts else None,
+                   'stats': {**result['stats'], 'metadata': {**result['stats'].get('metadata', {}), **metadata}}}
+        try:
+            # Atomic commit: retries and worker restarts cannot charge a recording twice.
+            db.rpc('complete_recording', {'owner_id': user_id, 'target_id': key,
+                                        'payload': payload, 'monthly_cap': settings.free_tier_cap}).execute()
+        except Exception as exc:
+            if 'monthly_debrief_limit' in str(exc):
+                raise HTTPException(402, 'Monthly debrief limit reached') from exc
+            if 'recording_deleted' in str(exc):
+                raise HTTPException(410, 'This recording was discarded.') from exc
+            raise
 
 
 @app.post("/reflect", response_model=ReflectResponse)

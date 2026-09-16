@@ -109,7 +109,7 @@ def test_account_export_returns_user_data_bundle():
     assert body["profile"]["total_conversations"] == 1
     assert body["settings"]["coaching_tone"] == "curious_gentle"
     assert body["settings"]["coaching_goal"] == "listening"
-    assert set(body) == {"exported_at", "user_id", "profile", "settings", "debriefs", "deleted_conversation_ids"}
+    assert set(body) == {"exported_at", "user_id", "profile", "settings", "debriefs", "deleted_conversation_ids", "pending_recordings"}
     assert body['deleted_conversation_ids'] == ['deleted-conversation']
     assert body["debriefs"][0]["id"] == ROW["id"]
     assert body["debriefs"][0]["transcript"] == ROW["transcript"]

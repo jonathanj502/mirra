@@ -128,13 +128,13 @@ def test_coordinator_keeps_quiet_user_turns_and_supplies_full_context(monkeypatc
     monkeypatch.setattr(coordinator, "analyze", analyze)
     result = coordinator.run(buf.getvalue(), "audio/wav")
     assert len(transcribe.call_args.args[0]) == sr * 4
-    assert result["stats"]["metadata"]["diarization"]["user_speaker"] == "A"
+    assert result["stats"]["metadata"]["diarization"]["user_speaker"] == "part1_A"
     assert result["stats"]["metadata"]["diarization"]["user_speaker_confirmed"] is False
     assert result["stats"]["total_word_count"] == 4
     assert result["stats"]["question_count"] == 1
     assert result["stats"]["filler_counts"] == [{"phrase": "um", "count": 1}]
-    assert "Speaker B: Why now?" in result["transcript"]
-    assert "Speaker A: What changed?" in result["transcript"]
+    assert "Speaker part1_B: Why now?" in result["transcript"]
+    assert "Speaker part1_A: What changed?" in result["transcript"]
     assert analyze.call_args.args == (result["transcript"], result["stats"])
 
 
@@ -163,19 +163,22 @@ def test_decode_uses_bounded_ffmpeg_and_cleans_up_temporary_audio(monkeypatch):
         assert path.read_bytes() == b"encoded m4a"
         assert command[command.index('-protocol_whitelist') + 1] == 'file,pipe'
         assert 'concat' not in command[command.index('-format_whitelist') + 1]
-        assert kwargs['timeout'] == 120
-        return type('Decoded', (), {'stdout': np.array([0.3, 0.5, 0.7], dtype='<f4').tobytes()})()
+        assert kwargs['timeout'] == 900
+        assert command[-1] != 'pipe:1'
+        Path(command[-1]).write_bytes(np.array([0.3, 0.5, 0.7], dtype='<f4').tobytes())
 
     monkeypatch.setattr(coordinator.subprocess, 'run', decode)
-    audio, sr = coordinator._decode_audio(b"encoded m4a", "audio/mp4")
-    np.testing.assert_allclose(audio, [0.3, 0.5, 0.7])
-    assert sr == 16000
+    with coordinator._decode_audio(b"encoded m4a", "audio/mp4") as (audio, sr):
+        assert isinstance(audio, np.memmap)
+        np.testing.assert_allclose(audio, [0.3, 0.5, 0.7])
+        assert sr == 16000
     assert paths[0].suffix == ".m4a"
     assert not paths[0].exists()
 
 
 def test_decode_rejects_audio_beyond_duration_limit(monkeypatch):
     monkeypatch.setattr(coordinator, 'MAX_AUDIO_SECONDS', 1)
-    monkeypatch.setattr(coordinator.subprocess, 'run', lambda *args, **kwargs: type('Decoded', (), {'stdout': np.zeros(16001, dtype='<f4').tobytes()})())
+    monkeypatch.setattr(coordinator.subprocess, 'run', lambda command, **kwargs: Path(command[-1]).write_bytes(np.zeros(16001, dtype='<f4').tobytes()))
     with pytest.raises(coordinator.AudioDurationTooLong):
-        coordinator._decode_audio(b'audio', 'audio/wav')
+        with coordinator._decode_audio(b'audio', 'audio/wav'):
+            pass

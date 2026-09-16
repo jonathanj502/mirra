@@ -46,7 +46,7 @@ def _words(transcript: str) -> list[str]:
 
 
 def _question_counts(transcript: str) -> tuple[int, int, int]:
-    questions = [part.strip().lower() for part in re.findall(r"([^?]+)\?", transcript)]
+    questions = [part.strip().lower() for part in transcript.split('?')[:-1] if part]
     open_count = 0
     for question in questions:
         lead_words = _words(question)[:4]
@@ -93,8 +93,11 @@ def _match_ratio(left: float, right: float) -> float:
 
 def _pitch_for_segments(audio: np.ndarray, sample_rate: int, segments: list[Segment]) -> float:
     pitches: list[float] = []
-    for segment in segments:
-        chunk = _segment_slice(audio, sample_rate, segment)
+    # Bounded, evenly distributed excerpts keep pitch estimation practical for day-long audio.
+    for index in np.linspace(0, len(segments) - 1, min(64, len(segments)), dtype=int):
+        segment = segments[index]
+        chunk = _segment_slice(audio, sample_rate, Segment(segment.start, min(segment.end, segment.start + 5), segment.energy))
+        chunk = np.nan_to_num(chunk, nan=0.0, posinf=0.0, neginf=0.0)
         if len(chunk) < max(400, sample_rate // 12):
             continue
         try:
@@ -126,14 +129,19 @@ def _energy_series(audio: np.ndarray, sample_rate: int, segments: list[Segment],
     for index in range(buckets):
         bucket_start = total_seconds * index / buckets
         bucket_end = total_seconds * (index + 1) / buckets
-        chunks: list[np.ndarray] = []
+        power, samples = 0.0, 0
         for segment in segments:
             overlap_start = max(segment.start, bucket_start)
             overlap_end = min(segment.end, bucket_end)
             if overlap_end <= overlap_start:
                 continue
-            chunks.append(_segment_slice(audio, sample_rate, Segment(overlap_start, overlap_end, segment.energy)))
-        values.append(_rms(np.concatenate(chunks)) if chunks else 0.0)
+            start, end = int(overlap_start * sample_rate), min(len(audio), int(overlap_end * sample_rate))
+            for offset in range(start, end, sample_rate * 30):
+                chunk = np.nan_to_num(np.asarray(audio[offset:min(end, offset + sample_rate * 30)], dtype=np.float64),
+                                      copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+                power += float(np.sum(chunk ** 2))
+                samples += len(chunk)
+        values.append(math.sqrt(power / samples) if samples else 0.0)
     return _normalize_series(values)
 
 
@@ -209,9 +217,10 @@ def compute_stats(
     interruptions, average_turn_offset_ms, turn_offset_series = _turn_offsets(all_segments, user_segments)
 
     user_energy = _mean_energy(user_segments)
+    user_keys = {_segment_key(user) for user in user_segments}
     other_segments = [
         segment for segment in all_segments
-        if _segment_key(segment) not in {_segment_key(user) for user in user_segments}
+        if _segment_key(segment) not in user_keys
     ]
     other_energy = _mean_energy(other_segments)
     volume_match = _match_ratio(user_energy, other_energy)

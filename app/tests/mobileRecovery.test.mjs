@@ -5,7 +5,7 @@ import React from 'react';
 import ts from 'typescript';
 
 // Run the actual TS hooks with controlled native/network boundaries; no microphone or account is used.
-function load(file, dependencies, window) {
+function load(file, dependencies, window, globals = {}) {
   const source = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');
   const { outputText } = ts.transpileModule(source, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022, esModuleInterop: true,
@@ -15,7 +15,7 @@ function load(file, dependencies, window) {
     assert.ok(name in dependencies, `Missing test dependency: ${name}`);
     return dependencies[name];
   };
-  new Function('require', 'module', 'exports', 'window', outputText)(require, module, module.exports, window);
+  new Function('require', 'module', 'exports', 'window', ...Object.keys(globals), outputText)(require, module, module.exports, window, ...Object.values(globals));
   return module.exports;
 }
 
@@ -113,12 +113,14 @@ test('recording saves before upload, allows another offline clip, and retains th
     } }) },
     'expo-av': { InterruptionModeAndroid: {}, InterruptionModeIOS: {}, Audio: {
       requestPermissionsAsync: async () => ({ granted: true }), setAudioModeAsync: async mode => { audioModes.push(mode); },
-      RecordingOptionsPresets: { HIGH_QUALITY: {} }, Recording: { async createAsync() {
+      RecordingOptionsPresets: { HIGH_QUALITY: {} }, Recording: { async createAsync(options) {
+        assert.equal(options.android.bitRate, 64000);
+        assert.equal(options.ios.numberOfChannels, 1);
         starts++;
         if (createFails) throw Error('Microphone is unavailable');
-        return { status: { durationMillis: 7500 }, recording: {
-          async stopAndUnloadAsync() { stops++; if (stoppedByOS) throw Error('Already stopped'); return { durationMillis: 7500 }; },
-          getStatusAsync: async () => ({ isDoneRecording: stoppedByOS, durationMillis: 7500 }), getURI: () => 'blob:test-recording',
+        return { status: { durationMillis: 28_800_000 }, recording: {
+          async stopAndUnloadAsync() { stops++; if (stoppedByOS) throw Error('Already stopped'); return { durationMillis: 28_800_000 }; },
+          getStatusAsync: async () => ({ isDoneRecording: stoppedByOS, durationMillis: 28_800_000 }), getURI: () => 'blob:test-recording',
         } };
       } },
     } },
@@ -139,7 +141,7 @@ test('recording saves before upload, allows another offline clip, and retains th
   await hook.toggleRecording();
   assert.equal(stops, 1);
   assert.deepEqual(saved[0], saved[1]);
-  assert.equal(saved[1].seconds, 7.5);
+  assert.equal(saved[1].seconds, 28_800);
   assert.equal(saved[1].userId, 'owner');
   hook = render();
   assert.equal(hook.hasUnsavedRecording, false);
@@ -149,7 +151,7 @@ test('recording saves before upload, allows another offline clip, and retains th
   stoppedByOS = true;
   assert.equal(await render().stopRecording(), true);
   assert.equal(render().isRecording, false);
-  assert.equal(saved.at(-1).seconds, 7.5);
+  assert.equal(saved.at(-1).seconds, 28_800);
   createFails = true;
   await render().startRecording();
   assert.equal(render().isRecording, false);
@@ -209,6 +211,7 @@ test('import saves an account-owned copy to the offline queue and uses upstream 
   let allowed = false;
   let asked = 0;
   let picks = 0;
+  let size = 256 * 1024 * 1024;
   const saved = [];
   const { useImportAudio } = load('hooks/useImportAudio.ts', {
     react: state.react, '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' } }) }, '@/api/http': http,
@@ -217,7 +220,7 @@ test('import saves an account-owned copy to the offline queue and uses upstream 
     '@/hooks/useRecordAudio': { useRecordAudio: () => ({ enqueue: async row => saved.push(row) }) },
     '@/utils/timeFormat': { titleFromFilename: () => 'Imported conversation' },
     'expo-av': { Audio: { Sound: { createAsync: async () => { throw Error('Browser cannot read duration'); } } } },
-    'expo-document-picker': { getDocumentAsync: async () => { picks++; return { assets: [{ uri: 'file://original', name: '../unsafe.mp3', size: 40 }] }; } },
+    'expo-document-picker': { getDocumentAsync: async () => { picks++; return { assets: [{ uri: 'file://original', name: '../unsafe.mp3', size }] }; } },
   });
   const render = () => state.render(useImportAudio);
   await render().importAudio();
@@ -232,6 +235,79 @@ test('import saves an account-owned copy to the offline queue and uses upstream 
   assert.equal(saved[0].audio.name, 'mirra-import-stable-id.mp3');
   assert.equal(saved[0].audio.uri, 'file://original');
   assert.equal(render().error, null);
+  size = 2 * 1024 ** 3 + 1;
+  await render().importAudio();
+  assert.equal(saved.length, 1);
+  assert.match(render().error, /2 GB/);
+});
+
+test('large native uploads read bounded ranges, resume lost acknowledgements, refresh tokens and close files', async () => {
+  const chunk = 4 * 1024 * 1024;
+  const size = 7 * chunk + 17;
+  const reads = [];
+  let closed = 0;
+  const storage = load('storage/audioSource.ts', { 'expo-file-system': { File: class {
+    exists = true;
+    size = size;
+    open() { return { offset: 0, readBytes(length) {
+      assert.ok(length <= chunk);
+      reads.push([this.offset, length]);
+      return new Uint8Array(length);
+    }, close() { closed++; } }; }
+  } } });
+  let offset = 0;
+  let lostAck = true;
+  let polls = 0;
+  let tokens = 0;
+  let requests = 0;
+  const complete = { status: 'completed', used_this_month: 1, remaining: 4,
+    debrief: { id: 'saved', stats: { session_duration_minutes: 480, user_speech_duration_minutes: 240 } } };
+  const client = load('api/client.ts', { '@/api/http': http, '@/storage/audioSource': storage }, undefined, {
+    setTimeout: (fn, ms) => setTimeout(fn, ms === 5000 ? 0 : ms),
+    async fetch(url, init) {
+      requests++;
+      assert.equal(init.headers.Authorization, `Bearer fresh-${requests}`);
+      const state = { status: 'uploading', uploaded_bytes: offset, chunk_bytes: chunk };
+      if (url.includes('/audio?')) {
+        assert.equal(Number(new URL(url).searchParams.get('offset')), offset);
+        offset += init.body.byteLength;
+        state.uploaded_bytes = offset;
+        if (lostAck) { lostAck = false; throw Error('Lost acknowledgement'); }
+      } else if (url.endsWith('/complete')) state.status = 'queued';
+      else if (init.method !== 'POST') {
+        if (++polls > 1) return Response.json(complete);
+        state.status = 'processing'; state.progress = 90;
+      } else if (polls > 1) return Response.json(complete);
+      return Response.json(state);
+    },
+  });
+  const options = { accessToken: async () => `fresh-${++tokens}` };
+  const audio = { uri: 'file://long.m4a', name: 'long.m4a', type: 'audio/mp4' };
+  await assert.rejects(client.uploadSession('expired', audio, { recordingId: 'stable' }, undefined, options), /Lost acknowledgement/);
+  assert.equal(closed, 1);
+  const result = await client.uploadSession('expired', audio, { recordingId: 'stable' }, undefined, options);
+  assert.equal(result.debrief.id, 'saved');
+  assert.equal(result.usedThisMonth, 1);
+  assert.equal(closed, 2);
+  assert.deepEqual(reads.map(([start]) => start), Array.from({ length: 8 }, (_, i) => i * chunk));
+  assert.equal(offset, size);
+  await client.uploadSession('expired', audio, { recordingId: 'stable' }, undefined, options);
+  assert.equal(reads.length, 8, 'An already saved debrief must not reupload or reread the audio');
+  assert.equal(closed, 3);
+});
+
+test('leaving a long-running job aborts polling and closes its file without deleting audio', async () => {
+  const controller = new AbortController();
+  let closed = false;
+  let requests = 0;
+  const client = load('api/client.ts', {
+    '@/api/http': http,
+    '@/storage/audioSource': { openAudioSource: async () => ({ size: 100, close() { closed = true; }, read() { assert.fail('Already uploaded'); } }) },
+  }, undefined, { fetch: async () => { requests++; return Response.json({ status: 'processing', progress: 20 }); } });
+  await assert.rejects(client.uploadSession('token', { uri: 'file://audio' }, { recordingId: 'one' }, controller.signal,
+    { onProgress() { controller.abort(); } }), /paused/);
+  assert.equal(closed, true);
+  assert.equal(requests, 1);
 });
 
 test('focus refresh recovers a failed tab and an older request cannot overwrite newer data', async () => {
@@ -324,7 +400,7 @@ test('profile loads account data without a plan request', () => {
 });
 
 test('conversation goals round-trip through the API and profile choices save the selected goal', async (t) => {
-  const api = load('api/client.ts', { '@/api/http': http });
+  const api = load('api/client.ts', { '@/api/http': http, '@/storage/audioSource': {} });
   let stored = {};
   const requests = [];
   t.mock.method(globalThis, 'fetch', async (url, options) => {
@@ -431,7 +507,7 @@ test('account actions save audio before sign-out and clear local data only after
 });
 
 test('conversation deletion confirms on web and native, retains failures, and navigates only after success', async (t) => {
-  const api = load('api/client.ts', { '@/api/http': http });
+  const api = load('api/client.ts', { '@/api/http': http, '@/storage/audioSource': {} });
   const state = hooks();
   let id = 'saved-conversation';
   let confirmed = false;

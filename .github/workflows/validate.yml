@@ -29,6 +29,7 @@ jobs:
       - run: psql -v ON_ERROR_STOP=1 -f supabase/tests/bootstrap.sql
       - run: for migration in supabase/migrations/*.sql; do psql -v ON_ERROR_STOP=1 -f "$migration" || exit 1; done
       - run: psql -v ON_ERROR_STOP=1 -f supabase/tests/privacy.sql
+      - run: psql -v ON_ERROR_STOP=1 -f supabase/tests/long_recordings.sql
   app:
     runs-on: ubuntu-latest
     steps:

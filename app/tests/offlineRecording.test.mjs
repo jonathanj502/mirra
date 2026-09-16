@@ -51,6 +51,52 @@ async function until(check) {
   assert.fail('Timed out waiting for recovery');
 }
 
+test('discard aborts active processing, keeps audio on deletion failure and removes it only after server acknowledgement', async () => {
+  const state = hooks();
+  let rows = [{ id: 'long', userId: 'owner', seconds: 7200, audio: { uri: 'file://long' } }];
+  let uploading = false;
+  let aborted = false;
+  let failDeletion = true;
+  let acknowledge;
+  const { usePendingRecordings } = load('hooks/usePendingRecordings.ts', {
+    react: state.react,
+    'react-native': { Platform: { OS: 'ios' }, AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) } },
+    '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' } }) },
+    '@/api/supabase': { supabase: { auth: { getSession: async () => ({ data: { session: { user: { id: 'owner' }, access_token: 'fresh' } } }) } } },
+    '@/privacy/aiConsent': { hasAIConsent: async () => true }, '@/api/http': http,
+    '@/storage/pendingRecordings': {
+      listPendingRecordings: async () => [...rows], readPendingAudio: async row => row.audio, releasePendingAudio() {},
+      async removePendingRecording(row) { rows = rows.filter(item => item.id !== row.id); },
+    },
+    '@/api/client': {
+      uploadSession(_, __, ___, signal) {
+        uploading = true;
+        return new Promise((resolve, reject) => signal.addEventListener('abort', () => { aborted = true; reject(Error('paused')); }, { once: true }));
+      },
+      async discardRecording(token, id) {
+        assert.equal(token, 'fresh'); assert.equal(id, 'long');
+        if (failDeletion) throw Error('Offline');
+        await new Promise(resolve => { acknowledge = resolve; });
+      },
+    },
+  }, { setInterval: () => 1, clearInterval() {} });
+  const render = () => state.render(usePendingRecordings);
+  try {
+    render(); await until(() => uploading);
+    await render().discard(rows[0]);
+    assert.equal(aborted, true);
+    assert.equal(rows.length, 1);
+    assert.equal(render().queueError, 'Offline');
+    failDeletion = false;
+    const discard = render().discard(rows[0]);
+    await until(() => acknowledge);
+    assert.equal(rows.length, 1);
+    acknowledge(); await discard;
+    assert.equal(rows.length, 0);
+    assert.equal(render().latestDebrief, null);
+  } finally { state.unmount(); }
+});
+
 test('durable native queue survives restart, isolates accounts, serializes reconnect uploads and deletes only acknowledged audio', async () => {
   const root = await fs.mkdtemp(join(tmpdir(), 'mirra-recording-test-'));
   const disk = {
@@ -132,7 +178,6 @@ test('durable native queue survives restart, isolates accounts, serializes recon
     foreground('active');
     await until(() => releaseUpload);
     tick(); foreground('active');
-    await mounted.render().discard(mounted.render().pendingRecordings[0]);
     assert.equal((await storage().listPendingRecordings('owner')).length, 2);
     assert.equal(uploads.length, attempts + 1);
     assert.deepEqual(uploads.at(-1), originalRequest);

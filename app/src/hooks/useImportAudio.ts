@@ -9,7 +9,7 @@ import { DebriefCard } from '@/models/debrief';
 import { titleFromFilename } from '@/utils/timeFormat';
 import { requestAIConsent } from '@/privacy/aiConsent';
 
-const MAX_BYTES = 25 * 1024 * 1024;
+const MAX_BYTES = 2 * 1024 * 1024 * 1024;
 const AUDIO_TYPES = [
   'audio/*',
   'audio/mpeg',
@@ -75,7 +75,7 @@ export function useImportAudio() {
       const asset = result.assets[0];
       const size = asset.size ?? 0;
       if (size > MAX_BYTES) {
-        setError('Please choose an audio file under 25 MB.');
+        setError('Please choose an audio file no larger than 2 GB.');
         return null;
       }
 
@@ -90,7 +90,7 @@ export function useImportAudio() {
     } catch (err) {
       const message = friendlyErrorMessage(
         err,
-        'Could not analyze that audio file. Try another format or a shorter recording.'
+        'Could not import that audio file. Check available device storage and try again.'
       );
       setError(message);
       return null;

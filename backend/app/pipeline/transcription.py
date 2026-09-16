@@ -1,5 +1,6 @@
 """Full-conversation transcription with speaker labels and original timestamps."""
 from dataclasses import dataclass
+import base64
 import io
 import math
 
@@ -61,6 +62,7 @@ def transcribe(
     *,
     source_audio: bytes | None = None,
     content_type: str | None = None,
+    known_speakers: dict[str, str] | None = None,
 ) -> list[TranscribedTurn]:
     if not len(audio):
         return []
@@ -82,5 +84,26 @@ def transcribe(
         response = client.audio.transcriptions.create(
             model=TRANSCRIPTION_MODEL, file=buf, response_format="diarized_json",
             chunking_strategy="auto",
+            **({"extra_body": {"known_speaker_names": list(known_speakers),
+                              "known_speaker_references": list(known_speakers.values())}} if known_speakers else {}),
         )
     return _parse_turns(response.model_dump(), len(audio) / sample_rate)
+
+
+def speaker_reference(audio: np.ndarray, sample_rate: int, turns: list[TranscribedTurn], speaker: str) -> str | None:
+    """A short, non-overlapping voice excerpt, kept only for this recording's analysis."""
+    for turn in sorted((t for t in turns if t.speaker == speaker), key=lambda t: t.end - t.start, reverse=True):
+        spans = [(turn.start, turn.end)]
+        for other in turns:
+            if other.speaker == speaker:
+                continue
+            spans = [(a, b) for left, right in spans for a, b in
+                     [(left, min(right, other.start)), (max(left, other.end), right)] if b > a]
+        for start, end in spans:
+            if end - start < 2:
+                continue
+            buf = io.BytesIO()
+            sf.write(buf, audio[int(start * sample_rate):int(min(end, start + 8) * sample_rate)],
+                     sample_rate, format="WAV", subtype="PCM_16")
+            return "data:audio/wav;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    return None

@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     openai_debrief_model: str = "gpt-4.1"
     openai_reflect_model: str = "gpt-4.1-mini"
     free_tier_cap: int = 5
+    recording_storage_dir: str = ".recordings"
     cors_origins: str = "*"
 
     model_config = SettingsConfigDict(env_file=".env")

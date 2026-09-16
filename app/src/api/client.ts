@@ -1,4 +1,5 @@
-import { endpoint, parseResponse } from '@/api/http';
+import { ApiError, endpoint, parseResponse } from '@/api/http';
+import { openAudioSource } from '@/storage/audioSource';
 import {
   AccountExport,
   ConversationSummary,
@@ -141,6 +142,7 @@ type RawUserSettings = {
 };
 
 type RawAccountExport = {
+  pending_recordings?: Record<string, unknown>[];
   deleted_conversation_ids?: string[];
   exported_at: string;
   user_id: string;
@@ -279,6 +281,7 @@ function toUserSettings(raw: RawUserSettings): UserSettings {
 function toAccountExport(raw: RawAccountExport): AccountExport {
   return {
     deletedConversationIds: raw.deleted_conversation_ids ?? [],
+    pendingRecordings: raw.pending_recordings ?? [],
     exportedAt: raw.exported_at,
     userId: raw.user_id,
     profile: toProfileSummary(raw.profile),
@@ -393,33 +396,73 @@ export async function uploadSession(
   token: string,
   audio: { uri: string; name: string; type: string },
   metadata: { title?: string; clientDurationSeconds?: number; recordingId?: string; startedAt?: string },
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options?: { accessToken?: () => Promise<string>; onProgress?: (message: string) => void }
 ): Promise<SessionResponse> {
-  const form = new FormData();
-  if (audio.uri.startsWith('blob:') || audio.uri.startsWith('data:')) {
-    const blob = await fetch(audio.uri).then((response) => response.blob());
-    form.append('audio', blob, audio.name);
-  } else {
-    form.append('audio', audio as unknown as Blob);
+  if (!metadata.recordingId) throw new Error('A saved recording ID is required.');
+  const source = await openAudioSource(audio.uri);
+  const path = `/recordings/${encodeURIComponent(metadata.recordingId)}`;
+  type UploadState = { status: string; uploaded_bytes: number; chunk_bytes: number; progress: number;
+    error?: string; error_status?: number; debrief?: RawDebrief; used_this_month: number; remaining: number };
+  async function request(url: string, init: RequestInit = {}): Promise<UploadState> {
+    if (signal?.aborted) throw new Error('Upload paused.');
+    const currentToken = options?.accessToken ? await options.accessToken() : token;
+    if (signal?.aborted) throw new Error('Upload paused.');
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    // Bound each small request, not the lifetime of a multi-hour recording job.
+    const timer = setTimeout(abort, 120_000);
+    try {
+      return await fetch(endpoint(url), { ...init,
+        headers: { ...init.headers, Authorization: `Bearer ${currentToken}` }, signal: controller.signal,
+      }).then(r => parseResponse<UploadState>(r));
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+    }
   }
-  form.append('started_at', metadata.startedAt ?? new Date().toISOString());
-  if (metadata.recordingId) form.append('recording_id', metadata.recordingId);
-  if (metadata.title) form.append('title', metadata.title);
-  if (metadata.clientDurationSeconds != null) {
-    form.append('client_duration_seconds', String(metadata.clientDurationSeconds));
+  try {
+    let state = await request('/recordings', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recording_id: metadata.recordingId, total_bytes: source.size,
+        content_type: audio.type, filename: audio.name, title: metadata.title,
+        started_at: metadata.startedAt, client_duration_seconds: metadata.clientDurationSeconds }),
+    });
+    while (state.status === 'uploading' && state.uploaded_bytes < source.size) {
+      const offset = state.uploaded_bytes;
+      const length = Math.min(state.chunk_bytes, 4 * 1024 * 1024);
+      if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length <= 0) {
+        throw new Error('Invalid upload position from server.');
+      }
+      options?.onProgress?.(`Uploading · ${Math.floor(100 * offset / source.size)}%`);
+      const body = await source.read(offset, Math.min(source.size, offset + length));
+      state = await request(`${path}/audio?offset=${offset}`, { method: 'PUT',
+        headers: { 'Content-Type': 'application/octet-stream' }, body });
+      if (state.uploaded_bytes <= offset) throw new Error('The upload did not advance. Your saved audio will resume.');
+    }
+    if (state.status === 'uploading') state = await request(`${path}/complete`, { method: 'POST' });
+    while (state.status !== 'completed') {
+      if (state.status === 'failed') throw new ApiError(state.error || 'Could not finish processing.', state.error_status || 503);
+      if (state.status === 'cancelled') throw new ApiError('This recording was discarded.', 410);
+      if (!['queued', 'processing'].includes(state.status)) throw new Error('Invalid recording status from server.');
+      options?.onProgress?.(state.status === 'queued' ? 'Waiting for processing' : `Processing · ${state.progress}%`);
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => { clearTimeout(timer); reject(new Error('Upload paused.')); };
+        const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, 5000);
+        if (signal?.aborted) abort();
+        else signal?.addEventListener('abort', abort, { once: true });
+      });
+      state = await request(path);
+    }
+    if (!state.debrief) throw new Error('The saved debrief is not available yet.');
+    return { debrief: toDebrief(state.debrief), usedThisMonth: state.used_this_month, remaining: state.remaining };
+  } finally {
+    source.close();
   }
+}
 
-  const response = await fetch(endpoint('/sessions'), {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-    body: form,
-    signal,
-  });
-  const raw = await parseResponse<{ debrief: RawDebrief; used_this_month: number; remaining: number }>(response);
-
-  return {
-    debrief: toDebrief(raw.debrief),
-    usedThisMonth: raw.used_this_month,
-    remaining: raw.remaining,
-  };
+export async function discardRecording(token: string, recordingId: string): Promise<void> {
+  await fetch(endpoint(`/recordings/${encodeURIComponent(recordingId)}`), {
+    method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+  }).then(r => parseResponse<void>(r));
 }

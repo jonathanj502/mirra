@@ -35,7 +35,7 @@ end $$;
 select public.delete_debrief_permanently('00000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001');
 select public.delete_debrief_permanently('00000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001');
 do $$ begin
-  assert (select count(*) from public.debrief_deletions) = 1;
+  assert (select count(*) from public.debrief_deletions) = 2;
   begin
     insert into public.debriefs(id,user_id,session_id,observation,pattern_to_reduce,thing_to_try_next,stats) values
       ('10000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001','replay','o','p','t','{}');

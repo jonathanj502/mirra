@@ -12,7 +12,9 @@ RUN uv export --frozen --no-dev --no-emit-project --no-hashes --no-emit-package 
     && pip install -r /tmp/requirements.txt
 RUN python -c "from silero_vad import load_silero_vad; load_silero_vad()"
 COPY app ./app
-RUN useradd --create-home --uid 10001 mirra && chown -R mirra:mirra /srv/mirra
+RUN useradd --create-home --uid 10001 mirra && mkdir -p /srv/mirra/.recordings && chown -R mirra:mirra /srv/mirra
+ENV RECORDING_STORAGE_DIR=/srv/mirra/.recordings
+VOLUME ["/srv/mirra/.recordings"]
 USER mirra
 EXPOSE 8000
 # One worker protects the stateful VAD model and the launch request limits.

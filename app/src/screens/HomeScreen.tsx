@@ -15,6 +15,7 @@ import { useRecordAudio } from '@/hooks/useRecordAudio';
 import { PendingRecording } from '@/storage/pendingRecordings';
 import { useUserSettings } from '@/hooks/useUserSettings';
 import { coachingGoalLabel } from '@/data/coachingGoals';
+import { formatDuration } from '@/utils/timeFormat';
 
 function displayName(email?: string | null, username?: unknown) {
   if (typeof username === 'string' && username.trim()) return username.trim();
@@ -129,7 +130,7 @@ export function HomeScreen() {
   const { listItems, loading, error, setDebriefs, refresh } = useDebriefs();
   const { importAudio, importing, error: importError } = useImportAudio();
   const { isRecording, isSavingRecording, isStartingRecording, hasUnsavedRecording, recordingSeconds,
-    pendingRecordings, uploadingId, latestDebrief, queueError, needsAIConsent, resumeUploads, discard,
+    pendingRecordings, uploadingId, uploadMessage, latestDebrief, queueError, needsAIConsent, resumeUploads, discard,
     toggleRecording, error: recordingError } = useRecordAudio();
   const busy = importing || isRecording || isSavingRecording || isStartingRecording || hasUnsavedRecording;
   useEffect(() => {
@@ -143,7 +144,7 @@ export function HomeScreen() {
   const heroHint = isSavingRecording
     ? 'Saving on this device…'
     : isRecording
-      ? `${Math.floor(recordingSeconds / 60)}:${String(Math.floor(recordingSeconds % 60)).padStart(2, '0')} · tap to stop`
+      ? `${recordingSeconds >= 3600 ? formatDuration(recordingSeconds) : `${Math.floor(recordingSeconds / 60)}:${String(Math.floor(recordingSeconds % 60)).padStart(2, '0')}`} · tap to stop`
       : isStartingRecording ? 'Starting microphone…' : hasUnsavedRecording ? 'Tap to save recording' : 'Tap to record · works offline';
   const greeting = listItems.length > 0
     ? `${listItems.length} ${listItems.length === 1 ? 'conversation' : 'conversations'} ready.`
@@ -159,7 +160,7 @@ export function HomeScreen() {
   }
 
   function confirmDiscard(recording: PendingRecording) {
-    const message = 'This permanently deletes the recording saved on this device. Discard it?';
+    const message = 'This cancels processing and deletes the uploaded copy and the recording saved on this device. Discard it?';
     if (Platform.OS === 'web') {
       if (window.confirm(message)) void discard(recording);
     } else {
@@ -210,12 +211,12 @@ export function HomeScreen() {
               <View key={recording.id} style={styles.pendingItem}>
                 <Body style={styles.pendingHint}>
                   {new Date(recording.startedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                  {' · '}{Math.ceil(recording.seconds)}s
-                  {'\n'}{uploadingId === recording.id ? 'Uploading and analyzing…' : recording.error || 'Waiting to upload'}
+                  {' · '}{formatDuration(recording.seconds)}
+                  {'\n'}{uploadingId === recording.id ? uploadMessage : recording.error || 'Waiting to upload'}
                 </Body>
                 <Pressable accessibilityRole="button" accessibilityLabel="Discard saved recording"
-                  disabled={uploadingId === recording.id} onPress={() => confirmDiscard(recording)} style={styles.recoveryButton}>
-                  <Body style={{ opacity: uploadingId === recording.id ? 0.4 : 1 }}>Discard recording</Body>
+                  onPress={() => confirmDiscard(recording)} style={styles.recoveryButton}>
+                  <Body>Discard recording</Body>
                 </Pressable>
               </View>
             ))}

@@ -272,7 +272,7 @@ def test_post_sessions_rejects_unsupported_audio_type(mock_run):
 
 
 @patch("app.main.coordinator.run")
-def test_post_sessions_rejects_oversized_audio(mock_run):
+def test_post_sessions_rejects_oversized_audio(mock_run, monkeypatch):
     app.dependency_overrides[get_db] = lambda: _db_for_sessions(under_cap=True)
     app.dependency_overrides[verify_token] = lambda: "user-1"
     oversized = b"0" * (25 * 1024 * 1024 + 1)

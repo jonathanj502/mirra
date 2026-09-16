@@ -84,7 +84,11 @@ function useRecorderState() {
 
       await setForegroundService(true);
       const created = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY,
+        { ...Audio.RecordingOptionsPresets.HIGH_QUALITY,
+          android: { ...Audio.RecordingOptionsPresets.HIGH_QUALITY.android, numberOfChannels: 1, sampleRate: 24000, bitRate: 64000 },
+          ios: { ...Audio.RecordingOptionsPresets.HIGH_QUALITY.ios, numberOfChannels: 1, sampleRate: 24000, bitRate: 64000 },
+          web: { ...Audio.RecordingOptionsPresets.HIGH_QUALITY.web, bitsPerSecond: 64000 },
+        },
         (status) => {
           setRecordingMs(status.durationMillis ?? 0);
           // Interruption (e.g. phone call) paused a still-valid recording: resume.

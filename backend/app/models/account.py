@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.dashboard import ProfileSummary
 from app.models.debrief import Debrief
@@ -14,3 +14,4 @@ class AccountExport(BaseModel):
     settings: UserSettings
     debriefs: list[Debrief]
     deleted_conversation_ids: list[str]
+    pending_recordings: list[dict] = Field(default_factory=list)

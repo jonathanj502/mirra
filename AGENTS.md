@@ -40,15 +40,15 @@ pytest tests/test_usage_gate.py
 
 ### Audio Pipeline (the core product)
 
-All audio capture happens on-device via `expo-av` (`useRecordAudio.ts`), encoded as `.m4a` (`.webm` on web) — not WAV; no streaming or on-device VAD. On stop, the app uploads the file to `POST /sessions`. The backend accepts several container formats (`SUPPORTED_AUDIO_TYPES` in `main.py`: aac, mp4/m4a, mpeg, ogg, wav, webm) and decodes through FFmpeg into bounded mono 16 kHz PCM (`coordinator.py`). Playlist/network demuxers are disabled; decoding times out after 120 seconds and recordings longer than 60 minutes are rejected. The backend runs a synchronous pipeline in order:
+Audio capture uses `expo-av` (`useRecordAudio.ts`), with mono 24 kHz, 64 kbps M4A on mobile and WebM on web. Stopped recordings and imports enter the durable account queue. Current clients use resumable `/recordings` uploads in at most 4 MiB pieces, supporting up to 24 hours and 2 GiB. Native file handles read only the requested range. The legacy `/sessions` multipart endpoint remains capped at 25 MiB.
 
-1. `pipeline/vad.py` — Silero VAD checks whether any speech is present; it does not filter the audio sent to transcription.
-2. `pipeline/transcription.py` — Sends the complete recording to `gpt-4o-transcribe-diarize` with `diarized_json` output and automatic server chunking. Speaker labels and timestamps refer to the original timeline.
-3. `pipeline/speaker.py` — Merges overlapping intervals of the same speaker and estimates the user as the speaker with the highest duration-weighted RMS. Keeps every turn with that label, including quieter turns. This remains an unconfirmed microphone-placement assumption.
-4. `pipeline/prosody.py` — Computes acoustic, word, question, filler, and speaking-rate statistics for the selected speaker. Other-speaker labels supply comparison durations. Interruption counts estimate overlap initiated by the user.
-5. `pipeline/coaching.py` — Sends the full labeled conversation and selected-speaker stats to OpenAI `gpt-4.1` using Responses API structured outputs validated by Pydantic. The prompt explains identity and timing uncertainty. Retains two retries for invalid output; the SDK retries transient API errors twice.
-6. `pipeline/coordinator.py` — Orchestrates these stages; returns a neutral debrief without calling the coaching model when no speech is found.
-7. `POST /sessions` reserves free usage before processing, saves the debrief and diarization metadata, and refunds failed processing. The full labeled transcript is stored only when transcript saving is enabled.
+1. `recording_jobs.py` stores authenticated upload offsets and a background queue on `RECORDING_STORAGE_DIR`. Use one process/worker/instance and a persistent private volume of at least 32 GB, excluded from backups. Four pending jobs per account and 16 GiB of declared pending uploads globally bound the queue. Completed audio is removed; incomplete/failed uploads expire after 24 hours without progress while the worker runs.
+2. `pipeline/coordinator.py` decodes allowlisted audio formats through FFmpeg into disk-backed mono 16 kHz float PCM. Network/playlist demuxers are disabled. Decoding times out after 900 seconds and rejects over 24 hours. A full day needs about 5.5 GB temporary PCM. Memory-mapped audio is analyzed in ten-minute chunks, preferably split at a detected pause.
+3. `pipeline/vad.py` detects speech per chunk. Silent chunks are skipped; speech-bearing chunks retain their pauses and full timeline. `transcription.py` sends bounded PCM16 WAV to `gpt-4o-transcribe-diarize`, with `diarized_json` and automatic provider chunking. Original timestamps are restored.
+4. Up to four clean voice reference excerpts help reconcile speakers across requests. Anonymous labels are prefixed per chunk and are never merged based only on matching letters. References are not saved as voice enrollment. Unlinked labels can represent the same person; matching is an estimate.
+5. `speaker.py` merges same-speaker overlaps and estimates the user from duration-weighted RMS, retaining every turn with that label. This remains an unconfirmed microphone-placement assumption. `prosody.py` computes selected-speaker statistics with bounded energy calculations and samples up to 64 five-second excerpts for pitch.
+6. `coaching.py` covers long transcripts in bounded evidence summaries before generating structured coaching with `responses.parse`, the Pydantic schema and `store=False`. Invalid output gets two retries; the SDK retries transient text errors twice. Empty speech gets a neutral debrief.
+7. The `complete_recording` SQL RPC stores the debrief and charges monthly usage in one transaction. Replay cannot double-charge, failures do not consume allowance, and tombstones prevent resurrection after cancellation or deletion. Transcript settings are checked again at commit. Restarted jobs reprocess from the beginning; per-chunk checkpoints are not implemented.
 
 See `backend/app/pipeline/README.md` for request limits, timing caveats, and validation.
 
@@ -85,11 +85,13 @@ Native projects are generated with Expo prebuild and excluded from git/EAS uploa
 
 `RecordingProvider` (`app/src/hooks/useRecordAudio.ts`) sits under AuthProvider and above the routes. Stopped recordings are saved before upload, using `src/storage/pendingRecordings.ts` (native documents directory) or `.web.ts` (IndexedDB blobs and metadata). `usePendingRecordings.ts` restores the per-account queue and uploads serially on launch, foreground/online events, and a 15-second foreground poll. Each upload refreshes auth and checks account identity. Only acknowledged uploads or explicit discards remove queued audio. Storage failures retain the original clip and block another capture until saving succeeds.
 
-The optional `recording_id` form field on `POST /sessions` produces an account-scoped deterministic debrief primary key. Replays return the existing debrief before reserving usage. A process-local in-flight guard returns 409 for simultaneous retries; across processes the database primary key prevents duplicate rows and duplicate-insert reservations are refunded. Deletion tombstones require the `20260914020000_deletion_tombstones.sql` migration; they prevent delayed uploads from restoring deleted conversations. The queue survives restarts after Stop/save completes; uploads resume when the app is foregrounded, not while force-quit. Browser offline app-shell loading and OS background upload jobs are not implemented.
+The recording ID produces an account-scoped deterministic debrief key for both legacy sessions and background jobs. A resumed upload starts at the durable server byte offset. Each request refreshes auth and checks the same account and device consent. Only a saved debrief acknowledgement or acknowledged cancellation removes local audio. Cancelling active work creates a tombstone before deleting files, so a racing worker cannot restore it. Apply the September 14 tombstone and September 16 long-recording migrations.
+
+The queue survives restarts after Stop/save completes. Uploads resume while foregrounded, not while force-quit; after upload completes, backend analysis continues independently. Browser offline app-shell loading and OS background upload jobs are not implemented.
 
 ### Audio file import
 
-`useImportAudio.ts` uses `expo-document-picker`. It validates supported MIME types/extensions and the 25 MB cap, uses the upstream AI-consent helper, then copies audio into the same durable account queue as a recording. The queue refreshes auth and uses an idempotent recording ID. Import does not use an OS share-sheet intent. Duration probing is best effort; FFmpeg performs authoritative server decoding.
+`useImportAudio.ts` uses `expo-document-picker`. It validates supported MIME types/extensions and the 2 GiB cap, uses the upstream AI-consent helper, then copies audio into the same durable account queue as a recording. The queue refreshes auth and uses an idempotent recording ID. Import does not use an OS share-sheet intent. Duration probing is best effort; FFmpeg performs authoritative server decoding.
 
 ## Critical Gotchas
 
@@ -101,7 +103,7 @@ The optional `recording_id` form field on `POST /sessions` produces an account-s
 
 - **Speaker classification accuracy** — diarization groups voices but does not identify the recording owner. `speaker.py` still assumes the user is closer to the mic and chooses the loudest speaker by duration-weighted RMS. Keep this constraint in the product’s AI limitations disclosure. All turns of the chosen label are retained; speaker splitting and mixed-voice overlap can still affect metrics. `stats.metadata.diarization.user_speaker_confirmed` is false; there is no voice enrollment or speaker-correction UI.
 
-- **Transcription 25MB limit** — `main.py` limits uploaded bytes before processing. `transcription.py` separately checks encoded PCM against the API's 25,000,000-byte limit and uses the original supported compressed recording when PCM is too large. If neither fits, return 413 and refund reserved usage. Do not split into independent requests without a strategy to reconcile speaker IDs; labels are local to each request.
+- **Provider transcription limit** - Each ten-minute PCM16 request stays below OpenAI's 25,000,000-byte cap. Larger recordings use multiple requests with temporary known-speaker references. Never merge anonymous speaker letters across requests; keep unmatched labels separate and disclose uncertainty.
 
 - **JWT verification is ES256/JWKS, not a shared secret** — this Supabase project signs tokens with asymmetric keys, so an HS256 `SUPABASE_JWT_SECRET` can never verify them (this once silently broke every authenticated request). `app/auth.py` caches public JWKS for ten minutes and refreshes unknown signing-key IDs at most once per 30 seconds.
 
@@ -124,6 +126,8 @@ Monthly cap: 5 debriefs per user, configured by `FREE_TIER_CAP`. Enforced server
 
 | Endpoint | Description |
 |---|---|
+| `POST /recordings`, `PUT /recordings/{id}/audio`, `POST /recordings/{id}/complete` | initialize/resume upload, append bounded bytes, enqueue background analysis |
+| `GET /recordings/{id}`, `DELETE /recordings/{id}` | progress/saved result, cancel and tombstone an account-owned recording |
 | `POST /sessions` | multipart `audio` (WAV/M4A ≤25MB) + JSON metadata → runs pipeline → returns `{ debrief, usedThisMonth, remaining }` |
 | `GET /debriefs`, `GET /debriefs/{id}` | paginated debrief history / single debrief for the authenticated user |
 | `DELETE /debriefs/{id}` | permanently delete an owned debrief and its saved transcript; returns 204 even if already absent; does not refund usage |
@@ -138,7 +142,7 @@ Monthly cap: 5 debriefs per user, configured by `FREE_TIER_CAP`. Enforced server
 
 ## Conversation goals
 
-`user_settings.coaching_goal` is a validated preference: `general`, `make_friends`, `confidence`, `listening`, `clarity`, or `assertiveness`. It defaults to `general`. Users choose it from Home → Your focus or Profile → Your conversation goal. `/sessions` reads the current saved goal when processing begins and passes it into `coordinator.run` → `coaching.analyze`; `/reflect` passes the current goal into `generate_reflection`. Shared guidance lives in `backend/app/coaching_goals.py`. Debrief metadata retains the processing-time goal so history is not relabeled after settings changes. Apply `20260915010000_coaching_goals.sql` before deploying; `/ready` checks this column.
+`user_settings.coaching_goal` is a validated preference: `general`, `make_friends`, `confidence`, `listening`, `clarity`, or `assertiveness`. It defaults to `general`. Users choose it from Home → Your focus or Profile → Your conversation goal. The recording worker and `/sessions` read the current saved goal when processing begins and passes it into `coordinator.run` → `coaching.analyze`; `/reflect` passes the current goal into `generate_reflection`. Shared guidance lives in `backend/app/coaching_goals.py`. Debrief metadata retains the processing-time goal so history is not relabeled after settings changes. Apply `20260915010000_coaching_goals.sql` before deploying; `/ready` checks this column.
 
 ## Backend Integration Status
 
@@ -155,7 +159,7 @@ The frontend is fully wired to the backend — no more mock data. `src/data/rece
 
 ## Release privacy and operations
 
-- Apply the September 14 deletion-tombstone and September 15 coaching-goal migrations before deploying the current backend. `/health` reports liveness; `/ready` requires the deletion-marker table, coaching-goal column and AI credential.
+- Apply the September 14 deletion-tombstone, September 15 coaching-goal and September 16 long-recording migrations before deploying the current backend. `/health` reports liveness; `/ready` requires the deletion-marker table, coaching-goal column, recording-completion RPC and AI credential.
 - AI consent uses upstream’s `app/src/privacy/aiConsent.ts`: approval is stored per account on each device, recording/import/Reflect request it, queued uploads recheck it, and Profile can withdraw it on that device. There is no additional release-branch consent screen, server-side consent field or consent migration. Transcript defaults and username/Google onboarding follow upstream.
 - `DELETE /account` removes the authenticated Supabase user with cascading data deletion. `DELETE /debriefs/{id}` uses an account-scoped SQL RPC and a content-free tombstone. SQL advisory locks serialize deletion and replay; the insert trigger rejects resurrection. Tombstones disappear on account deletion and are included in account exports.
 - One pipeline/worker protects the stateful VAD model and memory budget. Reflect has a per-account 60-message/hour process-local limit. Move budgets to shared storage before scaling workers/instances.

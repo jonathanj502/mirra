@@ -119,6 +119,7 @@ export interface ProfileSummary {
 }
 
 export interface AccountExport {
+  pendingRecordings: Record<string, unknown>[];
   deletedConversationIds: string[];
   exportedAt: string;
   userId: string;
