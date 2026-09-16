@@ -15,7 +15,7 @@ async function responseBody(response) {
 async function setup() {
   config = await fetch('./release.json', { cache: 'no-store' }).then(responseBody);
   if (!config.backendUrl || !config.privacyApproved || !config.supportEmail || !config.operatorName) {
-    document.querySelector('#availability').textContent = 'Web deletion is being configured before public launch. No email is collected on this page while it is unavailable.';
+    document.querySelector('#availability').textContent = 'Web deletion is being configured. Use Profile → Account actions → Delete account in the app. No email is collected on this page while it is unavailable.';
     token = null; return;
   }
   if (!config.backendUrl.startsWith('https://')) throw Error('Deletion service is unavailable.');

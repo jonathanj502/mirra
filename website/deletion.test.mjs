@@ -31,7 +31,7 @@ async function page(config, successfulDelete = true) {
 }
 
 test('unconfigured deletion page does not collect email or verify callback credentials', async () => {
-  const { elements, requests } = await page({});
+  const { elements, requests } = await page({ iphoneAvailable: true });
   assert.equal(requests.length, 1);
   assert.equal(elements['#sign-in'].hidden, true);
   await elements['#sign-in'].handlers.submit({ preventDefault() {} });

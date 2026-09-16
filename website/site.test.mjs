@@ -10,13 +10,16 @@ const root = dirname(fileURLToPath(import.meta.url));
 test('promotional actions lead to stores only when available, with consistent availability copy', () => {
   const source = readFileSync(join(root, 'build.mjs'), 'utf8').replace(/^import .*;\r?$/gm, '').replace('import.meta.url', 'buildUrl');
   const originalConfig = JSON.parse(readFileSync(join(root, 'release.json')));
-  for (const [appStoreUrl, playStoreUrl] of [
-    ['', ''], ['https://apps.apple.com/app/id123', ''], ['', 'https://play.google.com/store/apps/details?id=com.mirra.app'],
+  for (const [iphoneAvailable, appStoreUrl, playStoreUrl] of [
+    [false, '', ''], [true, '', ''], [false, 'https://apps.apple.com/app/id123', ''],
+    [false, '', 'https://play.google.com/store/apps/details?id=com.mirra.app'],
+    [true, '', 'https://play.google.com/store/apps/details?id=com.mirra.app'],
+    [true, 'https://apps.apple.com/app/id123', 'https://play.google.com/store/apps/details?id=com.mirra.app'],
   ]) {
     const pages = new Map();
     runInNewContext(source, {
       readFileSync: (path, encoding) => path === join(root, 'release.json')
-        ? JSON.stringify({ ...originalConfig, appStoreUrl, playStoreUrl }) : readFileSync(path, encoding),
+        ? JSON.stringify({ ...originalConfig, iphoneAvailable, appStoreUrl, playStoreUrl }) : readFileSync(path, encoding),
       writeFileSync: (path, content) => pages.set(path, content), mkdirSync() {}, copyFileSync() {},
       join, dirname, fileURLToPath, createHash, URL, buildUrl: new URL('./build.mjs', import.meta.url).href,
       console: { log() {} },
@@ -28,10 +31,24 @@ test('promotional actions lead to stores only when available, with consistent av
     if (appStoreUrl || playStoreUrl) {
       assert.ok(home.includes(`href="${appStoreUrl || playStoreUrl}"`));
       assert.doesNotMatch(main, /downloads are not available yet|Coming first to iPhone/);
+    } else if (iphoneAvailable) {
+      assert.match(main, /Available for iPhone/);
+      assert.match(main, /Mirra is available for iPhone/);
+      assert.doesNotMatch(home, /Coming first|Preparing for launch|downloads are not available yet|class="header-cta"|Download for iPhone/);
     } else {
       assert.doesNotMatch(home, /class="(?:header-cta|button secondary)"|>Get Mirra/);
       assert.match(main, /Coming first to iPhone/);
       assert.match(main, /Store downloads are not available yet/);
+    }
+    if (iphoneAvailable || appStoreUrl) {
+      assert.match(main, /Now on<br><em>iPhone/);
+      if (!playStoreUrl) assert.match(main, /Android is not available yet/);
+    }
+    if (!appStoreUrl) assert.doesNotMatch(home, /href="https:\/\/apps.apple.com/);
+    for (const name of ['privacy.html', 'terms.html', 'support.html']) {
+      const html = pages.get(join(root, 'dist', name));
+      assert.match(html, /Policy details pending/);
+      assert.doesNotMatch(html, /Prelaunch preview|Mirra is not yet available in the stores/);
     }
   }
 });

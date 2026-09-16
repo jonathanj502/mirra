@@ -2,6 +2,8 @@
 
 Updated September 15, 2026. **Prelaunch; not approved for public app distribution.** This record distinguishes implemented controls from external setup and physical-device evidence. A working web preview is not an iOS release test.
 
+Website copy now uses the owner's explicit assumption that the iPhone app is already available (`website/release.json` → `iphoneAvailable`). This is a copy premise, not verified store-release evidence. No matching App Store destination was found, so `appStoreUrl` stays empty and no download link is invented. Operator/privacy approval, web deletion, backend readiness and Android availability retain their actual configuration. Apple's public US lookup for `com.mirra.app` currently returns an unrelated app, Mirra Support (`id6755451137`); confirm an owned bundle identifier and listing before a native release. Do not link to that unrelated product.
+
 ## What is prepared
 
 - Optional conversation goals, chosen from Record → Your focus or Profile → Your conversation goal. Friendship, confidence, listening, clarity and assertiveness tailor both debriefs and Reflect; Everyday connection is the default. The server reads the saved goal when processing starts, including offline uploads, and stores it in each debrief's metadata. Changing a goal does not rewrite past debriefs. Account export/deletion cover the preference. No additional API key is needed.
