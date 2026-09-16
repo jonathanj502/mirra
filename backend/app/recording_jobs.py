@@ -12,8 +12,11 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 MAX_AUDIO_BYTES = 2 * 1024 * 1024 * 1024
+MAX_STORED_AUDIO_BYTES = 8 * MAX_AUDIO_BYTES
+MAX_PENDING_JOBS = 1024
 UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024
 RETENTION_SECONDS = 24 * 60 * 60
+EMPTY_UPLOAD_RETENTION_SECONDS = 15 * 60
 SUPPORTED_AUDIO_TYPES = {"audio/aac", "audio/mp4", "audio/mpeg", "audio/ogg", "audio/wav",
                          "audio/x-m4a", "audio/x-wav", "audio/webm"}
 logger = logging.getLogger(__name__)
@@ -72,6 +75,19 @@ class RecordingJobs:
             return []
         return [self._read(path.parent.name) for path in self.root.glob("*/state.json")]
 
+    def _prune(self):
+        jobs = []
+        for job in self._all():
+            folder = self._path(job["id"])
+            audio = folder / "audio"
+            empty_upload = job["status"] == "uploading" and (not audio.exists() or audio.stat().st_size == 0)
+            lifetime = EMPTY_UPLOAD_RETENTION_SECONDS if empty_upload else RETENTION_SECONDS
+            if job["status"] != "processing" and job["id"] != self.active and time.time() - job["updated_at"] > lifetime:
+                shutil.rmtree(folder)
+            else:
+                jobs.append(job)
+        return jobs
+
     def status(self, user_id, key):
         with self.lock:
             job = self._read(key, user_id)
@@ -84,6 +100,7 @@ class RecordingJobs:
             raise HTTPException(415, "Unsupported audio type")
         key = recording_key(user_id, payload.recording_id)
         with self.lock:
+            jobs = self._prune()
             folder = self._path(key)
             if (folder / "state.json").exists():
                 job = self._read(key, user_id)
@@ -96,8 +113,8 @@ class RecordingJobs:
                     job.update(status="uploading", attempts=0, updated_at=time.time())
                     self._write(job)
                 return self.status(user_id, key)
-            jobs = [j for j in self._all() if j["status"] not in ("completed", "cancelled")]
-            if sum(j["user_id"] == user_id for j in jobs) >= 4 or sum(j["total_bytes"] for j in jobs) + payload.total_bytes > 8 * MAX_AUDIO_BYTES:
+            jobs = [j for j in jobs if j["status"] not in ("completed", "cancelled")]
+            if sum(j["user_id"] == user_id for j in jobs) >= 4 or len(jobs) >= MAX_PENDING_JOBS:
                 raise HTTPException(503, "The recording queue is full. Your device will resume uploading later.")
             job = {**payload.model_dump(), "id": key, "user_id": user_id, "status": "uploading",
                    "progress": 0, "attempts": 0, "updated_at": time.time(), "retry_at": 0}
@@ -115,6 +132,11 @@ class RecordingJobs:
                 raise HTTPException(409, "Upload position changed. Resume from the saved position.")
             if not data or len(data) > UPLOAD_CHUNK_BYTES or size + len(data) > job["total_bytes"]:
                 raise HTTPException(413, "Invalid audio upload chunk.")
+            # Charge received bytes, never a client's declared file size. The lock makes this
+            # check atomic across uploads, including cancelled audio still in use by a decoder.
+            stored_bytes = sum(audio.stat().st_size for audio in self.root.glob("*/audio"))
+            if stored_bytes + len(data) > MAX_STORED_AUDIO_BYTES:
+                raise HTTPException(503, "Recording storage is temporarily full. Your device will resume uploading later.")
             if shutil.disk_usage(self.root).free < len(data) + 64 * 1024 * 1024:
                 raise HTTPException(507, "Recording storage is temporarily full. Your audio remains on your device.")
             with path.open("ab") as target:
@@ -170,12 +192,8 @@ class RecordingJobs:
 
     def process_one(self, process):
         with self.lock:
-            jobs = self._all()
-            for job in jobs:
-                if job["status"] != "processing" and time.time() - job["updated_at"] > RETENTION_SECONDS:
-                    shutil.rmtree(self._path(job["id"]))
-            job = next((j for j in jobs if j["status"] == "queued" and j["retry_at"] <= time.time()
-                        and self._path(j["id"]).exists()), None)
+            jobs = self._prune()
+            job = next((j for j in jobs if j["status"] == "queued" and j["retry_at"] <= time.time()), None)
             if not job:
                 return False
             self.active = job["id"]

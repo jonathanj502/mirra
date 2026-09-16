@@ -12,8 +12,9 @@ The existing `OPENAI_API_KEY` powers transcription, debrief coaching and Reflect
    and can close after upload completes. One process, worker and persistent private
    volume are required. Set `RECORDING_STORAGE_DIR`, mount at least 32 GB, and exclude
    it from backups and public serving. The queue permits four pending recordings per
-   account and 16 GiB of declared pending uploads globally. These are operational
-   ceilings, not an audio archive.
+   account, 1,024 pending jobs globally, and 16 GiB of received audio. Declaring a
+   file size does not reserve storage. Each chunk checks the byte budget under the
+   storage lock before writing. These are operational ceilings, not an audio archive.
 3. FFmpeg decodes to disk-backed mono 16 kHz float PCM with allowlisted audio
    demuxers, no network/playlist loading, and a 900-second timeout. A full day uses
    approximately 5.5 GB of temporary PCM in addition to the compressed upload.
@@ -54,8 +55,9 @@ Do not run multiple workers or replicas against this local queue. Shared object 
 and a database lease are required before scaling horizontally.
 
 The running worker removes completed audio, cancelled jobs and abandoned analysis files.
-Incomplete/failed uploads expire after 24 hours without progress. A stopped service
-cannot perform expiry cleanup; restart runs cleanup again. Account export includes job
+Empty uploads expire after 15 minutes; incomplete/failed uploads with audio expire
+after 24 hours without progress. Upload creation also performs expiry cleanup while
+the worker is busy. A stopped service cannot perform cleanup. Account export includes job
 metadata and account deletion cancels its jobs. Do not log audio, transcripts or tokens.
 The legacy synchronous `/sessions` endpoint retains its 25 MiB request limit; current
 mobile and web clients use resumable uploads for both short and long recordings.

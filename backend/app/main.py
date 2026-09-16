@@ -6,6 +6,7 @@ from threading import Lock, BoundedSemaphore
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 import httpx
@@ -493,13 +494,13 @@ def recording_status(recording_id: str, user_id: str = Depends(verify_token), db
 async def upload_recording_chunk(recording_id: str, request: Request, offset: int = Query(ge=0), user_id: str = Depends(verify_token)):
     # Authenticate before reading a bounded body. Byte offsets make lost acknowledgements resumable.
     key = recording_key(user_id, recording_id)
-    recording_jobs.status(user_id, key)
+    await run_in_threadpool(recording_jobs.status, user_id, key)
     data = bytearray()
     async for chunk in request.stream():
         if len(data) + len(chunk) > UPLOAD_CHUNK_BYTES:
             raise HTTPException(413, 'Audio upload chunk is too large')
         data.extend(chunk)
-    return recording_jobs.append(user_id, key, offset, data)
+    return await run_in_threadpool(recording_jobs.append, user_id, key, offset, data)
 
 
 @app.post('/recordings/{recording_id}/complete')

@@ -10,6 +10,11 @@ export interface ConversationStats {
   userSpeechDurationMinutes: number;
   otherSpeechDurationMinutes: number;
   estimatedWpm: number;
+  otherEstimatedWpm: number | null;
+  userVolumeDbfs: number | null;
+  otherVolumeDbfs: number | null;
+  userPitchHz: number | null;
+  otherPitchHz: number | null;
   energyScore: number;
   energyAxes: number[];
   energySeriesUser: number[];
@@ -19,6 +24,7 @@ export interface ConversationStats {
   lsmDimensionsReference: Record<string, number>;
   totalWordCount: number;
   uniqueWordCount: number;
+  repeatedWords: FillerCount[] | null;
   vocabularyRichness: number;
   fillerCounts: FillerCount[];
   metadata: Record<string, unknown>;

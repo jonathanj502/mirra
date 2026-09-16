@@ -97,7 +97,7 @@ export function RadarChart({
   axes: { label: string }[]; series: RadarSeries[]; size?: number; rings?: number;
 }) {
   const cx = size / 2, cy = size / 2;
-  const radius = size * 0.36;
+  const radius = Math.max(24, size / 2 - 70);
   const n = axes.length;
   const angle = (i: number) => -Math.PI / 2 + (i * 2 * Math.PI) / n;
   const toXY = (i: number, v: number): [number, number] => [
@@ -275,6 +275,9 @@ export function TurnOffsetChart({
   data: OffsetPt[]; width?: number; height?: number; yMin?: number; yMax?: number; lineColor?: string;
 }) {
   const padL = 36, padR = 10, padT = 8, padB = 22;
+  const offsets = data.flatMap(point => point.ms == null ? [] : [point.ms]);
+  yMin = Math.min(yMin, ...offsets);
+  yMax = Math.max(yMax, ...offsets);
   const plotW = width - padL - padR;
   const plotH = height - padT - padB;
   const xToPx = (i: number) => padL + (data.length === 1 ? plotW / 2 : (i / (data.length - 1)) * plotW);
@@ -282,8 +285,7 @@ export function TurnOffsetChart({
 
   const zones = [
     { from: yMin, to: 0, color: colors.lavender, opacity: 0.10 },
-    { from: 0, to: 400, color: colors.sage, opacity: 0.16 },
-    { from: 400, to: yMax, color: colors.sand, opacity: 0.28 },
+    { from: 0, to: yMax, color: colors.sand, opacity: 0.20 },
   ];
 
   const points = data.map((d, i) => [xToPx(i), d.ms == null ? null : yToPx(d.ms)] as [number, number | null]);
@@ -302,9 +304,7 @@ export function TurnOffsetChart({
         return <Rect key={`z${i}`} x={padL} y={top} width={plotW} height={h} fill={z.color} opacity={z.opacity} />;
       })}
       <Line x1={padL} x2={padL + plotW} y1={yToPx(0)} y2={yToPx(0)} stroke="rgba(42,37,32,0.32)" strokeWidth={1} />
-      <Line x1={padL} x2={padL + plotW} y1={yToPx(200)} y2={yToPx(200)} stroke={colors.sage} strokeWidth={1.2} strokeDasharray={[4, 3]} opacity={0.85} />
-      <SvgText x={padL + plotW - 2} y={yToPx(200) - 3} textAnchor="end" fontFamily={FONT} fontSize={9} fill={colors.sage}>target +200</SvgText>
-      {[-200, 0, 200, 500].map((v) => (
+      {[yMin, 0, yMax].map((v) => (
         <SvgText key={`yt${v}`} x={padL - 4} y={yToPx(v) + 3} fontFamily={FONT} fontSize={9} fill={colors.muted} textAnchor="end">
           {v > 0 ? `+${v}` : v}
         </SvgText>

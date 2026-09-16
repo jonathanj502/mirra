@@ -506,6 +506,69 @@ test('account actions save audio before sign-out and clear local data only after
   assert.deepEqual(events, ['pause', 'server-delete', 'clear-local', 'clear-consent', 'sign-out', 'resume']);
 });
 
+test('website statistics reach the conversation screen, without fabricated legacy measurements', () => {
+  const api = load('api/client.ts', { '@/api/http': http, '@/storage/audioSource': {} });
+  const state = hooks();
+  const raw = { id: 'statistics', created_at: '2026-09-16T00:00:00Z', transcript: 'Other speaker words must not inflate yours.',
+    stats: { talk_listen_ratio: 1, question_count: 6, open_question_count: 4, closed_question_count: 2, interruption_count: 2,
+      average_turn_offset_ms: -160, turn_offset_series: [{ t: '0:10', ms: -160 }],
+      session_duration_minutes: 12, user_speech_duration_minutes: 3, other_speech_duration_minutes: 3,
+      estimated_wpm: 140, other_estimated_wpm: 110, user_volume_dbfs: -21.6, other_volume_dbfs: -28,
+      user_pitch_hz: 180, other_pitch_hz: 220, energy_score: 0, energy_series_user: [1, 3, 2], energy_series_other: [2, 1, 4],
+      total_word_count: 420, unique_word_count: 186, repeated_words: [{ phrase: 'week', count: 7 }],
+      filler_counts: [{ phrase: 'like', count: 7 }, { phrase: 'um', count: 3 }], metadata: { coaching_goal: 'make_friends' } } };
+  let debrief = api.toDebrief(raw);
+  const { AnalyticsScreen } = load('screens/AnalyticsScreen.tsx', {
+    react: state.react, 'react-native': { Platform: { OS: 'web' }, StyleSheet: { create: s => s }, useWindowDimensions: () => ({ width: 320 }) },
+    'expo-router': { useLocalSearchParams: () => ({ id: 'statistics' }), useRouter: () => ({}) },
+    '@/auth/AuthContext': auth, '@/api/client': api, '@/api/http': http, '@/data/coachingGoals': goals,
+    '@/hooks/useDebriefs': { useDebriefs: () => ({ debriefs: [debrief] }), toConversationListItem: () => ({ title: 'Conversation' }) },
+    '@/utils/talkListen': { talkListenPercent: () => 50 }, '@/theme/tokens': { colors: {}, fonts: {} },
+    '@/components/Screen': {}, '@/components/ui': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
+    '@/components/FloatingTabBar': {}, '@/components/ExpandableMetric': { ExpandableMetric: 'Metric' },
+    '@/components/ReflectCTA': {}, '@/components/charts': { EnergyWave: 'Wave' }, '@/components/meters': { FillerBars: 'Words' },
+  });
+  function nodes(node) {
+    return node && typeof node === 'object' ? [node, ...[node.props?.children].flat(Infinity).flatMap(nodes)] : [];
+  }
+  const tree = state.render(AnalyticsScreen);
+  const cards = Object.fromEntries(nodes(tree).filter(n => n.type === 'Metric').map(n => [n.props.eyebrow, n.props]));
+  for (const name of ['Speaking share', 'Questions', 'Turn-taking', 'Vocal energy', 'Vocabulary', 'Filler words']) assert.ok(cards[name], name);
+  assert.equal(cards.Questions.value, '6');
+  assert.equal(cards['Turn-taking'].value, '-160');
+  assert.equal(cards['Vocal energy'].value, 140);
+  assert.equal(cards['Filler words'].value, 10);
+  assert.match(cards.Vocabulary.summary, /186 unique across 420 words/);
+  assert.ok(nodes(tree).some(n => n.type === 'Wave'), 'Valid energy data is visible even when a legacy composite score is zero');
+  assert.deepEqual(nodes(tree).find(n => n.type === 'Words').props.items, [{ phrase: 'week', count: 7 }]);
+  assert.match(JSON.stringify(tree), /-21.6 dBFS/);
+  assert.match(JSON.stringify(tree), /220 Hz/);
+  assert.doesNotMatch(JSON.stringify(tree), /Healthy range|ideal smooth|high LSM|Outside the balanced/);
+  for (const n of nodes(tree)) if (n.props.width) assert.ok(n.props.width <= 224, 'Charts fit a 320px screen');
+
+  debrief = api.toDebrief({ ...raw, stats: { talk_listen_ratio: 1, question_count: 0, interruption_count: 1,
+    session_duration_minutes: 12, user_speech_duration_minutes: 0, estimated_wpm: 0 } });
+  assert.equal(debrief.stats.repeatedWords, null);
+  assert.equal(debrief.stats.userVolumeDbfs, null);
+  assert.equal(debrief.stats.averageTurnOffsetMs, 0);
+  assert.equal(debrief.stats.otherSpeechDurationMinutes, 0);
+  const legacyTree = state.render(AnalyticsScreen);
+  assert.match(JSON.stringify(legacyTree), /Word frequencies were not saved/);
+  assert.match(JSON.stringify(legacyTree), /0 unique across 0 words/);
+});
+
+test('turn chart includes long gaps and overlaps without an ideal timing target', () => {
+  const { TurnOffsetChart } = load('components/charts.tsx', {
+    react: React, 'react-native': {}, './Typography': {}, '@/theme/tokens': { colors: {}, fonts: {} },
+    'react-native-svg': { __esModule: true, default: 'svg', Circle: 'circle', Line: 'line', Path: 'path', Text: 'text', Rect: 'rect' },
+  });
+  const tree = TurnOffsetChart({ data: [{ t: '0:01', ms: -1200 }, { t: '0:10', ms: 10000 }] });
+  const circles = tree.props.children.flat(Infinity).filter(n => n?.type === 'circle');
+  assert.equal(circles.length, 2);
+  assert.ok(circles.every(n => n.props.cy >= 8 && n.props.cy <= 148));
+  assert.doesNotMatch(JSON.stringify(tree), /target/);
+});
+
 test('conversation deletion confirms on web and native, retains failures, and navigates only after success', async (t) => {
   const api = load('api/client.ts', { '@/api/http': http, '@/storage/audioSource': {} });
   const state = hooks();
@@ -526,7 +589,7 @@ test('conversation deletion confirms on web and native, retains failures, and na
     '@/data/coachingGoals': goals,
     react: state.react,
     'react-native': { Platform: platform, Alert: { alert: (_title, _message, actions) => { buttons = actions; } },
-      StyleSheet: { create: styles => styles } },
+      StyleSheet: { create: styles => styles }, useWindowDimensions: () => ({ width: 393 }) },
     'expo-router': { useLocalSearchParams: () => ({ id }), useRouter: () => ({ replace: path => destinations.push(path) }) },
     '@/auth/AuthContext': auth, '@/api/client': api, '@/api/http': http,
     '@/hooks/useDebriefs': { useDebriefs: () => ({ debriefs: [debrief], loading: false }),
@@ -701,4 +764,61 @@ test('Reflect preserves the draft and sends no message or fallback when consent 
   assert.equal(sent[0].prompt, 'Keep this draft');
   assert.deepEqual(sent[0].messages, []);
   assert.equal(findInput(render()).props.value, '');
+});
+
+test('Reflect keeps a newer draft through failed replies, retries and removal of the failed message', async () => {
+  const state = hooks();
+  const requests = [];
+  const { ReflectScreen } = load('screens/ReflectScreen.tsx', {
+    react: state.react,
+    'react-native': { TextInput: 'TextInput', Platform: { OS: 'ios' }, StyleSheet: { create: styles => styles } },
+    'react-native-safe-area-context': { useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) },
+    'expo-router': { useRouter: () => ({}), useLocalSearchParams: () => ({}) },
+    'react-native-svg': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
+    '@/theme/tokens': { colors: {}, fonts: {} }, '@/auth/AuthContext': auth, '@/hooks/useDebriefs': {},
+    '@/api/http': http, '@/data/reflect': { SEED_MESSAGES: [], STARTER_PROMPTS: [] },
+    '@/privacy/aiConsent': privacy,
+    '@/api/client': { sendReflection(_, payload) {
+      return new Promise((resolve, reject) => requests.push({ payload, resolve, reject }));
+    } },
+  });
+  function find(node, label) {
+    if (!node || typeof node !== 'object') return;
+    if (node.props?.accessibilityLabel === label) return node;
+    for (const child of React.Children.toArray(node.props?.children)) {
+      const result = find(child, label);
+      if (result) return result;
+    }
+  }
+  const render = () => state.render(ReflectScreen);
+  const input = () => find(render(), 'Message to Mirra');
+  input().props.onChangeText('First question');
+  const first = input().props.onSubmitEditing();
+  await flush();
+  input().props.onChangeText('New unsent draft');
+  requests[0].reject(Error('Network unavailable'));
+  await first;
+  assert.equal(input().props.value, 'New unsent draft');
+  assert.match(JSON.stringify(render()), /First question/);
+  await input().props.onSubmitEditing();
+  assert.equal(requests.length, 1, 'Resolve the failed message before sending another');
+
+  const retry = find(render(), 'Retry failed message').props.onPress();
+  await flush();
+  assert.deepEqual(requests[1].payload, requests[0].payload, 'A retry must not duplicate the failed question in history');
+  assert.equal(input().props.value, 'New unsent draft');
+  requests[1].resolve({ usedModel: true, reply: 'A reply' });
+  await retry;
+  assert.equal(find(render(), 'Retry failed message'), undefined);
+  assert.equal(input().props.value, 'New unsent draft');
+
+  const next = input().props.onSubmitEditing();
+  await flush();
+  input().props.onChangeText('Another draft');
+  requests[2].reject(Error('Network unavailable'));
+  await next;
+  find(render(), 'Remove failed message').props.onPress();
+  assert.equal(input().props.value, 'Another draft');
+  assert.equal(find(render(), 'Send message').props.disabled, false);
+  assert.doesNotMatch(JSON.stringify(render()), /New unsent draft/);
 });

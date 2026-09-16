@@ -1,6 +1,6 @@
 // Insights · single conversation deep-dive.
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Platform, View, Pressable, StyleSheet } from 'react-native';
+import { Alert, Platform, View, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Screen } from '@/components/Screen';
 import { Card, Pip } from '@/components/ui';
@@ -9,8 +9,8 @@ import { Icon } from '@/components/Icon';
 import { FloatingTabBar, TabId } from '@/components/FloatingTabBar';
 import { ExpandableMetric } from '@/components/ExpandableMetric';
 import { ReflectCTA } from '@/components/ReflectCTA';
-import { Donut, RingMeter, RadarChart, TurnOffsetChart, EnergyWave } from '@/components/charts';
-import { FillerBars, SyncBars, OffsetZoneLegend } from '@/components/meters';
+import { Donut, RadarChart, TurnOffsetChart, EnergyWave } from '@/components/charts';
+import { FillerBars, OffsetZoneLegend } from '@/components/meters';
 import { colors, fonts } from '@/theme/tokens';
 import { useDebriefs, toConversationListItem } from '@/hooks/useDebriefs';
 import { useAuth } from '@/auth/AuthContext';
@@ -33,18 +33,14 @@ const LSM_AXES = [
   { key: 'aux_verbs', label: 'Aux. verbs' },
 ];
 
-function words(text?: string | null) {
-  return (text?.toLowerCase().match(/[a-z']+/g) ?? []).filter((word) => word.length > 1);
-}
-
 // Questions card — vertical bar with count baked inside.
 function QBar({ label, value, color, sub, max }: { label: string; value: number; color: string; sub: string; max: number }) {
   return (
     <View style={{ flex: 1, gap: 6 }}>
       <View style={styles.qBarTrack}>
         <View style={[styles.qBarFill, { height: `${(value / max) * 100}%`, backgroundColor: color }]}>
-          <Serif style={styles.qBarVal}>{value}</Serif>
         </View>
+        <Serif style={[styles.qBarVal, { position: 'absolute', bottom: 8, alignSelf: 'center', color: value ? '#FBF6EA' : colors.ink }]}>{value}</Serif>
       </View>
       <Body style={styles.qBarLabel}>
         {label}{'\n'}<Body style={styles.qBarSub}>{sub}</Body>
@@ -54,6 +50,8 @@ function QBar({ label, value, color, sub, max }: { label: string; value: number;
 }
 
 export function AnalyticsScreen() {
+  const { width } = useWindowDimensions();
+  const chartWidth = Math.min(300, Math.max(120, width - 96));
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { accessToken } = useAuth();
@@ -147,22 +145,20 @@ export function AnalyticsScreen() {
   const interruptions = selected.stats.interruptionCount;
   const durationMin = selected.stats.sessionDurationMinutes;
   const userSpeechMin = selected.stats.userSpeechDurationMinutes;
-  const otherSpeechMin = selected.stats.otherSpeechDurationMinutes || Math.max(0, durationMin - userSpeechMin);
+  const otherSpeechMin = selected.stats.otherSpeechDurationMinutes;
   const openQuestions = selected.stats.openQuestionCount;
   const closedQuestions = selected.stats.closedQuestionCount;
   const questionMax = Math.max(openQuestions, closedQuestions, 1) * 1.15;
-  const transcriptWords = words(selected.transcript);
-  const uniqueWords = selected.stats.uniqueWordCount || new Set(transcriptWords).size;
-  const totalWords = selected.stats.totalWordCount || transcriptWords.length || Math.max(0, Math.round(selected.stats.estimatedWpm * durationMin));
+  const uniqueWords = selected.stats.uniqueWordCount;
+  const totalWords = selected.stats.totalWordCount;
+  const repeatedWords = selected.stats.repeatedWords;
   const uniquePct = totalWords > 0 ? Math.round((uniqueWords / totalWords) * 100) : 0;
   const fillers = selected.stats.fillerCounts;
   const fillerTotal = fillers.reduce((sum, item) => sum + item.count, 0);
   const turnOffset = selected.stats.averageTurnOffsetMs;
   const turnOffsetData = selected.stats.turnOffsetSeries;
   const hasTurnOffset = turnOffsetData.length > 0;
-  const hasEnergySignals = selected.stats.energyScore > 0 && selected.stats.energySeriesUser.length > 1 && selected.stats.energySeriesOther.length > 1;
-  const energyScore = selected.stats.energyScore;
-  const energyAxes = [selected.stats.energyAxes[0] ?? 0, selected.stats.energyAxes[1] ?? 0, selected.stats.energyAxes[2] ?? 0];
+  const hasEnergySignals = selected.stats.energySeriesUser.some(value => value > 0) && selected.stats.energySeriesUser.length > 1 && selected.stats.energySeriesOther.length > 1;
   const hasLsmSignals = selected.stats.lsmScore > 0;
   const lsmScore = selected.stats.lsmScore;
   const lsmUserValues = LSM_AXES.map((axis) => selected.stats.lsmDimensionsUser[axis.key] ?? 0);
@@ -219,8 +215,8 @@ export function AnalyticsScreen() {
 
         {/* 1. Talk / Listen */}
         <ExpandableMetric
-          eyebrow="Talk / Listen" value={`${talkPct} / ${listenPct}`} unit="you / them"
-          summary={talkPct >= 40 && talkPct <= 60 ? 'Within the balanced range.' : 'Outside the balanced range.'} accent={colors.terracotta} chartKind="donut" defaultOpen
+          eyebrow="Speaking share" value={userSpeechMin + otherSpeechMin > 0 ? `${talkPct} / ${listenPct}` : 'Unavailable'} unit="you / others"
+          summary="Estimated speaking time. No single ratio fits every conversation." accent={colors.terracotta} chartKind="donut" defaultOpen
         >
           <View style={styles.rowCenter}>
             <Donut size={130} stroke={20} segments={[{ value: talkPct, color: colors.terracotta }, { value: listenPct, color: colors.sage }]} centerLabel={`${talkPct}%`} centerSub="you" />
@@ -230,8 +226,8 @@ export function AnalyticsScreen() {
                 <Body style={styles.pipNote}>Estimated from detected speech segments</Body>
               </View>
               <View>
-                <Pip color={colors.sage}>Them · {Math.round(otherSpeechMin)} min</Pip>
-                <Body style={styles.pipNote}>Healthy range: 40–60% you</Body>
+                <Pip color={colors.sage}>Others · {Math.round(otherSpeechMin)} min</Pip>
+                <Body style={styles.pipNote}>Speaking time does not measure listening.</Body>
               </View>
             </View>
           </View>
@@ -273,13 +269,13 @@ export function AnalyticsScreen() {
 
         {/* 3. Turn-floor offset */}
         <ExpandableMetric
-          eyebrow="Turn-floor offset" value={hasTurnOffset ? `+${turnOffset}` : '—'} unit={hasTurnOffset ? 'ms avg' : 'not saved'}
-          summary={hasTurnOffset ? `${interruptions} interruptions estimated across ${Math.round(durationMin)} minutes.` : 'Turn timing was not saved for this debrief.'} accent={colors.terracotta} chartKind="line"
+          eyebrow="Turn-taking" value={hasTurnOffset ? `${turnOffset > 0 ? '+' : ''}${turnOffset}` : 'Unavailable'} unit={hasTurnOffset ? 'ms avg' : ''}
+          summary={hasTurnOffset ? `${interruptions} overlapping starts by you estimated across ${Math.round(durationMin)} minutes.` : 'Not enough saved speaker changes to estimate timing.'} accent={colors.terracotta} chartKind="line"
           blurb={hasTurnOffset ? 'Approximate turn timing based on detected speaker changes in this saved debrief.' : 'New recordings save turn timing from detected speaker changes.'}
         >
           {hasTurnOffset ? (
             <>
-              <TurnOffsetChart data={turnOffsetData} width={300} height={170} />
+              <TurnOffsetChart data={turnOffsetData} width={chartWidth} height={170} />
               <OffsetZoneLegend />
             </>
           ) : (
@@ -287,62 +283,53 @@ export function AnalyticsScreen() {
           )}
         </ExpandableMetric>
 
-        {/* 4. Energy mirroring */}
+        {/* Vocal measurements are descriptive, not a score of social success. */}
         <ExpandableMetric
-          eyebrow="Energy mirroring" value={hasEnergySignals ? `${energyScore}%` : '—'} unit={hasEnergySignals ? 'in tune' : 'not saved'}
-          summary={hasEnergySignals ? 'Calculated from saved vocal energy, pitch, and pace signals.' : 'Energy signals were not saved for this debrief.'} accent={colors.lavender} chartKind="line"
-          blurb={hasEnergySignals ? 'This is calculated from the audio saved for this debrief: volume convergence, pitch similarity, pace, and turn balance.' : 'New recordings save the vocal signals needed for this chart.'}
+          eyebrow="Vocal energy" value={selected.stats.estimatedWpm > 0 ? Math.round(selected.stats.estimatedWpm) : 'Unavailable'} unit={selected.stats.estimatedWpm > 0 ? 'your words / min' : ''}
+          summary="Your recorded volume, pitch, and speaking pace." accent={colors.lavender} chartKind="line"
+          blurb="Volume is the recorded signal level in dBFS, not room loudness. Microphone distance affects it. Pitch is estimated from sampled speech; pace uses detected speaking time. These are not targets."
         >
           {hasEnergySignals ? (
             <>
-              <View style={styles.energyRow}>
-                <RingMeter value={energyScore} size={56} stroke={5} color={colors.lavender} label={String(energyScore)} />
-                <View style={{ flex: 1 }}>
-                  <View style={styles.energyChartRow}>
-                    <View style={styles.energyYAxis}>
-                      <Body style={styles.energyAxisLabel}>hi</Body>
-                      <Body style={styles.energyAxisLabel}>lo</Body>
-                    </View>
-                    <View style={styles.energyChart}>
-                      <EnergyWave you={selected.stats.energySeriesUser} them={selected.stats.energySeriesOther} width={180} height={62} />
-                      <View style={styles.energyXAxis}>
-                        <Body style={styles.energyXLabel}>0:00</Body>
-                        <Body style={[styles.energyXLabel, { letterSpacing: 1, textTransform: 'uppercase' }]}>energy · time</Body>
-                        <Body style={styles.energyXLabel}>{Math.round(durationMin)}:00</Body>
-                      </View>
-                    </View>
-                  </View>
-                  <View style={styles.energyPips}>
-                    <Pip color={colors.terracotta}>You</Pip>
-                    <Pip color={colors.lavender}>Them</Pip>
-                  </View>
-                </View>
+              <EnergyWave you={selected.stats.energySeriesUser} them={selected.stats.energySeriesOther} width={chartWidth} height={80} />
+              <View style={styles.energyXAxis}>
+                <Body style={styles.energyXLabel}>Start</Body>
+                <Body style={styles.energyXLabel}>Relative variation</Body>
+                <Body style={styles.energyXLabel}>End</Body>
               </View>
-              <View style={styles.syncSection}>
-                <Body style={styles.syncHead}>Match by dimension</Body>
-                <SyncBars dims={[
-                  { label: 'Volume convergence', you: energyAxes[0], them: 1 },
-                  { label: 'Pitch', you: energyAxes[1], them: 1 },
-                  { label: 'Speech rate', you: energyAxes[2], them: 1 },
-                ]} />
+              <View style={styles.energyPips}>
+                <Pip color={colors.terracotta}>You</Pip>
+                <Pip color={colors.lavender}>Others</Pip>
               </View>
+              <Body style={styles.pipNote}>Each line is scaled separately to show changes over the recording.</Body>
             </>
-          ) : (
-            <Body style={styles.unavailableText}>Record or import a new conversation to see vocal energy matching here.</Body>
-          )}
+          ) : <Body style={styles.unavailableText}>No vocal energy timeline saved for this conversation.</Body>}
+          <View style={styles.syncSection}>
+            {[
+              { label: 'Pace', unit: 'words/min', you: selected.stats.estimatedWpm || null, others: selected.stats.otherEstimatedWpm },
+              { label: 'Recorded volume', unit: 'dBFS', you: selected.stats.userVolumeDbfs, others: selected.stats.otherVolumeDbfs },
+              { label: 'Pitch', unit: 'Hz', you: selected.stats.userPitchHz, others: selected.stats.otherPitchHz },
+            ].map(metric => (
+              <View key={metric.label} style={{ marginBottom: 14 }}>
+                <Body style={styles.syncHead}>{metric.label}</Body>
+                <Body style={styles.pipNote}>You: {metric.you == null ? 'Unavailable' : `${metric.you} ${metric.unit}`}</Body>
+                <Body style={styles.pipNote}>Others: {metric.others == null ? 'Unavailable' : `${metric.others} ${metric.unit}`}</Body>
+              </View>
+            ))}
+          </View>
         </ExpandableMetric>
 
         {/* 5. Linguistic style match */}
         <ExpandableMetric
-          eyebrow="Linguistic style match" value={hasLsmSignals ? lsmScore.toFixed(2) : '—'} unit={hasLsmSignals ? 'LSM score' : 'not saved'}
-          summary={hasLsmSignals ? (lsmScore >= 0.7 ? 'High style alignment.' : 'Alignment is still forming.') : 'Style-match signals were not saved for this debrief.'} accent={colors.lavender} chartKind="radar"
-          blurb={hasLsmSignals ? 'Calculated from saved function-word patterns and vocal mirroring signals for this debrief, compared with a conversational reference profile.' : 'New recordings save the signals needed for style-match scoring.'}
+          eyebrow="Language reference" value={hasLsmSignals ? lsmScore.toFixed(2) : 'Unavailable'} unit={hasLsmSignals ? 'estimate' : ''}
+          summary="Function-word use compared with a fixed reference." accent={colors.lavender} chartKind="radar"
+          blurb="This experimental index uses a fixed reference and acoustic similarity. It does not compare your words with the other speakers or measure connection."
         >
           {hasLsmSignals ? (
             <>
               <View style={{ alignItems: 'center', marginBottom: 4 }}>
                 <RadarChart
-                  size={240} rings={4}
+                  size={Math.min(240, chartWidth)} rings={4}
                   axes={LSM_AXES.map((axis) => ({ label: axis.label }))}
                   series={[
                     { values: lsmUserValues, color: colors.terracotta, fill: 0.32, strokeWidth: 1.8 },
@@ -359,21 +346,20 @@ export function AnalyticsScreen() {
                   <View style={[styles.lsmSwatch, { backgroundColor: colors.lavender, borderColor: colors.lavender }]} />
                   <Body style={styles.lsmLegendText}>reference</Body>
                 </View>
-                <Body style={styles.lsmLegendText}>overlap = alignment</Body>
+                <Body style={styles.lsmLegendText}>Function-word patterns</Body>
               </View>
               <View style={styles.lsmScore}>
                 <View style={styles.lsmScoreHead}>
-                  <Body style={{ fontSize: 11, color: colors.ink }}>Overall LSM</Body>
+                  <Body style={{ fontSize: 11, color: colors.ink }}>Reference index</Body>
                   <Serif style={{ fontSize: 16, color: colors.lavender }}>{lsmScore.toFixed(2)}</Serif>
                 </View>
                 <View style={styles.lsmTrack}>
-                  <View style={styles.lsmBand} />
                   <View style={[styles.lsmDot, { left: `${Math.round(lsmScore * 100)}%` }]} />
                 </View>
                 <View style={styles.lsmScaleRow}>
-                  <Body style={styles.lsmScaleText}>0.0 · no match</Body>
-                  <Body style={[styles.lsmScaleText, { color: colors.sage, fontFamily: fonts.bodySemibold }]}>0.70+ high LSM</Body>
-                  <Body style={styles.lsmScaleText}>1.0 · perfect</Body>
+                  <Body style={styles.lsmScaleText}>0.0</Body>
+                  <Body style={styles.lsmScaleText}>Not a target</Body>
+                  <Body style={styles.lsmScaleText}>1.0</Body>
                 </View>
               </View>
             </>
@@ -390,11 +376,21 @@ export function AnalyticsScreen() {
           <SerifItalic style={styles.vocabLine}>{uniqueWords.toLocaleString('en-US')} unique words across {totalWords.toLocaleString('en-US')} spoken.</SerifItalic>
           <View>
             <View style={styles.vocabHead}>
-              <Eyebrow>Top lexical paddings</Eyebrow>
-              <Body style={styles.vocabHeadMeta}>{fillerTotal} total</Body>
+              <Eyebrow>Most repeated words</Eyebrow>
             </View>
-            <FillerBars items={fillers} />
+            {repeatedWords?.length ? <FillerBars items={repeatedWords} /> : (
+              <Body style={styles.pipNote}>{repeatedWords == null ? 'Word frequencies were not saved for this conversation.' : 'No repeated words detected.'}</Body>
+            )}
+            <Body style={styles.pipNote}>Up to ten words from your estimated speech. Repetition can be useful; this is not a vocabulary score.</Body>
           </View>
+        </ExpandableMetric>
+
+        <ExpandableMetric
+          eyebrow="Filler words" value={fillerTotal} unit="possible uses"
+          summary="Words and phrases worth considering in context." accent={colors.sand} chartKind="bar"
+          blurb="These are phrase matches, not a judgment. Words such as like and right often carry meaning."
+        >
+          {fillers.length ? <FillerBars items={fillers} /> : <Body style={styles.pipNote}>No possible filler phrases detected.</Body>}
         </ExpandableMetric>
 
         <View style={{ height: 8 }} />
@@ -420,29 +416,23 @@ const styles = StyleSheet.create({
   pipNote: { fontSize: 11.5, color: colors.muted, marginTop: 2 },
 
   // Questions
-  qRow: { flexDirection: 'row', gap: 16, alignItems: 'flex-start' },
-  qBars: { flexDirection: 'row', gap: 8, width: 128 },
+  qRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start' },
+  qBars: { flexDirection: 'row', gap: 8, minWidth: 128, flex: 1 },
   qBarTrack: { height: 130, backgroundColor: 'rgba(42,37,32,0.04)', borderRadius: 10, overflow: 'hidden', justifyContent: 'flex-end' },
   qBarFill: { width: '100%', borderRadius: 10, alignItems: 'center', paddingTop: 8 },
   qBarVal: { fontSize: 22, color: '#FBF6EA', lineHeight: 24 },
   qBarLabel: { fontSize: 10, color: colors.muted, letterSpacing: 0.8, textTransform: 'uppercase', textAlign: 'center', lineHeight: 14 },
   qBarSub: { fontSize: 9, color: colors.muted },
-  qAnalysis: { flex: 1, gap: 8, height: 130 },
+  qAnalysis: { flex: 1, minWidth: 112, gap: 8, minHeight: 130 },
   miniCard: { borderRadius: 10, paddingVertical: 8, paddingHorizontal: 10, flex: 1, justifyContent: 'center' },
   miniLabel: { fontSize: 9.5, color: colors.muted, letterSpacing: 1, textTransform: 'uppercase' },
   miniRow: { flexDirection: 'row', alignItems: 'baseline', gap: 5, marginTop: 3 },
   miniNum: { fontSize: 17, lineHeight: 18 },
   miniUnit: { fontSize: 10, color: colors.muted },
-  miniDotSep: { color: colors.hairline, marginHorizontal: 1 },
   miniBar: { height: 4, marginTop: 6, borderRadius: 999, backgroundColor: 'rgba(42,37,32,0.08)', overflow: 'hidden', flexDirection: 'row' },
   miniItalic: { fontSize: 11, color: colors.ink2, marginTop: 4, lineHeight: 14 },
 
   // Energy
-  energyRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 14 },
-  energyChartRow: { flexDirection: 'row', alignItems: 'stretch', gap: 6 },
-  energyYAxis: { justifyContent: 'space-between', paddingVertical: 2 },
-  energyAxisLabel: { fontSize: 8.5, color: colors.muted, letterSpacing: 1, textTransform: 'uppercase' },
-  energyChart: { flex: 1, borderLeftWidth: 1, borderLeftColor: 'rgba(42,37,32,0.12)', paddingLeft: 6 },
   energyXAxis: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 },
   energyXLabel: { fontSize: 9, color: colors.muted, letterSpacing: 0.4 },
   energyPips: { flexDirection: 'row', gap: 12, marginTop: 8 },
@@ -450,14 +440,13 @@ const styles = StyleSheet.create({
   syncHead: { fontSize: 10.5, color: colors.muted, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10 },
 
   // LSM
-  lsmLegend: { flexDirection: 'row', justifyContent: 'center', gap: 18, marginTop: 4, alignItems: 'center' },
+  lsmLegend: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 18, marginTop: 4, alignItems: 'center' },
   lsmLegendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   lsmSwatch: { width: 14, height: 10, borderRadius: 2, opacity: 0.55, borderWidth: 1.5 },
   lsmLegendText: { fontSize: 10.5, color: colors.muted, letterSpacing: 0.4 },
   lsmScore: { marginTop: 16, paddingTop: 14, borderTopWidth: 1, borderTopColor: colors.hairline, borderStyle: 'dashed' },
   lsmScoreHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 },
   lsmTrack: { height: 10, backgroundColor: 'rgba(42,37,32,0.06)', borderRadius: 999, justifyContent: 'center' },
-  lsmBand: { position: 'absolute', left: '70%', right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(151,168,135,0.2)', borderTopRightRadius: 999, borderBottomRightRadius: 999, borderWidth: 1, borderColor: 'rgba(151,168,135,0.33)' },
   lsmDot: { position: 'absolute', left: '83%', width: 14, height: 14, borderRadius: 7, marginLeft: -7, backgroundColor: colors.lavender },
   lsmScaleRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
   lsmScaleText: { fontSize: 10, color: colors.muted, letterSpacing: 0.3 },
@@ -466,5 +455,4 @@ const styles = StyleSheet.create({
   vocabLine: { fontSize: 13.5, color: colors.ink2, lineHeight: 20, marginBottom: 16 },
   unavailableText: { fontSize: 13, color: colors.muted, lineHeight: 20 },
   vocabHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 },
-  vocabHeadMeta: { fontSize: 10.5, color: colors.muted, letterSpacing: 0.6 },
 });

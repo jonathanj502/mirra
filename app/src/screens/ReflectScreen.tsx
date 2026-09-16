@@ -61,6 +61,7 @@ export function ReflectScreen() {
   const { accessToken, user } = useAuth();
   const sending = useRef(false);
   const [error, setError] = useState<string | null>(null);
+  const [failedMessage, setFailedMessage] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>(SEED_MESSAGES);
   const [input, setInput] = useState('');
   const [subject, setSubject] = useState('recent conversation');
@@ -93,7 +94,7 @@ export function ReflectScreen() {
 
   const send = async (text?: string) => {
     const msg = (text ?? input).trim();
-    if (!msg || thinking || sending.current || !accessToken) return;
+    if (!msg || thinking || sending.current || !accessToken || (failedMessage && text !== failedMessage)) return;
     sending.current = true;
     setError(null);
     try {
@@ -106,7 +107,7 @@ export function ReflectScreen() {
       sending.current = false;
       return;
     }
-    setInput('');
+    if (text === undefined) setInput(current => current.trim() === msg ? '' : current);
     const nextMessages = [...messages, { from: 'you' as const, text: msg }];
     setMessages(nextMessages);
     setThinking(true);
@@ -121,10 +122,11 @@ export function ReflectScreen() {
         })),
       });
       setMessages((m) => [...m, { from: 'ai', text: reply.usedModel ? reply.reply : `General guidance (AI unavailable): ${reply.reply}` }]);
+      setFailedMessage(null);
     } catch (err) {
       setMessages(messages);
-      setInput(msg);
-      setError(friendlyErrorMessage(err, 'Could not get a reply. Your message is ready to send again.'));
+      setFailedMessage(msg);
+      setError(friendlyErrorMessage(err, 'Could not get a reply. Your message and draft are still here.'));
     } finally {
       setThinking(false);
       sending.current = false;
@@ -139,7 +141,7 @@ export function ReflectScreen() {
     }
   };
 
-  const canSend = !!input.trim() && !thinking;
+  const canSend = !!input.trim() && !thinking && !failedMessage;
   const bottomPad = (Platform.OS === 'ios' ? 22 : 18) + insets.bottom;
 
   return (
@@ -163,11 +165,25 @@ export function ReflectScreen() {
         <Body style={{ color: colors.muted, fontSize: 12, marginVertical: 12 }}>AI coaching can be wrong. It is not medical or mental-health advice. Chats stay in this session.</Body>
         {error ? <Body accessibilityRole="alert" style={{ color: colors.coral, marginBottom: 12 }}>{error}</Body> : null}
         {messages.map((m, i) => <ChatBubble key={i} from={m.from} text={m.text} />)}
+        {failedMessage && !thinking ? (
+          <View>
+            <ChatBubble from="you" text={failedMessage} />
+            <View style={styles.failedActions}>
+              <Pressable accessibilityRole="button" accessibilityLabel="Retry failed message" onPress={() => send(failedMessage)} style={styles.failedAction}>
+                <Body>Try again</Body>
+              </Pressable>
+              <Pressable accessibilityRole="button" accessibilityLabel="Remove failed message" style={styles.failedAction}
+                onPress={() => { setFailedMessage(null); setError(null); }}>
+                <Body>Remove message</Body>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
         {thinking && <TypingIndicator />}
       </ScrollView>
 
       {/* Starter prompts */}
-      {messages.length <= 3 && !thinking && (
+      {messages.length <= 3 && !thinking && !failedMessage && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.startersWrap} contentContainerStyle={{ gap: 8, paddingHorizontal: 14 }}>
           {STARTER_PROMPTS.map((p, i) => (
             <Pressable accessibilityRole="button" key={i} onPress={() => send(p)} style={styles.starter}>
@@ -203,6 +219,8 @@ export function ReflectScreen() {
 }
 
 const styles = StyleSheet.create({
+  failedActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 12, marginBottom: 10 },
+  failedAction: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 8 },
   root: { flex: 1, backgroundColor: colors.paper },
   header: { paddingHorizontal: 18, paddingBottom: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerName: { fontSize: 18, lineHeight: 18, color: colors.ink },

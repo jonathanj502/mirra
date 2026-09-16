@@ -101,17 +101,21 @@ def test_compute_stats_no_other_speech():
     assert stats["talk_listen_ratio"] == 99.0
 
 
-def test_balanced_speaking_time_improves_energy_score():
+def test_speaking_share_is_not_scored_as_better_when_balanced():
     user = Segment(0, 10, 0.5)
     balanced = compute_stats([user, Segment(10, 20, 0.5)], [user], "same words", 30.0)
     unbalanced = compute_stats([user, Segment(10, 30, 0.5)], [user], "same words", 30.0)
     assert balanced["energy_axes"] == unbalanced["energy_axes"]
-    assert balanced["energy_score"] > unbalanced["energy_score"]
+    assert balanced["energy_score"] == unbalanced["energy_score"]
 
 
 def test_no_speech_does_not_report_a_high_talk_ratio():
     stats = compute_stats([], [], "", 60.0)
     assert stats["talk_listen_ratio"] == 0
+    assert stats["user_volume_dbfs"] is None
+    assert stats["user_pitch_hz"] is None
+    assert stats["other_estimated_wpm"] is None
+    assert stats["repeated_words"] == []
 
 
 def test_compute_stats_adds_voice_analysis_from_audio():
@@ -120,7 +124,8 @@ def test_compute_stats_adds_voice_analysis_from_audio():
     audio = (0.08 * np.sin(2 * np.pi * 180 * timeline)).astype(np.float32)
     all_segs = [Segment(0, 1, 0.08), Segment(1.05, 2, 0.04), Segment(2.5, 3, 0.09)]
     user_segs = [all_segs[0], all_segs[2]]
-    stats = compute_stats(all_segs, user_segs, "What changed? Did that help? like actually", 3.0, audio=audio, sample_rate=sr)
+    stats = compute_stats(all_segs, user_segs, "That changed. What changed? Did that help? like actually like", 3.0,
+                          audio=audio, sample_rate=sr, other_transcript="It helped a lot.")
     assert stats["question_count"] == 2
     assert stats["open_question_count"] == 1
     assert stats["closed_question_count"] == 1
@@ -130,7 +135,16 @@ def test_compute_stats_adds_voice_analysis_from_audio():
     assert len(stats["energy_series_user"]) == 16
     assert stats["energy_score"] > 0
     assert stats["lsm_score"] > 0
-    assert stats["filler_counts"][0] == {"phrase": "like", "count": 1}
+    assert stats["filler_counts"][0] == {"phrase": "like", "count": 2}
+    assert stats["other_estimated_wpm"] == pytest.approx(252.6)
+    assert stats["user_volume_dbfs"] == pytest.approx(-21.6, abs=0.1)
+    assert stats["other_volume_dbfs"] == pytest.approx(-28, abs=0.1)
+    assert stats["user_pitch_hz"] == pytest.approx(180, abs=3)
+    assert stats["other_pitch_hz"] == pytest.approx(180, abs=3)
+    assert stats["repeated_words"] == [{"phrase": "that", "count": 2}, {"phrase": "changed", "count": 2}, {"phrase": "like", "count": 2}]
+    from app.models.debrief import ConversationStats
+    assert ConversationStats(**stats).model_dump()["repeated_words"] == stats["repeated_words"]
+    assert ConversationStats(**stats).model_dump()["user_pitch_hz"] == stats["user_pitch_hz"]
 
 
 @patch("app.pipeline.coordinator.analyze")

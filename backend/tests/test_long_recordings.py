@@ -1,4 +1,5 @@
 import base64
+import asyncio
 from contextlib import contextmanager
 import io
 from threading import Event
@@ -7,17 +8,93 @@ import wave
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+import httpx
 import numpy as np
 import pytest
 import soundfile as sf
 
 import app.main as main
+import app.recording_jobs as recording_jobs
 from app.auth import verify_token
 from app.db import get_db
 from app.pipeline import coaching, coordinator, transcription
 from app.pipeline.transcription import TranscribedTurn
 from app.pipeline.vad import Segment
 from app.recording_jobs import RecordingJobs, RecordingUpload, UPLOAD_CHUNK_BYTES, RETENTION_SECONDS
+
+
+@pytest.mark.parametrize('blocked_method', ['status', 'append'])
+def test_upload_storage_waits_leave_health_responsive(tmp_path, monkeypatch, blocked_method):
+    jobs = RecordingJobs(tmp_path)
+    jobs.create('owner', RecordingUpload(recording_id='one', total_bytes=3, content_type='audio/mp4'))
+    entered, release, timed_out = Event(), Event(), Event()
+    original = getattr(jobs, blocked_method)
+    def blocked(*args):
+        entered.set()
+        if not release.wait(5):
+            timed_out.set()
+            raise TimeoutError('Storage blocked the event loop')
+        return original(*args)
+    monkeypatch.setattr(jobs, blocked_method, blocked)
+    monkeypatch.setattr(main, 'recording_jobs', jobs)
+    main.app.dependency_overrides[verify_token] = lambda: 'owner'
+
+    async def exercise():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url='http://test') as client:
+            upload = asyncio.create_task(client.put('/recordings/one/audio?offset=0', content=b'123'))
+            try:
+                assert await asyncio.to_thread(entered.wait, 5)
+                response = await asyncio.wait_for(client.get('/health'), 1)
+                assert response.status_code == 200
+                assert not timed_out.is_set(), 'Health must respond while storage is still blocked'
+                assert not upload.done()
+            finally:
+                release.set()
+                result = await upload
+            assert result.status_code == 200
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
+        main.app.dependency_overrides.clear()
+
+
+def test_empty_uploads_do_not_reserve_audio_capacity_and_expire_separately(tmp_path, monkeypatch):
+    jobs = RecordingJobs(tmp_path)
+    reserved = []
+    for owner in ('first', 'second'):
+        for number in range(4):
+            reserved.append(jobs.create(owner, RecordingUpload(recording_id=str(number),
+                total_bytes=recording_jobs.MAX_AUDIO_BYTES, content_type='audio/mp4')))
+    small = RecordingUpload(recording_id='small', total_bytes=4, content_type='audio/mp4')
+    job = jobs.create('third', small)
+    assert job['uploaded_bytes'] == 0, 'Empty declarations must not consume the audio budget'
+    with pytest.raises(HTTPException) as error:
+        jobs.create('first', small)
+    assert error.value.status_code == 503, 'Keep the per-account job limit'
+    monkeypatch.setattr(recording_jobs, 'MAX_PENDING_JOBS', 9)
+    with pytest.raises(HTTPException) as error:
+        jobs.create('fourth', small)
+    assert error.value.status_code == 503, 'Metadata must have its own global bound'
+
+    partial = reserved[0]
+    jobs.append('first', partial['id'], 0, b'ab')
+    for existing in jobs._all():
+        existing['updated_at'] -= recording_jobs.EMPTY_UPLOAD_RETENTION_SECONDS + 1
+        jobs._write(existing)
+    # Admission also cleans abandoned empty uploads while the worker may be busy.
+    job = jobs.create('third', small)
+    assert len(jobs._all()) == 2
+    assert jobs.status('first', partial['id'])['uploaded_bytes'] == 2
+
+    monkeypatch.setattr(recording_jobs, 'MAX_STORED_AUDIO_BYTES', 5)
+    jobs.append('third', job['id'], 0, b'123')
+    with pytest.raises(HTTPException) as error:
+        jobs.append('third', job['id'], 3, b'4')
+    assert error.value.status_code == 503
+    assert jobs.status('third', job['id'])['uploaded_bytes'] == 3, 'Rejected chunks cannot advance the offset'
+    jobs.cancel('first', partial['id'])
+    assert jobs.append('third', job['id'], 3, b'4')['uploaded_bytes'] == 4
 
 
 def test_large_upload_resumes_after_lost_ack_and_is_account_scoped(tmp_path, monkeypatch):

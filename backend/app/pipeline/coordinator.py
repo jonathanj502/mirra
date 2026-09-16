@@ -119,7 +119,9 @@ def run(source, content_type: str | None = None, coaching_goal: CoachingGoal = "
         user_segs = [segment for segment in all_segs if segment.speaker == user_speaker]
         user_transcript = " ".join(turn.text for turn in turns if turn.speaker == user_speaker)
         transcript = "\n".join(f"Speaker {turn.speaker}: {turn.text}" for turn in turns)
-        stats = compute_stats(all_segs, user_segs, user_transcript, total_seconds, audio=audio, sample_rate=sr)
+        other_transcript = " ".join(turn.text for turn in turns if turn.speaker != user_speaker)
+        stats = compute_stats(all_segs, user_segs, user_transcript, total_seconds, audio=audio, sample_rate=sr,
+                              other_transcript=other_transcript)
         speakers = list(dict.fromkeys(segment.speaker for segment in all_segs))
         stats["metadata"] = {"diarization": {
             "model": TRANSCRIPTION_MODEL, "speaker_count": len(speakers), "user_speaker": user_speaker,

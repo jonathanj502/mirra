@@ -26,6 +26,11 @@ type RawStats = {
   user_speech_duration_minutes: number;
   other_speech_duration_minutes?: number;
   estimated_wpm: number;
+  other_estimated_wpm?: number | null;
+  user_volume_dbfs?: number | null;
+  other_volume_dbfs?: number | null;
+  user_pitch_hz?: number | null;
+  other_pitch_hz?: number | null;
   energy_score?: number;
   energy_axes?: number[];
   energy_series_user?: number[];
@@ -35,6 +40,7 @@ type RawStats = {
   lsm_dimensions_reference?: Record<string, number>;
   total_word_count?: number;
   unique_word_count?: number;
+  repeated_words?: RawFillerCount[] | null;
   vocabulary_richness?: number;
   filler_counts?: RawFillerCount[];
   metadata?: Record<string, unknown>;
@@ -166,12 +172,17 @@ function toStats(raw: RawStats) {
     openQuestionCount: raw.open_question_count ?? 0,
     closedQuestionCount: raw.closed_question_count ?? 0,
     interruptionCount: raw.interruption_count,
-    averageTurnOffsetMs: raw.average_turn_offset_ms ?? (raw.interruption_count > 0 ? 160 : 220),
+    averageTurnOffsetMs: raw.average_turn_offset_ms ?? 0,
     turnOffsetSeries: raw.turn_offset_series ?? [],
     sessionDurationMinutes: raw.session_duration_minutes,
     userSpeechDurationMinutes: raw.user_speech_duration_minutes,
-    otherSpeechDurationMinutes: raw.other_speech_duration_minutes ?? Math.max(0, raw.session_duration_minutes - raw.user_speech_duration_minutes),
+    otherSpeechDurationMinutes: raw.other_speech_duration_minutes ?? 0,
     estimatedWpm: raw.estimated_wpm,
+    otherEstimatedWpm: raw.other_estimated_wpm ?? null,
+    userVolumeDbfs: raw.user_volume_dbfs ?? null,
+    otherVolumeDbfs: raw.other_volume_dbfs ?? null,
+    userPitchHz: raw.user_pitch_hz ?? null,
+    otherPitchHz: raw.other_pitch_hz ?? null,
     energyScore: raw.energy_score ?? 0,
     energyAxes: raw.energy_axes ?? [0, 0, 0],
     energySeriesUser: raw.energy_series_user ?? [],
@@ -181,6 +192,7 @@ function toStats(raw: RawStats) {
     lsmDimensionsReference: raw.lsm_dimensions_reference ?? {},
     totalWordCount: raw.total_word_count ?? 0,
     uniqueWordCount: raw.unique_word_count ?? 0,
+    repeatedWords: raw.repeated_words?.map(toFillerCount) ?? null,
     vocabularyRichness: raw.vocabulary_richness ?? 0,
     fillerCounts: raw.filler_counts?.map(toFillerCount) ?? [],
     metadata: raw.metadata ?? {},
