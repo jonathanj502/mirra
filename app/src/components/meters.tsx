@@ -1,7 +1,7 @@
 // Word frequency bars and the turn-timing legend.
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
-import { Body, SerifItalic } from './Typography';
+import { Body, Serif } from './Typography';
 import { colors, fonts } from '@/theme/tokens';
 
 // ── Filler / lexical-padding bars (high → low) ─────────────────────────────
@@ -17,7 +17,7 @@ export function FillerBars({
         const w = (it.count / max) * 100;
         return (
           <View key={i} style={styles.row}>
-            <SerifItalic numberOfLines={1} style={styles.fillerLabel}>"{it.phrase}"</SerifItalic>
+            <Serif style={styles.fillerLabel}>"{it.phrase}"</Serif>
             <View style={styles.track8}>
               <View style={[styles.fill, { width: `${w}%`, backgroundColor: color }]} />
             </View>
@@ -51,7 +51,7 @@ export function OffsetZoneLegend() {
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  fillerLabel: { fontSize: 14, color: colors.ink, width: 92 },
+  fillerLabel: { fontSize: 18, lineHeight: 26, color: colors.ink, width: 104 },
   track8: { flex: 1, height: 8, backgroundColor: 'rgba(42,37,32,0.06)', borderRadius: 999, overflow: 'hidden' },
   fill: { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 999 },
   count: { fontSize: 11.5, fontFamily: fonts.bodySemibold, color: colors.muted, width: 32, textAlign: 'right' },

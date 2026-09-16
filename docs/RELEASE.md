@@ -1,14 +1,16 @@
 # Mirra release record
 
-Updated September 15, 2026. **Prelaunch; not approved for public app distribution.** This record distinguishes implemented controls from external setup and physical-device evidence. A working web preview is not an iOS release test.
+Updated September 16, 2026. **Prelaunch; not approved for public app distribution.** This record distinguishes implemented controls from external setup and physical-device evidence. A working web preview is not an iOS release test.
 
 As of September 16, website copy uses the owner's explicit assumption that both iPhone and Android apps are available (`website/release.json` → `iphoneAvailable` and `androidAvailable`). This is a copy premise, not verified store-release evidence. Store destinations remain unverified, so `appStoreUrl` and `playStoreUrl` stay empty and no download links are invented. Operator/privacy approval, web deletion and backend readiness retain their actual configuration. Apple's September 15 public US lookup for `com.mirra.app` returned an unrelated app, Mirra Support (`id6755451137`); confirm an owned bundle identifier and listing before a native release. Do not link to that unrelated product.
 
 ## What is prepared
 
+- [Website feature parity audit](WEBSITE-FEATURE-PARITY.md): saved goals, passive recording, offline uploads, debriefs, Reflect, account controls and each advertised statistic are traced to app implementations. Conversation details now include actual pace, recorded volume, sampled pitch, repeated words and a dedicated filler panel. No website copy was changed for the audit.
+
 - Optional conversation goals, chosen from Record → Your focus or Profile → Your conversation goal. Friendship, confidence, listening, clarity and assertiveness tailor both debriefs and Reflect; Everyday connection is the default. The server reads the saved goal when processing starts, including offline uploads, and stores it in each debrief's metadata. Changing a goal does not rewrite past debriefs. Account export/deletion cover the preference. No additional API key is needed.
 
-- Expo 54 app with a generated native project, branded icon/splash, EAS preview/production profiles, and a production build guard against local or insecure endpoints.
+- Expo 57 app using upstream’s `expo-audio` recorder with generated native projects, branded icon/splash, EAS preview/production profiles, and a production build guard against local or insecure endpoints.
 - Upstream owns privacy choices through `app/src/privacy/aiConsent.ts`: approval and withdrawal are per account on the current device. Recording/import/Reflect request approval and queued uploads recheck it before sending. The duplicate release-branch consent provider, age/terms gate, server enforcement and schema migration have been removed. Transcript saving follows upstream’s enabled default; the existing switches remain available.
 - Username/password sign-up, sign-in and configured Google OAuth follow upstream. The release branch no longer replaces onboarding with email links. Account export and deletion remain implemented.
 - Durable, account-isolated recording and import queues. Uploads refresh authentication, are idempotent by recording ID, and retain unacknowledged audio. Android has a foreground microphone service and offers notification visibility permission on Android 13+ when recording starts; declining leaves the service visible in the OS Task Manager. Pending audio is excluded from Android backup; the iOS config plugin excludes Documents from backup.
@@ -145,7 +147,7 @@ No advertising identifier, contact-list upload, location feature or advertising 
 
 ## Dependency and operational notes
 
-- Expo 54 was retained for the existing `expo-av` recording implementation. A forced SDK jump solely to silence npm audit would require a separate audio migration and device validation.
+- Upstream’s Expo 57 upgrade is integrated. The durable queue now uses `expo-audio`, including notification Stop completion, mono 24 kHz / 64 kbps capture, storage-failure recovery, and save-before-sign-out. Expo supplies the Android recording service; the duplicate custom service was removed. Physical-device background validation remains required.
 - Compatible npm updates and a PostCSS override removed the critical advisory and a vulnerable PostCSS dependency. The audit still reports transitive issues. Image-size advisories affect malformed image inputs in build tooling; only reviewed repository assets should enter builds. Do not turn this into an untrusted image-upload service. URI/UUID advisories require separate compatibility-tested dependency upgrades.
 - `app/scripts/generate-notices.mjs` collects installed production dependency notices for the app's notices screen. Regenerate after dependency changes and review packages that provide only SPDX metadata. CocoaPods/Gradle dependencies and production backend/image licenses also need to remain available with their distributions.
 - Monitor health/readiness, error rates, request latency, queue failures, AI cost and storage growth without recording sensitive content. Provider dashboards and spending alerts are not configured by source code alone.
@@ -155,7 +157,7 @@ No advertising identifier, contact-list upload, location feature or advertising 
 
 - [Apple App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/) — privacy, third-party AI disclosure, account deletion and sign-in requirements.
 - [Apple account deletion guidance](https://developer.apple.com/support/offering-account-deletion-in-your-app/) — deletion must be available in the app.
-- [Apple upcoming requirements](https://developer.apple.com/news/upcoming-requirements/) and [Expo's SDK 26 submission guidance](https://expo.dev/blog/app-store-connect-minimum-sdk-26) — current iOS SDK/toolchain requirements. The EAS production profile selects the SDK 54 build image.
+- [Apple upcoming requirements](https://developer.apple.com/news/upcoming-requirements/) and [Expo's SDK 26 submission guidance](https://expo.dev/blog/app-store-connect-minimum-sdk-26): current iOS SDK/toolchain requirements. The EAS production profile allows EAS to choose the image for the installed Expo SDK.
 - [Expo build infrastructure](https://docs.expo.dev/build-reference/infrastructure/) — build image selection and SDK aliases.
 - [Android notification permission](https://developer.android.com/develop/ui/compose/notifications/notification-permission) — Android 13+ notification visibility and foreground-service behavior after denial.
 - [Google AI-generated content policy](https://support.google.com/googleplay/android-developer/answer/13985936) — in-app reporting of offensive AI content without leaving the app.

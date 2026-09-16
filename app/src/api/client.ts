@@ -24,7 +24,7 @@ type RawStats = {
   turn_offset_series?: { t: string; ms: number }[];
   session_duration_minutes: number;
   user_speech_duration_minutes: number;
-  other_speech_duration_minutes?: number;
+  other_speech_duration_minutes?: number | null;
   estimated_wpm: number;
   other_estimated_wpm?: number | null;
   user_volume_dbfs?: number | null;
@@ -176,7 +176,7 @@ function toStats(raw: RawStats) {
     turnOffsetSeries: raw.turn_offset_series ?? [],
     sessionDurationMinutes: raw.session_duration_minutes,
     userSpeechDurationMinutes: raw.user_speech_duration_minutes,
-    otherSpeechDurationMinutes: raw.other_speech_duration_minutes ?? 0,
+    otherSpeechDurationMinutes: raw.other_speech_duration_minutes ?? null,
     estimatedWpm: raw.estimated_wpm,
     otherEstimatedWpm: raw.other_estimated_wpm ?? null,
     userVolumeDbfs: raw.user_volume_dbfs ?? null,

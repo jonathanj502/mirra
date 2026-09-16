@@ -15,7 +15,7 @@ class ConversationStats(BaseModel):
     turn_offset_series: list[dict[str, Any]] = Field(default_factory=list)
     session_duration_minutes: float
     user_speech_duration_minutes: float
-    other_speech_duration_minutes: float = 0.0
+    other_speech_duration_minutes: float | None = None
     estimated_wpm: float
     other_estimated_wpm: float | None = None
     user_volume_dbfs: float | None = None

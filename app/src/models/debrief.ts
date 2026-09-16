@@ -8,7 +8,7 @@ export interface ConversationStats {
   turnOffsetSeries: { t: string; ms: number }[];
   sessionDurationMinutes: number;
   userSpeechDurationMinutes: number;
-  otherSpeechDurationMinutes: number;
+  otherSpeechDurationMinutes: number | null;
   estimatedWpm: number;
   otherEstimatedWpm: number | null;
   userVolumeDbfs: number | null;

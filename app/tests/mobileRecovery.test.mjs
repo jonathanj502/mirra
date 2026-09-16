@@ -111,19 +111,20 @@ test('recording saves before upload, allows another offline clip, and retains th
       saved.push(recording);
       if (diskFull) throw new Error('Storage full');
     } }) },
-    'expo-av': { InterruptionModeAndroid: {}, InterruptionModeIOS: {}, Audio: {
-      requestPermissionsAsync: async () => ({ granted: true }), setAudioModeAsync: async mode => { audioModes.push(mode); },
-      RecordingOptionsPresets: { HIGH_QUALITY: {} }, Recording: { async createAsync(options) {
-        assert.equal(options.android.bitRate, 64000);
-        assert.equal(options.ios.numberOfChannels, 1);
-        starts++;
-        if (createFails) throw Error('Microphone is unavailable');
-        return { status: { durationMillis: 28_800_000 }, recording: {
-          async stopAndUnloadAsync() { stops++; if (stoppedByOS) throw Error('Already stopped'); return { durationMillis: 28_800_000 }; },
-          getStatusAsync: async () => ({ isDoneRecording: stoppedByOS, durationMillis: 28_800_000 }), getURI: () => 'blob:test-recording',
-        } };
-      } },
-    } },
+    'expo-audio': {
+      AudioModule: { requestRecordingPermissionsAsync: async () => ({ granted: true }) },
+      setAudioModeAsync: async mode => { audioModes.push(mode); }, RecordingPresets: { HIGH_QUALITY: {} },
+      useAudioRecorderState: () => ({ durationMillis: 28_800_000 }),
+      useAudioRecorder(options) {
+        assert.equal(options.bitRate, 64000);
+        assert.equal(options.numberOfChannels, 1);
+        return {
+          async prepareToRecordAsync() { starts++; if (createFails) throw Error('Microphone is unavailable'); }, record() {},
+          async stop() { stops++; if (stoppedByOS) throw Error('Already stopped'); },
+          getStatus: () => ({ isRecording: !stoppedByOS, durationMillis: 28_800_000 }), uri: 'blob:test-recording',
+        };
+      },
+    },
   });
   const render = () => state.render(() => RecordingProvider({ children: null })).props.value;
   let hook = render();
@@ -156,48 +157,64 @@ test('recording saves before upload, allows another offline clip, and retains th
   await render().startRecording();
   assert.equal(render().isRecording, false);
   assert.equal(render().isStartingRecording, false);
-  assert.equal(audioModes.at(-1).allowsRecordingIOS, false, 'A failed start must restore the audio session');
+  assert.equal(audioModes.at(-1).allowsRecording, false, 'A failed start must restore the audio session');
   assert.equal(render().error, 'Microphone is unavailable');
 });
 
 test('Android offers recording notifications once per launch and denial does not block capture', async () => {
   const state = hooks();
   const events = [];
+  const saved = [];
+  let finished;
+  let sequence = 0;
+  let accountUser = null;
   const { RecordingProvider } = load('hooks/useRecordAudio.ts', {
     react: state.react, 'react-native': { Platform: { OS: 'android', Version: 33 },
       PermissionsAndroid: { PERMISSIONS: { POST_NOTIFICATIONS: 'notifications' }, async request(permission) {
         assert.equal(permission, 'notifications'); events.push('permission'); return 'denied';
-      } }, NativeModules: { RecordingService: {
-        async startForegroundService() { events.push('service'); }, stopForegroundService() {},
       } } },
-    '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' } }) }, '@/api/http': http,
+    '@/auth/AuthContext': { useAuth: () => ({ user: accountUser }) }, '@/api/http': http,
     '@/storage/pendingRecordings': { recordingId: () => 'recording' },
     '@/privacy/aiConsent': privacy, '@/utils/confirm': confirmation,
-    './usePendingRecordings': { usePendingRecordings: () => ({ async enqueue() {} }) },
-    'expo-av': { InterruptionModeAndroid: {}, InterruptionModeIOS: {}, Audio: {
-      requestPermissionsAsync: async () => ({ granted: true }), setAudioModeAsync: async () => {},
-      RecordingOptionsPresets: { HIGH_QUALITY: {} }, Recording: { async createAsync() {
-        events.push('capture');
-        return { status: { durationMillis: 1000 }, recording: {
-          stopAndUnloadAsync: async () => ({ durationMillis: 1000 }), getURI: () => 'file:///test.m4a',
-        } };
-      } },
+    './usePendingRecordings': { usePendingRecordings() {
+      const ownerId = accountUser?.id;
+      return { async enqueue(row) { assert.equal(row.userId, ownerId, 'Completion must use the current account queue'); saved.push(row); } };
     } },
+    'expo-audio': {
+      AudioModule: { requestRecordingPermissionsAsync: async () => ({ granted: true }) },
+      setAudioModeAsync: async mode => { if (mode.allowsRecording) assert.equal(mode.allowsBackgroundRecording, true); },
+      RecordingPresets: { HIGH_QUALITY: {} }, useAudioRecorderState: () => ({ durationMillis: 1000 }),
+      useAudioRecorder(_options, callback) {
+        finished ??= callback;
+        return { async prepareToRecordAsync() { sequence++; }, record() { events.push('capture'); },
+          stop: async () => {}, get uri() { return `file:///test-${sequence}.m4a`; }, getStatus: () => ({ durationMillis: 1000 }) };
+      },
+    },
   });
   const render = () => state.render(() => RecordingProvider({ children: null })).props.value;
+  render();
+  accountUser = { id: 'owner' };
   await render().startRecording();
-  assert.deepEqual(events, ['permission', 'service', 'capture']);
+  assert.deepEqual(events, ['permission', 'capture']);
   assert.equal(render().isRecording, true);
   await render().stopRecording();
   await render().startRecording();
-  assert.deepEqual(events, ['permission', 'service', 'capture', 'service', 'capture']);
+  assert.deepEqual(events, ['permission', 'capture', 'capture']);
+  finished({ isFinished: true, url: 'file:///test-1.m4a' });
+  assert.equal(render().isRecording, true, 'A stale completion must not stop the next session');
+  finished({ isFinished: true, url: 'file:///test-2.m4a' });
+  await flush();
+  assert.equal(render().isRecording, false);
+  assert.equal(saved.length, 2, 'Stopping from the OS notification saves to the durable queue');
+  assert.equal(saved[1].audio.uri, 'file:///test-2.m4a');
+  assert.equal(saved[1].seconds, 1);
 });
 
 test('import failures are returned as visible error state on web', async () => {
   const state = hooks();
   const { useImportAudio } = load('hooks/useImportAudio.ts', {
     react: state.react, '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' } }) }, '@/api/http': http,
-    '@/hooks/useRecordAudio': { useRecordAudio: () => ({}) }, '@/storage/pendingRecordings': {}, '@/utils/timeFormat': {}, 'expo-av': {},
+    '@/hooks/useRecordAudio': { useRecordAudio: () => ({}) }, '@/storage/pendingRecordings': {}, '@/utils/timeFormat': {}, 'expo-audio': {},
     '@/privacy/aiConsent': privacy, '@/utils/confirm': confirmation,
     'expo-document-picker': { async getDocumentAsync() { throw new Error('Could not open audio file'); } },
   });
@@ -219,7 +236,7 @@ test('import saves an account-owned copy to the offline queue and uses upstream 
     '@/storage/pendingRecordings': { recordingId: () => 'stable-id' },
     '@/hooks/useRecordAudio': { useRecordAudio: () => ({ enqueue: async row => saved.push(row) }) },
     '@/utils/timeFormat': { titleFromFilename: () => 'Imported conversation' },
-    'expo-av': { Audio: { Sound: { createAsync: async () => { throw Error('Browser cannot read duration'); } } } },
+    'expo-audio': { createAudioPlayer: () => { throw Error('Browser cannot read duration'); } },
     'expo-document-picker': { getDocumentAsync: async () => { picks++; return { assets: [{ uri: 'file://original', name: '../unsafe.mp3', size }] }; } },
   });
   const render = () => state.render(useImportAudio);
@@ -551,10 +568,11 @@ test('website statistics reach the conversation screen, without fabricated legac
   assert.equal(debrief.stats.repeatedWords, null);
   assert.equal(debrief.stats.userVolumeDbfs, null);
   assert.equal(debrief.stats.averageTurnOffsetMs, 0);
-  assert.equal(debrief.stats.otherSpeechDurationMinutes, 0);
+  assert.equal(debrief.stats.otherSpeechDurationMinutes, null);
   const legacyTree = state.render(AnalyticsScreen);
   assert.match(JSON.stringify(legacyTree), /Word frequencies were not saved/);
-  assert.match(JSON.stringify(legacyTree), /0 unique across 0 words/);
+  assert.match(JSON.stringify(legacyTree), /No word detail available/);
+  assert.match(JSON.stringify(legacyTree), /No speaking time available/);
 });
 
 test('turn chart includes long gaps and overlaps without an ideal timing target', () => {

@@ -241,6 +241,27 @@ def test_build_profile_summary_rolls_up_usage():
     assert summary.used_this_month == 2
 
 
+def test_legacy_diarized_word_details_never_include_other_speakers():
+    stats = {key: value for key, value in ROW_1["stats"].items()
+             if key not in {"unique_word_count", "total_word_count", "filler_counts"}}
+    stats["metadata"] = {"diarization": {"user_speaker": "A"}}
+    row = {**ROW_1, "stats": stats,
+           "transcript": "Speaker B: Like like other words.\nSpeaker A: Hello hello. Why?"}
+    result = _client([row]).get(f"/debriefs/{row['id']}").json()["stats"]
+    assert result["total_word_count"] == 3
+    assert result["unique_word_count"] == 2
+    assert result["filler_counts"] == []
+    assert result["other_speech_duration_minutes"] is None
+    with patch("app.dashboard.datetime", _FrozenDatetime):
+        week = build_progress([row]).weeks[0]
+        assert week.vocabulary_total_words == 3
+        assert week.top_fillers == []
+    stats["metadata"] = {}
+    result = _client([row]).get(f"/debriefs/{row['id']}").json()["stats"]
+    assert result["total_word_count"] == 0
+    assert result["filler_counts"] == []
+
+
 def test_debrief_detail_returns_owned_row():
     r = _client([ROW_1]).get("/debriefs/00000000-0000-0000-0000-000000000101")
     assert r.status_code == 200

@@ -70,6 +70,11 @@ def _filler_dicts_from_transcript(transcript: str) -> list[dict[str, int]]:
 def enrich_debrief_row(row: dict) -> dict:
     stats = dict(_stats(row))
     transcript = str(row.get("transcript") or "")
+    if re.search(r"(?m)^Speaker [^:\n]+:", transcript):
+        diarization = _metadata(row).get("diarization")
+        speaker = diarization.get("user_speaker") if isinstance(diarization, dict) else None
+        prefix = f"Speaker {speaker}: "
+        transcript = "\n".join(line[len(prefix):] for line in transcript.splitlines() if speaker and line.startswith(prefix))
     words = _words(transcript)
     question_total, open_questions, closed_questions = _question_breakdown_from_transcript(transcript)
 
@@ -80,8 +85,6 @@ def enrich_debrief_row(row: dict) -> dict:
             stats["closed_question_count"] = closed_questions
         else:
             stats["closed_question_count"] = max(0, int(stats.get("question_count") or 0) - int(stats.get("open_question_count") or 0))
-    if "other_speech_duration_minutes" not in stats:
-        stats["other_speech_duration_minutes"] = 0.0
     if "total_word_count" not in stats:
         stats["total_word_count"] = len(words)
     if "unique_word_count" not in stats:
@@ -158,11 +161,11 @@ def _lsm_score(row: dict) -> float:
 
 
 def _unique_words(row: dict) -> int:
-    return int(_stats(row).get("unique_word_count") or 0)
+    return int(_stats(enrich_debrief_row(row)).get("unique_word_count") or 0)
 
 
 def _total_words(row: dict) -> int:
-    return int(_stats(row).get("total_word_count") or 0)
+    return int(_stats(enrich_debrief_row(row)).get("total_word_count") or 0)
 
 
 def _vocabulary_richness(row: dict) -> float:
@@ -223,9 +226,8 @@ def _week_label(start: datetime) -> str:
 
 def _top_fillers(rows: list[dict]) -> list[FillerCount]:
     counts: Counter[str] = Counter()
-    fallback_rows: list[dict] = []
     for row in rows:
-        raw_counts = _stats(row).get("filler_counts")
+        raw_counts = _stats(enrich_debrief_row(row)).get("filler_counts")
         if isinstance(raw_counts, list):
             for item in raw_counts:
                 if isinstance(item, dict):
@@ -233,11 +235,6 @@ def _top_fillers(rows: list[dict]) -> list[FillerCount]:
                     count = int(item.get("count") or 0)
                     if phrase and count > 0:
                         counts[phrase] += count
-            continue
-        fallback_rows.append(row)
-    transcript = "\n".join(str(row.get("transcript") or "").lower() for row in fallback_rows)
-    for phrase in FILLER_PHRASES:
-        counts[phrase] += len(re.findall(rf"\b{re.escape(phrase)}\b", transcript))
     return [FillerCount(phrase=phrase, count=count) for phrase, count in counts.most_common(5) if count > 0]
 
 
@@ -289,10 +286,6 @@ def build_progress(rows: list[dict], max_weeks: int = 8) -> ProgressResponse:
         lsm_average = round(sum(_lsm_score(row) for row in week_rows) / conv_count, 3) if conv_count else 0.0
         unique_words = sum(_unique_words(row) for row in week_rows)
         total_words = sum(_total_words(row) for row in week_rows)
-        if total_words == 0:
-            transcript_words = re.findall(r"[a-z']+", "\n".join(str(row.get("transcript") or "").lower() for row in week_rows))
-            unique_words = len(set(transcript_words))
-            total_words = len(transcript_words)
         vocabulary_richness = round(unique_words / total_words, 3) if total_words else 0.0
         fillers = _top_fillers(week_rows)
         weeks.append(

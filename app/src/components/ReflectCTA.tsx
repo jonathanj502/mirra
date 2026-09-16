@@ -2,7 +2,7 @@
 import React from 'react';
 import { Pressable, View, StyleSheet } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
-import { Body, Serif, SerifItalic } from './Typography';
+import { Body, Serif } from './Typography';
 import { Icon } from './Icon';
 import { colors } from '@/theme/tokens';
 
@@ -20,7 +20,7 @@ export function ReflectCTA({
       </View>
       <View style={{ flex: 1 }}>
         <Serif style={styles.title}>
-          Reflect with <SerifItalic style={styles.title}>Mirra</SerifItalic>
+          Reflect with Mirra
         </Serif>
         <Body style={styles.sub}>Talk through {subject}</Body>
       </View>
@@ -47,6 +47,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.terracotta,
     alignItems: 'center', justifyContent: 'center',
   },
-  title: { fontSize: 15, color: colors.ink, lineHeight: 17 },
+  title: { fontSize: 20, color: colors.ink, lineHeight: 28 },
   sub: { fontSize: 11.5, color: colors.muted, marginTop: 2 },
 });

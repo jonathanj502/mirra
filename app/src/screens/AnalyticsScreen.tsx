@@ -215,10 +215,10 @@ export function AnalyticsScreen() {
 
         {/* 1. Talk / Listen */}
         <ExpandableMetric
-          eyebrow="Speaking share" value={userSpeechMin + otherSpeechMin > 0 ? `${talkPct} / ${listenPct}` : 'Unavailable'} unit="you / others"
+          eyebrow="Speaking share" value={userSpeechMin + (otherSpeechMin ?? 0) > 0 ? `${talkPct} / ${listenPct}` : 'Unavailable'} unit="you / others"
           summary="Estimated speaking time. No single ratio fits every conversation." accent={colors.terracotta} chartKind="donut" defaultOpen
         >
-          <View style={styles.rowCenter}>
+          {userSpeechMin + (otherSpeechMin ?? 0) > 0 ? <View style={styles.rowCenter}>
             <Donut size={130} stroke={20} segments={[{ value: talkPct, color: colors.terracotta }, { value: listenPct, color: colors.sage }]} centerLabel={`${talkPct}%`} centerSub="you" />
             <View style={{ gap: 10, flex: 1 }}>
               <View>
@@ -226,11 +226,11 @@ export function AnalyticsScreen() {
                 <Body style={styles.pipNote}>Estimated from detected speech segments</Body>
               </View>
               <View>
-                <Pip color={colors.sage}>Others · {Math.round(otherSpeechMin)} min</Pip>
+                <Pip color={colors.sage}>Others · {otherSpeechMin == null ? 'Time unavailable' : `${Math.round(otherSpeechMin)} min`}</Pip>
                 <Body style={styles.pipNote}>Speaking time does not measure listening.</Body>
               </View>
             </View>
-          </View>
+          </View> : <Body style={styles.pipNote}>No speaking time available for this conversation.</Body>}
         </ExpandableMetric>
 
         {/* 2. Questions */}
@@ -287,7 +287,7 @@ export function AnalyticsScreen() {
         <ExpandableMetric
           eyebrow="Vocal energy" value={selected.stats.estimatedWpm > 0 ? Math.round(selected.stats.estimatedWpm) : 'Unavailable'} unit={selected.stats.estimatedWpm > 0 ? 'your words / min' : ''}
           summary="Your recorded volume, pitch, and speaking pace." accent={colors.lavender} chartKind="line"
-          blurb="Volume is the recorded signal level in dBFS, not room loudness. Microphone distance affects it. Pitch is estimated from sampled speech; pace uses detected speaking time. These are not targets."
+          blurb="Others combines the other detected speakers. Volume is the recorded signal level in dBFS, not room loudness. Microphone distance affects it. Pitch uses sampled speech; pace uses detected speaking time. These are not targets."
         >
           {hasEnergySignals ? (
             <>
@@ -370,10 +370,10 @@ export function AnalyticsScreen() {
 
         {/* 6. Vocabulary */}
         <ExpandableMetric
-          eyebrow="Vocabulary" value={`${uniquePct}%`} unit="unique / spoken"
-          summary={`${uniqueWords.toLocaleString('en-US')} unique across ${totalWords.toLocaleString('en-US')} words.`} accent={colors.sand} chartKind="bar"
+          eyebrow="Vocabulary" value={totalWords > 0 ? `${uniquePct}%` : 'Unavailable'} unit="unique / spoken"
+          summary={totalWords > 0 ? `${uniqueWords.toLocaleString('en-US')} unique across ${totalWords.toLocaleString('en-US')} words.` : 'No word detail available for this conversation.'} accent={colors.sand} chartKind="bar"
         >
-          <SerifItalic style={styles.vocabLine}>{uniqueWords.toLocaleString('en-US')} unique words across {totalWords.toLocaleString('en-US')} spoken.</SerifItalic>
+          <SerifItalic style={styles.vocabLine}>{totalWords > 0 ? `${uniqueWords.toLocaleString('en-US')} unique words across ${totalWords.toLocaleString('en-US')} spoken.` : 'No words available from your estimated speech.'}</SerifItalic>
           <View>
             <View style={styles.vocabHead}>
               <Eyebrow>Most repeated words</Eyebrow>

@@ -7,15 +7,11 @@
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "backgroundColor": "#F6EFE0",
-    "splash": {
-      "resizeMode": "contain",
-      "backgroundColor": "#ECE2D2"
-    },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.mirra.app",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Record conversations with everyone\u2019s permission. Mirra sends recordings to OpenAI to transcribe and provide coaching.",
+        "NSMicrophoneUsageDescription": "Record conversations with everyone’s permission. Mirra sends recordings to OpenAI to transcribe and provide coaching.",
         "UIBackgroundModes": [
           "audio"
         ],
@@ -88,6 +84,16 @@
           "image": "./assets/splash-icon.png",
           "imageWidth": 180,
           "backgroundColor": "#F6EFE0"
+        }
+      ],
+      "expo-font",
+      "expo-status-bar",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Record conversations with everyone’s permission. Mirra sends recordings to OpenAI to transcribe and provide coaching.",
+          "enableBackgroundRecording": true,
+          "enableBackgroundPlayback": false
         }
       ]
     ],

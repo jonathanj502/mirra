@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
-import { Audio } from 'expo-av';
+import { createAudioPlayer } from 'expo-audio';
 import { friendlyErrorMessage } from '@/api/http';
 import { useRecordAudio } from '@/hooks/useRecordAudio';
 import { recordingId } from '@/storage/pendingRecordings';
@@ -22,14 +22,24 @@ const AUDIO_TYPES = [
 ];
 
 async function getAudioDuration(uri: string): Promise<number> {
-  const { sound, status } = await Audio.Sound.createAsync({ uri }, { shouldPlay: false });
+  const player = createAudioPlayer({ uri });
+  let subscription: ReturnType<typeof player.addListener> | undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    if (status.isLoaded && status.durationMillis != null) {
-      return status.durationMillis / 1000;
+    if (!player.isLoaded) {
+      await new Promise<void>((resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error('Could not read audio duration.')), 10000);
+        subscription = player.addListener('playbackStatusUpdate', status => {
+          if (status.isLoaded) resolve();
+        });
+        if (player.isLoaded) resolve();
+      });
     }
-    return 0;
+    return Number.isFinite(player.duration) ? player.duration : 0;
   } finally {
-    await sound.unloadAsync();
+    clearTimeout(timeout);
+    subscription?.remove();
+    player.remove();
   }
 }
 

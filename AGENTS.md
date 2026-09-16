@@ -11,7 +11,7 @@ Never use em dashes in new or revised copy, generated coaching, or user-facing r
 Mirra is a conversational coaching iOS/Android app. It records real conversations, analyzes the user's speech for social signals (talk/listen ratio, question frequency, interruptions, energy, vocabulary), and surfaces a debrief card with coaching bullets and an AI-powered Reflect chat.
 
 This is a monorepo with two top-level packages:
-- `app/` — React Native (Expo 54 generated native projects + TypeScript)
+- `app/`: React Native (Expo 57 generated native projects + TypeScript)
 - `backend/` — FastAPI (Python 3.11+)
 
 ## Commands
@@ -40,7 +40,7 @@ pytest tests/test_usage_gate.py
 
 ### Audio Pipeline (the core product)
 
-Audio capture uses `expo-av` (`useRecordAudio.ts`), with mono 24 kHz, 64 kbps M4A on mobile and WebM on web. Stopped recordings and imports enter the durable account queue. Current clients use resumable `/recordings` uploads in at most 4 MiB pieces, supporting up to 24 hours and 2 GiB. Native file handles read only the requested range. The legacy `/sessions` multipart endpoint remains capped at 25 MiB.
+Audio capture uses `expo-audio` (`useRecordAudio.ts`), with mono 24 kHz, 64 kbps M4A on mobile and WebM on web. Stopped recordings and imports enter the durable account queue. Current clients use resumable `/recordings` uploads in at most 4 MiB pieces, supporting up to 24 hours and 2 GiB. Native file handles read only the requested range. The legacy `/sessions` multipart endpoint remains capped at 25 MiB.
 
 1. `recording_jobs.py` stores authenticated upload offsets and a background queue on `RECORDING_STORAGE_DIR`. Use one process/worker/instance and a persistent private volume of at least 32 GB, excluded from backups. The queue permits four pending jobs per account, 1,024 pending jobs globally, and 16 GiB of received audio. Empty uploads expire after 15 minutes; incomplete/failed uploads with audio expire after 24 hours without progress. Cleanup runs on upload creation and between worker jobs. Completed audio is removed.
 2. `pipeline/coordinator.py` decodes allowlisted audio formats through FFmpeg into disk-backed mono 16 kHz float PCM. Network/playlist demuxers are disabled. Decoding times out after 900 seconds and rejects over 24 hours. A full day needs about 5.5 GB temporary PCM. Memory-mapped audio is analyzed in ten-minute chunks, preferably split at a detected pause.
@@ -79,7 +79,7 @@ interface ConversationStats {
 
 ### Native builds
 
-Native projects are generated with Expo prebuild and excluded from git/EAS uploads. `app/app.json`, `app/app.config.ts`, and `app/plugins/withRecordingService.js` are canonical. The plugin installs the Android foreground microphone service and excludes iOS Documents (pending audio) from device backups. There are no implemented iOS AppIntent/widget/share-extension targets. Changes to native behavior belong in a config plugin, not generated directories.
+Native projects are generated with Expo prebuild and excluded from git/EAS uploads. `app/app.json`, `app/app.config.ts`, and `app/plugins/withRecordingService.js` are canonical. Expo Audio supplies the Android foreground microphone service and notification Stop action. The local plugin disables Android backups and excludes iOS Documents (pending audio) from device backups. There are no implemented iOS AppIntent/widget/share-extension targets. Changes to native behavior belong in a config plugin, not generated directories.
 
 ### Offline recording queue
 
@@ -97,7 +97,7 @@ The queue survives restarts after Stop/save completes. Uploads resume while fore
 
 - **Expo prebuild** — native files are disposable generated output. Preserve custom behavior through `app/plugins/`, including background recording and backup exclusions. There are no manual iOS extension targets to preserve.
 
-- **Background recording** — iOS requires `UIBackgroundModes: ["audio"]` in `app.config.ts` and an active `AVAudioSession`. Android requires a foreground service with a notification. On Android 13+, the recording hook offers notification permission once per app launch; denial still permits the service, visible in OS Task Manager. Validate on real devices, not simulators, with screen locked for 5+ minutes.
+- **Background recording**: iOS requires `UIBackgroundModes: ["audio"]` and Expo Audio background recording mode. Android requires a foreground service with a notification. On Android 13+, the recording hook offers notification permission once per app launch; denial still permits the service, visible in OS Task Manager. Validate on real devices, not simulators, with screen locked for 5+ minutes.
 
 - **OpenAI structured output** — use `responses.parse` with the `CoachingOutput` Pydantic schema, never free-text JSON parsing. Keep two retries for invalid output in `coaching.py`; reject missing or incomplete output rather than saving an invalid debrief.
 
