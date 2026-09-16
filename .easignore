@@ -1,6 +1,7 @@
 # EAS archives the repository root, including website/release-check.mjs.
 node_modules/
 .venv/
+.recordings/
 __pycache__/
 .env*
 *.log

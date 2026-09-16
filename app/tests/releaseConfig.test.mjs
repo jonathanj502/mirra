@@ -24,7 +24,7 @@ test('shared text and action colors remain readable on all paper surfaces', () =
 
 test('EAS archive excludes credentials and native output while preserving monorepo release checks', () => {
   const rules = ignore().add(readFileSync(new URL('../../.easignore', import.meta.url), 'utf8'));
-  for (const path of ['app/.env.local', 'backend/.env', 'app/credentials.json', 'app/android/app/debug.keystore', 'app/ios/Mirra/Info.plist', '.mcp.json']) {
+  for (const path of ['app/.env.local', 'backend/.env', '.recordings/job/audio', 'app/credentials.json', 'app/android/app/debug.keystore', 'app/ios/Mirra/Info.plist', '.mcp.json']) {
     assert.equal(rules.ignores(path), true, path);
   }
   for (const path of ['app/app.json', 'app/eas.json', 'app/plugins/withRecordingService.js', 'website/release.json', 'website/release-check.mjs']) {
