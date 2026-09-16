@@ -110,11 +110,18 @@ test('preview starts with one panel, supports click and keyboard navigation, and
   const summary = element();
   const link = element();
   const menu = { ...element(), open: true, querySelectorAll: () => [link], querySelector: () => summary };
-  runInNewContext(readFileSync(join(root, 'site.js'), 'utf8'), { document: {
+  const tablist = element();
+  const compact = { matches: false, addEventListener(type, listener) { this.change = listener; } };
+  runInNewContext(readFileSync(join(root, 'site.js'), 'utf8'), { window: { matchMedia: () => compact }, document: {
     querySelectorAll: selector => selector === '[role="tab"]' ? tabs : nextButtons,
-    querySelector: () => menu,
+    querySelector: selector => selector === '[role="tablist"]' ? tablist : menu,
     getElementById: id => elements.find(e => e.attributes.id === id),
   } });
+  assert.equal(tablist.attributes['aria-orientation'], 'vertical');
+  compact.matches = true; compact.change();
+  assert.equal(tablist.attributes['aria-orientation'], 'horizontal');
+  compact.matches = false; compact.change();
+  assert.equal(tablist.attributes['aria-orientation'], 'vertical');
   function selected(index) {
     assert.deepEqual(panels.map(p => p.hidden), panels.map((_, i) => i !== index));
     assert.deepEqual(tabs.map(t => t.attributes['aria-selected']), tabs.map((_, i) => String(i === index)));

@@ -1,5 +1,12 @@
 // The preview contains illustrative content only; it never records or sends data.
 const tabs = [...document.querySelectorAll('[role="tab"]')];
+const tablist = document.querySelector('[role="tablist"]');
+if (tablist) {
+  const compact = window.matchMedia('(max-width: 900px)');
+  const orientTabs = () => tablist.setAttribute('aria-orientation', compact.matches ? 'horizontal' : 'vertical');
+  orientTabs();
+  compact.addEventListener('change', orientTabs);
+}
 function selectTab(tab, focus = false) {
   for (const item of tabs) {
     const selected = item === tab;
