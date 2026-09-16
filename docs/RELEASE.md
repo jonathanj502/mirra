@@ -21,6 +21,8 @@ As of September 16, website copy uses the owner's explicit assumption that both 
 
 ## Verified evidence
 
+- September 16 paid-plan correction: Profile again displays Mirra Pro at $8/month, its benefits and a Free/Pro comparison accessible from the card or Account → Plans. The plan UI works offline without a billing request. Stripe remains removed. Replacement purchasing, verified entitlements, renewal/cancellation handling and store product configuration must be completed before accepting subscriptions; the current build clearly marks purchases unavailable and retains the server-side free cap. No trial is advertised without a configured offer.
+
 - September 16 visual refinement: larger editorial typography, illustrated goal cards, a clearer product stage, compact phone/tablet tabs and a forest-green closing section. The people photo and both WebP sources were subsequently removed at the user's request. The hero now illustrates background recording leading to a specific friendship-focused suggestion, using HTML, CSS and SVG with no generated people images. Five website tests pass, including responsive tab orientation. Earlier browser review covered 320, 393, 768, 1024 and 1440 pixel viewports, sample controls, keyboard operation and navigation dismissal; the recording-to-debrief hero passed browser review at 320, 393, 1024 and 1440 pixels with no horizontal overflow or clipped text. The site remains static with no added dependencies. References and verification limits are in `docs/WEBSITE-UX.md`.
 - September 16 passive-recording copy: the homepage, sample recording and support steps emphasize background recording during sessions throughout the day. Participant-permission reminders were removed from marketing/getting-started copy; policy terms and the app's consent behavior were not changed. The homepage FAQ states manual session start/stop. The old duration/upload sentence was removed when long-recording support was implemented. No uninterrupted all-day capture, automatic session splitting or auto-start is claimed. Five website tests pass.
 
@@ -119,7 +121,7 @@ Record a conversation with everyone's permission, or import an audio file. Mirra
 
 Use Reflect to explore a moment with an AI conversation coach. Review saved conversations and weekly patterns, export your data, or delete a conversation or your account.
 
-Recordings you stop and save can wait on your device until you are back online. Keep Mirra open to finish uploading. The first release includes five debriefs per month, with no subscriptions or paid plans.
+Recordings you stop and save can wait on your device until you are back online. Keep Mirra open to finish uploading. Mirra Free includes five debriefs per month. Mirra Pro is the $8/month plan with unlimited debriefs; purchases are not available in the current build.
 
 Mirra uses OpenAI for transcription and coaching. The app asks before sharing with OpenAI, and you can withdraw that device’s approval in Profile. You control transcript saving in Voice & privacy.
 
@@ -127,7 +129,7 @@ AI can be wrong. Mirra estimates that the loudest speaker is you; microphone pla
 
 **Keywords:** conversation,listening,reflection,communication,habits,coaching,questions
 
-**Review notes:** Explain microphone/background audio as user-initiated conversation recording; there is no passive listening. Identify the upstream Privacy & AI prompt, the permanent deletion path and the offline queue. Provide an authenticated disposable review account or another working review-access method in App Store Connect's private review fields, never in this repository. Explain the free five-debrief limit and reset review usage before review. No purchases, subscriptions, ads or tracking are implemented. Do not advertise widgets, Apple Watch, notifications or speaker correction; these are not shipped.
+**Review notes:** Explain microphone/background audio as user-initiated conversation recording; there is no passive listening. Identify the upstream Privacy & AI prompt, the permanent deletion path and the offline queue. Provide an authenticated disposable review account or another working review-access method in App Store Connect's private review fields, never in this repository. Explain the free five-debrief limit and reset review usage before review. Profile contains the $8/month Pro offer; purchasing and paid entitlements are not yet connected, and the interface says so. No ads or tracking are implemented. Do not advertise widgets, Apple Watch, notifications or speaker correction; these are not shipped.
 
 **Screenshot sequence:** (1) actual Home/record screen, (2) consent disclosure, (3) completed synthetic conversation debrief, (4) Reflect response, (5) weekly insights, (6) Profile privacy/deletion controls. Capture at Apple's required dimensions from the current release build. Remove test identities and personal content; clearly distinguish synthetic demonstration content. Include an Android feature graphic/screenshots only when the Android build is validated.
 

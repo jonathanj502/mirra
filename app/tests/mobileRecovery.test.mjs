@@ -384,7 +384,7 @@ test('rapid privacy setting changes save in order and a failure restores actual 
   assert.match(render().error, /Could not save privacy setting/);
 });
 
-test('profile loads account data without a plan request', () => {
+test('profile restores the $8 Pro offer and plan navigation even when account settings are offline', () => {
   const state = hooks();
   let summaryState = { summary: null, error: 'Offline' };
   const { ProfileScreen } = load('screens/ProfileScreen.tsx', {
@@ -396,7 +396,7 @@ test('profile loads account data without a plan request', () => {
     '@/utils/exportData': {}, '@/utils/confirm': confirmation, '@/storage/pendingRecordings': {}, '@/config/legal': {},
     '@/privacy/aiConsent': privacy, '@/hooks/useRecordAudio': { useRecordAudio: () => ({}) },
     '@/hooks/useProfileSummary': { useProfileSummary: () => summaryState },
-    '@/hooks/useUserSettings': { useUserSettings: () => ({ settings: {}, loadError: 'Offline' }) },
+    '@/hooks/useUserSettings': { useUserSettings: () => ({ settings: {}, loading: true, saving: true, loadError: 'Offline', error: 'Offline' }) },
   });
   const tree = state.render(ProfileScreen);
   function text(node) {
@@ -407,13 +407,48 @@ test('profile loads account data without a plan request', () => {
   }
   const rendered = text(tree);
   assert.match(rendered, /—/);
-  assert.doesNotMatch(rendered, /Current plan|Try Pro|Manage plan|Transcripts saved/);
+  assert.match(rendered, /Mirra\s+Pro/);
+  assert.match(rendered, /\$8/);
+  assert.match(rendered, /per month/);
+  assert.doesNotMatch(rendered, /Retry plan|Stripe|Transcripts saved/);
+
+  function find(node, predicate) {
+    if (!node || typeof node !== 'object') return;
+    if (predicate(node)) return node;
+    for (const child of [node.props?.children].flat(Infinity)) { const found = find(child, predicate); if (found) return found; }
+  }
+  const sheet = () => find(state.render(ProfileScreen), node => node.type?.name === 'SettingsSheet');
+  const menu = () => find(state.render(ProfileScreen), node => node.type?.name === 'AccountMenu');
+  find(tree, node => node.props?.accessibilityLabel === 'View Mirra plans').props.onPress();
+  let plan = sheet();
+  assert.equal(plan.props.panel, 'plan');
+  assert.equal(plan.props.loading, false);
+  assert.equal(plan.props.saving, false);
+  assert.equal(plan.props.error, null);
+  const details = text(plan.type(plan.props));
+  assert.match(details, /Mirra Free/);
+  assert.match(details, /5 debriefs per month/);
+  assert.match(details, /\$8 per month/);
+  assert.match(details, /Unlimited conversation debriefs/);
+  assert.match(details, /Full history and weekly patterns/);
+  assert.match(details, /Energy and vocabulary insights/);
+  assert.match(details, /Coaching tailored to your goals/);
+  assert.match(details, /purchases are not available/);
+  plan.props.onClose();
+  assert.equal(sheet().props.panel, null);
+
+  find(state.render(ProfileScreen), node => node.props?.accessibilityLabel === 'Account actions').props.onPress();
+  assert.equal(menu().props.visible, true);
+  const account = menu();
+  find(account.type(account.props), node => node.props?.label === 'Plans').props.onPress();
+  assert.equal(menu().props.visible, false);
+  assert.equal(sheet().props.panel, 'plan');
 
   summaryState = { summary: { totalConversations: 7, usedThisMonth: 2 } };
   const loaded = text(state.render(ProfileScreen));
   assert.match(loaded, /7/);
   assert.match(loaded, /2/);
-  assert.doesNotMatch(loaded, /Current plan|Try Pro|Manage plan/);
+  assert.match(loaded, /\$8/);
 });
 
 test('conversation goals round-trip through the API and profile choices save the selected goal', async (t) => {

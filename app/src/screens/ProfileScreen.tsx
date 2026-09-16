@@ -1,4 +1,4 @@
-// You · profile — identity, stats, settings.
+// You: identity, stats, plans and settings.
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Linking, Modal, Pressable, ScrollView, Switch, View, StyleSheet } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -22,8 +22,14 @@ import { useUserSettings } from '@/hooks/useUserSettings';
 import { CoachingDepth, CoachingTone, UserSettings } from '@/models/debrief';
 import { COACHING_GOALS, coachingGoalLabel } from '@/data/coachingGoals';
 
-type SettingsPanelId = 'privacy' | 'coaching' | 'goal' | 'help';
+type SettingsPanelId = 'privacy' | 'coaching' | 'goal' | 'help' | 'plan';
 type AccountActionId = 'export' | 'signOut' | 'delete';
+const PRO_BENEFITS = [
+  'Unlimited conversation debriefs',
+  'Full history and weekly patterns',
+  'Energy and vocabulary insights',
+  'Coaching tailored to your goals',
+];
 const TONE_OPTIONS: { value: CoachingTone; label: string; hint: string }[] = [
   { value: 'warm_reflective', label: 'Warm', hint: 'Soft, validating, spacious.' },
   { value: 'direct_practical', label: 'Direct', hint: 'Clear next steps.' },
@@ -184,6 +190,7 @@ function HelpAction({ label, hint }: { label: string; hint: string }) {
 }
 
 const SETTINGS_TITLES: Record<SettingsPanelId, string> = {
+  plan: 'Mirra plans',
   goal: 'Your conversation goal',
   privacy: 'Voice & Privacy',
   coaching: 'Coaching Tone',
@@ -241,6 +248,29 @@ function SettingsSheet({
           {loading ? (
             <View style={styles.sheetLoading}>
               <ActivityIndicator color={colors.terracotta} />
+            </View>
+          ) : null}
+
+          {panel === 'plan' ? (
+            <View style={styles.sheetBody}>
+              <Card>
+                <Serif style={styles.sheetTitle}>Mirra Free</Serif>
+                <Body style={styles.optionLabel}>$0 · 5 debriefs per month</Body>
+                <Body style={styles.factText}>Start with a few conversations and get to know your patterns.</Body>
+              </Card>
+              <Card>
+                <Serif style={styles.sheetTitle}>Mirra Pro</Serif>
+                <Body style={styles.optionLabel}>$8 per month</Body>
+                <View style={{ gap: 10, marginTop: 14 }}>
+                  {PRO_BENEFITS.map(benefit => (
+                    <View key={benefit} style={styles.planFeature}>
+                      <Check color={colors.terracotta} />
+                      <Body style={[styles.factText, { flex: 1 }]}>{benefit}</Body>
+                    </View>
+                  ))}
+                </View>
+              </Card>
+              <Body style={styles.factText}>Pro purchases are not available in this build. Your current debrief allowance still applies. Viewing these plans does not start a subscription or charge you.</Body>
             </View>
           ) : null}
 
@@ -376,6 +406,7 @@ function AccountMenu({
   error,
   onClose,
   onExport,
+  onPlans,
   onHelp,
   onSignOut,
   onDelete,
@@ -387,6 +418,7 @@ function AccountMenu({
   error: string | null;
   onClose: () => void;
   onExport: () => void;
+  onPlans: () => void;
   onHelp: () => void;
   onSignOut: () => void;
   onDelete: () => void;
@@ -408,6 +440,11 @@ function AccountMenu({
           </View>
 
           <View style={styles.accountActionList}>
+            <AccountActionRow
+              label="Plans"
+              hint="Mirra Free and Mirra Pro · $8/month."
+              onPress={onPlans}
+            />
             <AccountActionRow
               label="Download my data"
               hint="Conversations and settings."
@@ -449,8 +486,8 @@ export function ProfileScreen() {
     refresh: refreshSettings, updateSettings } = useUserSettings(accessToken);
   const [activePanel, setActivePanel] = useState<SettingsPanelId | null>(null);
   useEffect(() => {
-    if (panel === 'goal') {
-      setActivePanel('goal');
+    if (panel === 'goal' || panel === 'plan') {
+      setActivePanel(panel);
       router.setParams({ panel: undefined });
     }
   }, [panel, router]);
@@ -560,6 +597,28 @@ export function ProfileScreen() {
         <StatPill value={memberSince} label="Member since" accent={colors.lavender} />
       </View>
 
+      <View style={styles.planWrap}>
+        <LinearGradient colors={['#2E2A26', '#3D332B'] as const} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.planCard}>
+          <View style={styles.planHeading}>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Body style={styles.planEyebrow}>Paid plan</Body>
+              <Serif style={styles.planTitle}>Mirra <SerifItalic style={styles.planTitle}>Pro</SerifItalic></Serif>
+            </View>
+            <View style={{ alignItems: 'flex-end' }}>
+              <Serif style={styles.planPrice}>$8</Serif>
+              <Body style={styles.planCopy}>per month</Body>
+            </View>
+          </View>
+          <Body style={styles.planCopy}>Unlimited debriefs. More room to reflect on the conversations that matter.</Body>
+          <Pressable accessibilityRole="button" accessibilityLabel="View Mirra plans"
+            onPress={() => setActivePanel('plan')}
+            style={({ pressed }) => [styles.planButton, pressed && styles.settingPressed]}>
+            <Body style={styles.planButtonText}>View plans</Body>
+          </Pressable>
+          <Body style={styles.planNote}>Purchases are not available in this build.</Body>
+        </LinearGradient>
+      </View>
+
       {/* Settings */}
       <View style={styles.settingsWrap}>
         <Eyebrow style={{ marginBottom: 6 }}>Settings</Eyebrow>
@@ -574,9 +633,9 @@ export function ProfileScreen() {
       <SettingsSheet
         panel={activePanel}
         settings={settings}
-        loading={settingsLoading || !!settingsLoadError}
-        saving={settingsSaving}
-        error={settingsError}
+        loading={activePanel !== 'plan' && (settingsLoading || !!settingsLoadError)}
+        saving={activePanel !== 'plan' && settingsSaving}
+        error={activePanel === 'plan' ? null : settingsError}
         onClose={() => setActivePanel(null)}
         onChange={(patch) => {
           void updateSettings(patch);
@@ -599,6 +658,10 @@ export function ProfileScreen() {
         onExport={() => {
           void handleAccountExport();
         }}
+        onPlans={() => {
+          setAccountMenuOpen(false);
+          setActivePanel('plan');
+        }}
         onHelp={handleAccountHelp}
         onSignOut={() => {
           void handleAccountSignOut();
@@ -617,6 +680,17 @@ export function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
+  planWrap: { paddingHorizontal: 22, paddingTop: 20 },
+  planCard: { padding: 20, borderRadius: 22, gap: 14 },
+  planHeading: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  planEyebrow: { fontSize: 11, letterSpacing: 1.5, textTransform: 'uppercase', color: colors.terracottaSoft },
+  planTitle: { fontSize: 29, lineHeight: 34, color: colors.paper },
+  planPrice: { fontSize: 34, lineHeight: 38, color: colors.paper },
+  planCopy: { fontSize: 13, lineHeight: 20, color: colors.paper },
+  planButton: { minHeight: 48, padding: 12, borderRadius: 14, backgroundColor: colors.paper, alignItems: 'center', justifyContent: 'center' },
+  planButtonText: { fontSize: 14, fontFamily: fonts.bodySemibold, color: colors.ink },
+  planNote: { fontSize: 12, lineHeight: 18, color: colors.paper, textAlign: 'center' },
+  planFeature: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   header: { paddingHorizontal: 22, paddingTop: 4, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   headerIconButton: { width: 36, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   identity: { paddingHorizontal: 22, paddingTop: 14, alignItems: 'center', gap: 12 },

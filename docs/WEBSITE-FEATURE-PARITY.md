@@ -2,6 +2,8 @@
 
 Reviewed September 16, 2026 against `website/home.html` and the support and policy pages in `website/build.mjs`. Website files were not changed for this audit.
 
+Subsequent pricing correction: removing Stripe did not mean removing the paid plan. Profile now restores Mirra Pro at $8/month and its plan comparison. Purchasing and verified paid entitlements remain unconnected, with purchases explicitly unavailable in this build. The website's earlier "no paid plans" wording is stale; the app UI correction leaves website files unchanged as requested.
+
 | Website feature | App implementation |
 |---|---|
 | User-started background recording | Home Record/Stop, the app-level recording provider, native audio background mode and Android microphone service. Sessions never start automatically. |

@@ -120,7 +120,7 @@ The queue survives restarts after Stop/save completes. Uploads resume while fore
 
 All tables have RLS enabled with `(select auth.uid()) = user_id` read policies; writes go through the backend's service-role key, not the client directly.
 
-Monthly cap: 5 debriefs per user, configured by `FREE_TIER_CAP`. Enforced server-side — `POST /sessions` returns 402 when at cap. There are no paid tiers or subscription bypasses.
+Mirra Free includes 5 debriefs per month, configured by `FREE_TIER_CAP`. Mirra Pro is the $8/month paid plan with unlimited debriefs, restored in Profile and its Plans sheet. Stripe remains removed; replacement purchasing and verified paid entitlements are not connected. The UI discloses that purchases are unavailable in this build. All accounts currently retain the server-enforced free cap; `POST /sessions` returns 402 at the cap. Never grant Pro from a client-side flag or merely viewing the offer.
 
 ## Backend API
 
