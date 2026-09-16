@@ -4,6 +4,8 @@ Updated September 15, 2026. **Prelaunch; not approved for public app distributio
 
 ## What is prepared
 
+- Optional conversation goals, chosen from Record → Your focus or Profile → Your conversation goal. Friendship, confidence, listening, clarity and assertiveness tailor both debriefs and Reflect; Everyday connection is the default. The server reads the saved goal when processing starts, including offline uploads, and stores it in each debrief's metadata. Changing a goal does not rewrite past debriefs. Account export/deletion cover the preference. No additional API key is needed.
+
 - Expo 54 app with a generated native project, branded icon/splash, EAS preview/production profiles, and a production build guard against local or insecure endpoints.
 - Upstream owns privacy choices through `app/src/privacy/aiConsent.ts`: approval and withdrawal are per account on the current device. Recording/import/Reflect request approval and queued uploads recheck it before sending. The duplicate release-branch consent provider, age/terms gate, server enforcement and schema migration have been removed. Transcript saving follows upstream’s enabled default; the existing switches remain available.
 - Username/password sign-up, sign-in and configured Google OAuth follow upstream. The release branch no longer replaces onboarding with email links. Account export and deletion remain implemented.
@@ -14,6 +16,8 @@ Updated September 15, 2026. **Prelaunch; not approved for public app distributio
 - Container build, automated app/backend/database checks, Android and unsigned iOS simulator builds, dependency notices and store copy below. Account/settings sheets scroll on small screens, and shared navigation and controls expose accessible roles and state.
 
 ## Verified evidence
+
+- September 15 coaching goals: TypeScript, 25 app tests, 144 backend tests and 4 website tests pass. Tests cover default and invalid goals, persisted preferences, AI request instructions, no-speech behavior, upload replay retaining the original goal, export, and picker/API mapping. The new database migration is included in schema CI; hosted schema application and backend/app release remain separate deployment steps.
 
 - September 15 website redesign: original forest-green/ivory design, illustrated app preview, keyboard-accessible Record/Debrief/Reflect tabs, responsive navigation and FAQ. References reviewed: [Linear](https://linear.app/), [Granola](https://www.granola.ai/), [Willow](https://willowvoice.com/), [Touchy](https://touchyapp.com/) and [Apple](https://www.apple.com/airpods-pro/). Four website tests cover preview interactions, menu behavior, local links/assets/anchors and deletion protections. Browser checks cover 320, 393, 768, 1024 and 1440 pixel viewports. Demo content is explicitly illustrative; store links remain unavailable until real listings exist.
 - September 15 removal checks: TypeScript, 24 app tests (including upstream consent/queue/Reflect regressions), 135 backend tests, and 3 website tests pass. The upstream consent helper and authentication screen match `upstream/main` at `f628b73`; no hosted database mutation was performed.
@@ -47,10 +51,10 @@ Missing account sessions, legally attributable facts and device evidence are not
 
 ## Deployment order
 
-1. Apply all three September 14 migrations to the intended Supabase project using a migration-capable database connection. Verify the live schema, read policies, removal of direct settings write policies, and the existing `auth.users` cascading foreign keys.
+1. Apply every migration in `supabase/migrations/`, including September 14 deletion tombstones and September 15 coaching goals, to the intended Supabase project using a migration-capable database connection. Verify the live schema, read policies, removal of direct settings write policies, and the existing `auth.users` cascading foreign keys.
 2. Configure the backend's `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`, `ENVIRONMENT=production` and explicit `CORS_ORIGINS`. Keep service-role and OpenAI keys entirely server-side.
 3. Deploy the tested container behind HTTPS with a 26 MB request-body limit and a request timeout greater than the app's processing window. Run one worker and one instance initially; the current request budget and VAD serialization are process-local. Provision at least 4 GB RAM and measure peak memory with supported long audio. Set provider spending alerts and an OpenAI project budget. Never log bearer tokens, audio, transcripts or prompts.
-4. Verify `/health`, `/ready`, signed-in history/settings, a consented upload, usage reservation/refund, Reflect, export and deletion in the deployed environment. `/ready` checks credentials are present and the deletion-marker table is queryable; it is not proof that OpenAI billing or every provider is healthy.
+4. Verify `/health`, `/ready`, signed-in history/settings, a consented upload, usage reservation/refund, Reflect, export and deletion in the deployed environment. `/ready` checks credentials are present and the deletion-marker table and coaching-goal column are queryable; it is not proof that OpenAI billing or every provider is healthy.
 5. Configure Supabase production SMTP, SPF/DKIM/DMARC where applicable, and only intended redirect URLs. Native sign-in uses `mirra://auth`; web deletion uses the exact public `/delete-account.html` URL. Test a real email round trip. Keep development localhost/LAN redirect entries out of a dedicated production project.
 6. Finalize operator/support/territories/provider retention, review the actual privacy policy and terms, update `website/release.json`, rebuild, and publish. Align app privacy disclosures, the Apple privacy questionnaire and Google Data safety answers with the deployed behavior.
 7. Configure the EAS project and production public environment. Run the production build guard, native CI, the device matrix below, then build and submit a signed iOS binary. Stage through internal TestFlight before public release. Add verified store URLs to the website only when the corresponding app records are available.

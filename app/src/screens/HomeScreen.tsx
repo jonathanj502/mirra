@@ -13,6 +13,8 @@ import { useDebriefs } from '@/hooks/useDebriefs';
 import { useImportAudio } from '@/hooks/useImportAudio';
 import { useRecordAudio } from '@/hooks/useRecordAudio';
 import { PendingRecording } from '@/storage/pendingRecordings';
+import { useUserSettings } from '@/hooks/useUserSettings';
+import { coachingGoalLabel } from '@/data/coachingGoals';
 
 function displayName(email?: string | null, username?: unknown) {
   if (typeof username === 'string' && username.trim()) return username.trim();
@@ -122,7 +124,8 @@ function ImportButton({ onPress, loading, disabled }: { onPress: () => void; loa
 
 export function HomeScreen() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, accessToken } = useAuth();
+  const { settings, loading: settingsLoading, loadError: settingsError } = useUserSettings(accessToken);
   const { listItems, loading, error, setDebriefs, refresh } = useDebriefs();
   const { importAudio, importing, error: importError } = useImportAudio();
   const { isRecording, isSavingRecording, isStartingRecording, hasUnsavedRecording, recordingSeconds,
@@ -220,6 +223,17 @@ export function HomeScreen() {
         ) : null}
       </View>
 
+      <Pressable accessibilityRole="button" accessibilityLabel="Change your conversation goal"
+        onPress={() => router.push({ pathname: '/profile', params: { panel: 'goal' } })}
+        style={styles.goalCard}>
+        <View style={{ flex: 1, gap: 5 }}>
+          <Eyebrow>Your focus</Eyebrow>
+          <Body>{settingsLoading ? 'Loading your goal…' : settingsError ? 'View your goal in settings' : coachingGoalLabel(settings.coachingGoal)}</Body>
+          <Body style={{ color: colors.muted, fontSize: 12 }}>Choose once. Your suggestions follow.</Body>
+        </View>
+        <Icon.chevron color={colors.muted} />
+      </Pressable>
+
       {/* Recent */}
       <View style={styles.recentSection}>
         <View style={styles.recentHead}>
@@ -247,6 +261,7 @@ export function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
+  goalCard: { marginHorizontal: 22, marginBottom: 24, padding: 18, borderWidth: 1, borderColor: colors.hairline, borderRadius: 18, flexDirection: 'row', alignItems: 'center', gap: 12 },
   pendingItem: { borderTopWidth: 1, borderTopColor: colors.hairline, paddingTop: 12, width: '100%' },
   header: { paddingHorizontal: 24, flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
   greetingTitle: { fontSize: 34, lineHeight: 36, marginTop: 8, color: colors.ink },

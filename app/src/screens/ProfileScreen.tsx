@@ -1,7 +1,7 @@
 // You · profile — identity, stats, settings.
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Linking, Modal, Pressable, ScrollView, Switch, View, StyleSheet } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path } from 'react-native-svg';
 import { Screen } from '@/components/Screen';
@@ -20,8 +20,9 @@ import { useAuth } from '@/auth/AuthContext';
 import { useProfileSummary } from '@/hooks/useProfileSummary';
 import { useUserSettings } from '@/hooks/useUserSettings';
 import { CoachingDepth, CoachingTone, UserSettings } from '@/models/debrief';
+import { COACHING_GOALS, coachingGoalLabel } from '@/data/coachingGoals';
 
-type SettingsPanelId = 'privacy' | 'coaching' | 'help';
+type SettingsPanelId = 'privacy' | 'coaching' | 'goal' | 'help';
 type AccountActionId = 'export' | 'signOut' | 'delete';
 const TONE_OPTIONS: { value: CoachingTone; label: string; hint: string }[] = [
   { value: 'warm_reflective', label: 'Warm', hint: 'Soft, validating, spacious.' },
@@ -183,6 +184,7 @@ function HelpAction({ label, hint }: { label: string; hint: string }) {
 }
 
 const SETTINGS_TITLES: Record<SettingsPanelId, string> = {
+  goal: 'Your conversation goal',
   privacy: 'Voice & Privacy',
   coaching: 'Coaching Tone',
   help: 'Help & Feedback',
@@ -220,7 +222,7 @@ function SettingsSheet({
   const [withdrawing, setWithdrawing] = useState(false);
   useEffect(() => { setPrivacyNote(null); }, [panel]);
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={() => { if (!saving) onClose(); }}>
       <View style={styles.sheetScrim}>
         <ScrollView style={{ flexGrow: 0, maxHeight: '90%' }} contentContainerStyle={styles.sheet}>
           <View style={styles.sheetGrabber} />
@@ -231,7 +233,7 @@ function SettingsSheet({
                 <Serif style={styles.sheetTitle}>{settingsTitle(panel)}</Serif>
               </View>
             </View>
-            <Pressable accessibilityRole="button" onPress={onClose} hitSlop={10} style={styles.closeButton}>
+            <Pressable accessibilityRole="button" disabled={saving} onPress={onClose} hitSlop={10} style={styles.closeButton}>
               <Body style={styles.closeText}>Done</Body>
             </Pressable>
           </View>
@@ -279,6 +281,20 @@ function SettingsSheet({
             </View>
           ) : null}
 
+          {!loading && panel === 'goal' ? (
+            <View style={styles.sheetBody}>
+              <Body style={styles.factText}>Choose once. Mirra tailors new debriefs and Reflect to what matters to you. Change it anytime.</Body>
+              <View accessibilityRole="radiogroup" accessibilityLabel="Conversation goal" style={{ gap: 8 }}>
+                {COACHING_GOALS.map(option => (
+                  <ChoiceRow key={option.value} label={option.label} hint={option.hint}
+                    selected={settings.coachingGoal === option.value}
+                    onPress={() => onChange({ coachingGoal: option.value })} />
+                ))}
+              </View>
+              <Body style={styles.optionHint}>One practical suggestion to take into real life. No daily exercises. Saved debriefs keep their original focus.</Body>
+            </View>
+          ) : null}
+
           {!loading && panel === 'coaching' ? (
             <View style={styles.sheetBody}>
               <View style={styles.optionBlock}>
@@ -312,7 +328,7 @@ function SettingsSheet({
 
           <View style={styles.sheetFooter}>
             {saving ? <Body style={styles.saveState}>Saving…</Body> : null}
-            {error ? <Body style={styles.errorText}>{error}</Body> : null}
+            {error ? <Body accessibilityRole="alert" style={styles.errorText}>{error}</Body> : null}
           </View>
         </ScrollView>
       </View>
@@ -425,12 +441,19 @@ function AccountMenu({
 
 export function ProfileScreen() {
   const router = useRouter();
+  const { panel } = useLocalSearchParams<{ panel?: string }>();
   const { user, accessToken, signOut } = useAuth();
   const { isRecording, hasUnsavedRecording, isSavingRecording, isStartingRecording, stopRecording, pauseUploads, unpauseUploads } = useRecordAudio();
   const { summary, loading: summaryLoading, error: summaryError, refresh: refreshSummary } = useProfileSummary();
   const { settings, loading: settingsLoading, saving: settingsSaving, error: settingsError, loadError: settingsLoadError,
     refresh: refreshSettings, updateSettings } = useUserSettings(accessToken);
   const [activePanel, setActivePanel] = useState<SettingsPanelId | null>(null);
+  useEffect(() => {
+    if (panel === 'goal') {
+      setActivePanel('goal');
+      router.setParams({ panel: undefined });
+    }
+  }, [panel, router]);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [accountBusy, setAccountBusy] = useState<AccountActionId | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
@@ -541,6 +564,7 @@ export function ProfileScreen() {
       <View style={styles.settingsWrap}>
         <Eyebrow style={{ marginBottom: 6 }}>Settings</Eyebrow>
         <Card style={styles.settingsCard}>
+          <SettingRow label="Your conversation goal" disabled={!settingsReady} hint={settingsReady ? coachingGoalLabel(settings.coachingGoal) : settingsHint} onPress={() => setActivePanel('goal')} />
           <SettingRow label="Voice & privacy" disabled={!settingsReady} hint={settingsReady ? privacyHint(settings) : settingsHint} onPress={() => setActivePanel('privacy')} />
           <SettingRow label="Coaching tone" disabled={!settingsReady} hint={settingsReady ? toneLabel[settings.coachingTone] : settingsHint} onPress={() => setActivePanel('coaching')} />
           <SettingRow label="Help & feedback" hint="Contact, issues, privacy" onPress={() => setActivePanel('help')} isLast />
@@ -550,7 +574,7 @@ export function ProfileScreen() {
       <SettingsSheet
         panel={activePanel}
         settings={settings}
-        loading={settingsLoading}
+        loading={settingsLoading || !!settingsLoadError}
         saving={settingsSaving}
         error={settingsError}
         onClose={() => setActivePanel(null)}

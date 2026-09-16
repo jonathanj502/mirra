@@ -134,6 +134,10 @@ Monthly cap: 5 debriefs per user, configured by `FREE_TIER_CAP`. Enforced server
 | `GET /analytics/progress` | weekly aggregated stats for ProgressScreen/InsightsIndexScreen |
 | `POST /reflect` | Reflect chat — calls OpenAI through `reflection.py` |
 
+## Conversation goals
+
+`user_settings.coaching_goal` is a validated preference: `general`, `make_friends`, `confidence`, `listening`, `clarity`, or `assertiveness`. It defaults to `general`. Users choose it from Home → Your focus or Profile → Your conversation goal. `/sessions` reads the current saved goal when processing begins and passes it into `coordinator.run` → `coaching.analyze`; `/reflect` passes the current goal into `generate_reflection`. Shared guidance lives in `backend/app/coaching_goals.py`. Debrief metadata retains the processing-time goal so history is not relabeled after settings changes. Apply `20260915010000_coaching_goals.sql` before deploying; `/ready` checks this column.
+
 ## Backend Integration Status
 
 The frontend is fully wired to the backend — no more mock data. `src/data/recents.ts` and `src/data/weeks.ts` (the old static mocks) are deleted. Every screen fetches through a hook in `src/hooks/` (`useDebriefs`, `useUsage`, `useUserSettings`, `useProfileSummary`, `useProgressSummary`, `useRecordAudio`, `useImportAudio`), which goes through `app/src/api/client.ts`.
@@ -149,7 +153,7 @@ The frontend is fully wired to the backend — no more mock data. `src/data/rece
 
 ## Release privacy and operations
 
-- Apply the September 14 deletion-tombstone migration before deploying the current backend. `/health` reports liveness; `/ready` requires the deletion-marker table and AI credential.
+- Apply the September 14 deletion-tombstone and September 15 coaching-goal migrations before deploying the current backend. `/health` reports liveness; `/ready` requires the deletion-marker table, coaching-goal column and AI credential.
 - AI consent uses upstream’s `app/src/privacy/aiConsent.ts`: approval is stored per account on each device, recording/import/Reflect request it, queued uploads recheck it, and Profile can withdraw it on that device. There is no additional release-branch consent screen, server-side consent field or consent migration. Transcript defaults and username/Google onboarding follow upstream.
 - `DELETE /account` removes the authenticated Supabase user with cascading data deletion. `DELETE /debriefs/{id}` uses an account-scoped SQL RPC and a content-free tombstone. SQL advisory locks serialize deletion and replay; the insert trigger rejects resurrection. Tombstones disappear on account deletion and are included in account exports.
 - One pipeline/worker protects the stateful VAD model and memory budget. Reflect has a per-account 60-message/hour process-local limit. Move budgets to shared storage before scaling workers/instances.

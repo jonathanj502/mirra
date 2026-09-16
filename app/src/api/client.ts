@@ -136,6 +136,7 @@ type RawUserSettings = {
   save_transcripts: boolean;
   include_transcript_in_reflect: boolean;
   coaching_tone: UserSettings['coachingTone'];
+  coaching_goal?: UserSettings['coachingGoal'];
   coaching_depth: UserSettings['coachingDepth'];
 };
 
@@ -272,7 +273,7 @@ function toProfileSummary(raw: RawProfileSummary): ProfileSummary {
 }
 
 function toUserSettings(raw: RawUserSettings): UserSettings {
-  return camelizeKeys<UserSettings>(raw);
+  return { ...camelizeKeys<UserSettings>(raw), coachingGoal: raw.coaching_goal ?? 'general' };
 }
 
 function toAccountExport(raw: RawAccountExport): AccountExport {
@@ -296,6 +297,7 @@ function toRawUserSettingsPatch(patch: Partial<UserSettings>): Partial<RawUserSe
   if (patch.saveTranscripts !== undefined) raw.save_transcripts = patch.saveTranscripts;
   if (patch.includeTranscriptInReflect !== undefined) raw.include_transcript_in_reflect = patch.includeTranscriptInReflect;
   if (patch.coachingTone !== undefined) raw.coaching_tone = patch.coachingTone;
+  if (patch.coachingGoal !== undefined) raw.coaching_goal = patch.coachingGoal;
   if (patch.coachingDepth !== undefined) raw.coaching_depth = patch.coachingDepth;
   return raw;
 }

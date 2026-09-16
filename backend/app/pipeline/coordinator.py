@@ -6,6 +6,7 @@ import librosa
 import numpy as np
 
 from app.pipeline.coaching import analyze
+from app.models.settings import CoachingGoal
 from app.pipeline.prosody import compute_stats
 from app.pipeline.speaker import audio_segments, select_user_speaker
 from app.pipeline.transcription import TRANSCRIPTION_MODEL, transcribe
@@ -62,7 +63,7 @@ def _analysis_audio(audio: np.ndarray, sample_rate: int) -> tuple[np.ndarray, in
     return resampled.astype(np.float32), ANALYSIS_SAMPLE_RATE
 
 
-def run(audio_bytes: bytes, content_type: str | None = None) -> dict:
+def run(audio_bytes: bytes, content_type: str | None = None, coaching_goal: CoachingGoal = "general") -> dict:
     original_audio, original_sr = _decode_audio(audio_bytes, content_type)
     audio, sr = _analysis_audio(original_audio, original_sr)
     total_seconds = len(audio) / sr
@@ -91,7 +92,7 @@ def run(audio_bytes: bytes, content_type: str | None = None) -> dict:
             for speaker in speakers
         },
     }}
-    coaching = analyze(transcript, stats) if turns else {
+    coaching = analyze(transcript, stats, coaching_goal=coaching_goal) if turns else {
         "observation": "No speech was detected in this recording.",
         "pattern_to_reduce": "There is not enough speech to identify a conversational pattern.",
         "thing_to_try_next": "Try another recording with the microphone closer to the conversation.",

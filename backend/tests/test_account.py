@@ -84,7 +84,7 @@ class _Db:
     def __init__(self):
         self.rows = [ROW]
         self.used = 1
-        self.settings_row = {"coaching_tone": "curious_gentle", "save_transcripts": False}
+        self.settings_row = {"coaching_tone": "curious_gentle", "save_transcripts": False, "coaching_goal": "listening"}
 
     def table(self, name: str):
         return _Table(self, name)
@@ -108,6 +108,7 @@ def test_account_export_returns_user_data_bundle():
     assert body["user_id"] == "user-1"
     assert body["profile"]["total_conversations"] == 1
     assert body["settings"]["coaching_tone"] == "curious_gentle"
+    assert body["settings"]["coaching_goal"] == "listening"
     assert set(body) == {"exported_at", "user_id", "profile", "settings", "debriefs", "deleted_conversation_ids"}
     assert body['deleted_conversation_ids'] == ['deleted-conversation']
     assert body["debriefs"][0]["id"] == ROW["id"]

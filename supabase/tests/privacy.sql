@@ -6,12 +6,24 @@ insert into public.debriefs(id,user_id,session_id,observation,pattern_to_reduce,
 insert into public.user_settings(user_id) values ('00000000-0000-0000-0000-000000000001');
 do $$ begin
   assert not has_function_privilege('authenticated','public.delete_debrief_permanently(uuid,uuid)','EXECUTE');
+  assert (select coaching_goal from public.user_settings) = 'general', 'Existing accounts need a default goal';
+  update public.user_settings set coaching_goal = 'confidence';
+  begin
+    update public.user_settings set coaching_goal = 'unknown';
+    raise exception 'Invalid goal was accepted';
+  exception when check_violation then null;
+  end;
 end $$;
 
 set local role authenticated;
 set local "request.jwt.claim.sub" = '00000000-0000-0000-0000-000000000001';
 do $$ begin
   assert (select count(*) from public.debriefs) = 1, 'RLS leaked another account';
+  assert (select coaching_goal from public.user_settings) = 'confidence';
+end $$;
+set local "request.jwt.claim.sub" = '00000000-0000-0000-0000-000000000002';
+do $$ begin
+  assert not exists(select from public.user_settings), 'RLS leaked another account goal';
 end $$;
 reset role;
 

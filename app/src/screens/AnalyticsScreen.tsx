@@ -18,6 +18,7 @@ import { deleteDebrief, fetchDebrief } from '@/api/client';
 import { friendlyErrorMessage } from '@/api/http';
 import { DebriefCard } from '@/models/debrief';
 import { talkListenPercent } from '@/utils/talkListen';
+import { coachingGoalLabel } from '@/data/coachingGoals';
 
 const TAB_HREF: Record<TabId, '/' | '/insights' | '/progress' | '/profile'> = {
   home: '/', insights: '/insights', progress: '/progress', profile: '/profile',
@@ -139,6 +140,7 @@ export function AnalyticsScreen() {
   const observation = selected.observation;
   const pattern = selected.patternToReduce;
   const next = selected.thingToTryNext;
+  const goalLabel = coachingGoalLabel(selected.stats.metadata.coaching_goal);
   const talkPct = talkListenPercent(selected.stats.talkListenRatio);
   const listenPct = 100 - talkPct;
   const questions = selected.stats.questionCount;
@@ -196,12 +198,14 @@ export function AnalyticsScreen() {
       {/* Warm reflection */}
       <View style={styles.reflectWrap}>
         <Card tone="card-2" style={{ padding: 18 }}>
+          {goalLabel ? <Body style={{ color: colors.terracotta, fontSize: 12, marginBottom: 12 }}>For your goal: {goalLabel}</Body> : null}
           <Eyebrow style={{ marginBottom: 8 }}>A few things I noticed</Eyebrow>
           <Serif style={styles.reflectText}>
-            {observation} — {listenPct}% of the time was theirs. There were{' '}
-            <SerifItalic style={[styles.reflectText, { color: colors.terracotta }]}>{pattern}</SerifItalic>
-            {' '}to notice. {next}
+            {observation}
           </Serif>
+          <Body style={{ color: colors.muted, marginTop: 12 }}>{pattern}</Body>
+          <Eyebrow style={{ marginTop: 18, marginBottom: 6 }}>One thing to try</Eyebrow>
+          <SerifItalic style={[styles.reflectText, { color: colors.terracotta }]}>{next}</SerifItalic>
           <ReflectCTA subject={title.toLowerCase()} onPress={() => router.push({ pathname: '/reflect', params: selected ? { id: selected.id } : {} })} />
         </Card>
       </View>

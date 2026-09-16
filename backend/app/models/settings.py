@@ -7,6 +7,7 @@ WeeklySummaryDay = Literal["sunday", "monday", "tuesday", "wednesday", "thursday
 WeeklySummaryTime = Literal["early_morning", "morning", "midday", "afternoon", "evening", "night"]
 CoachingTone = Literal["warm_reflective", "direct_practical", "curious_gentle"]
 CoachingDepth = Literal["quick", "balanced", "deep"]
+CoachingGoal = Literal["general", "make_friends", "confidence", "listening", "clarity", "assertiveness"]
 
 
 class UserSettings(BaseModel):
@@ -19,6 +20,7 @@ class UserSettings(BaseModel):
     include_transcript_in_reflect: bool = False
     coaching_tone: CoachingTone = "warm_reflective"
     coaching_depth: CoachingDepth = "balanced"
+    coaching_goal: CoachingGoal = "general"
 
     model_config = ConfigDict(extra="ignore")
 
@@ -33,5 +35,6 @@ class UserSettingsUpdate(BaseModel):
     include_transcript_in_reflect: bool | None = None
     coaching_tone: CoachingTone | None = None
     coaching_depth: CoachingDepth | None = None
+    coaching_goal: CoachingGoal | None = None
 
     model_config = ConfigDict(extra="forbid")

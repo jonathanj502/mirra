@@ -143,7 +143,8 @@ def test_coordinator_resamples_stereo_audio_for_voice_analysis(mock_detect, mock
     mock_transcribe.return_value = [TranscribedTurn(0, 0.5, "A", "What changed?")]
     mock_analyze.return_value = {"observation": "x", "pattern_to_reduce": "y", "thing_to_try_next": "z"}
 
-    result = coordinator.run(_fake_wav(sample_rate=44100, stereo=True))
+    result = coordinator.run(_fake_wav(sample_rate=44100, stereo=True), coaching_goal="make_friends")
+    assert mock_analyze.call_args.kwargs == {"coaching_goal": "make_friends"}
 
     detected_audio, detected_sr = mock_detect.call_args.args
     transcribed_audio, transcribed_sr = mock_transcribe.call_args.args
@@ -157,7 +158,8 @@ def test_coordinator_resamples_stereo_audio_for_voice_analysis(mock_detect, mock
 # --- mocked I/O tests ---
 
 @pytest.mark.parametrize("invalid_attempts", [0, 2, 3])
-def test_analyze_validates_openai_output_and_bounds_retries(monkeypatch, invalid_attempts):
+@pytest.mark.parametrize("goal, guidance", [("make_friends", "warmth"), ("confidence", "measured pace")])
+def test_analyze_validates_openai_output_and_bounds_retries(monkeypatch, invalid_attempts, goal, guidance):
     expected = {"observation": "x", "pattern_to_reduce": "y", "thing_to_try_next": "z"}
     requests = []
 
@@ -180,9 +182,9 @@ def test_analyze_validates_openai_output_and_bounds_retries(monkeypatch, invalid
     monkeypatch.setattr(coaching, "OpenAI", client)
     if invalid_attempts == 3:
         with pytest.raises(RuntimeError, match="valid debrief"):
-            coaching.analyze("Speaker A: Hello. Speaker B: Hi.", {"question_count": 1})
+            coaching.analyze("Speaker A: Hello. Speaker B: Hi.", {"question_count": 1}, coaching_goal=goal)
     else:
-        assert coaching.analyze("Speaker A: Hello. Speaker B: Hi.", {"question_count": 1}) == expected
+        assert coaching.analyze("Speaker A: Hello. Speaker B: Hi.", {"question_count": 1}, coaching_goal=goal) == expected
     assert len(requests) == min(invalid_attempts + 1, 3)
     assert str(requests[0].url) == "https://api.openai.com/v1/responses"
     body = json.loads(requests[0].content)
@@ -190,6 +192,9 @@ def test_analyze_validates_openai_output_and_bounds_retries(monkeypatch, invalid
     assert body["store"] is False
     assert "Speaker B: Hi." in body["input"] and "question_count" in body["input"]
     assert "not verified voice recognition" in body["instructions"]
+    assert guidance in body["instructions"]
+    assert "Do not invent a problem" in body["instructions"]
+    assert "Do not assign daily exercises" in body["instructions"]
     assert body["text"]["format"]["strict"] is True
     assert set(body["text"]["format"]["schema"]["required"]) == set(expected)
 
@@ -369,7 +374,7 @@ def test_missing_audio_content_type_is_rejected(session_io):
 
 def test_session_preserves_diarization_metadata_with_transcript_saving_disabled(session_io):
     client, db, _reserve, _refund = session_io
-    main.fetch_user_settings.return_value = UserSettings(save_transcripts=False)
+    main.fetch_user_settings.return_value = UserSettings(save_transcripts=False, coaching_goal="confidence")
     diarization = {"model": "gpt-4o-transcribe-diarize", "user_speaker": "A", "speaker_count": 2}
     main.coordinator.run.return_value = {**SAMPLE_DEBRIEF,
         "stats": {**SAMPLE_DEBRIEF["stats"], "metadata": {"diarization": diarization}},
@@ -380,6 +385,8 @@ def test_session_preserves_diarization_metadata_with_transcript_saving_disabled(
     payload = db.table.return_value.insert.call_args.args[0]
     assert payload["stats"]["metadata"]["diarization"] == diarization
     assert payload["stats"]["metadata"]["title"] == "Meeting"
+    assert payload["stats"]["metadata"]["coaching_goal"] == "confidence"
+    assert main.coordinator.run.call_args.kwargs['coaching_goal'] == 'confidence'
     assert payload["transcript"] is None
     assert "Speaker A: Hello" not in str(payload)
 
@@ -407,10 +414,13 @@ def test_offline_recording_replay_is_account_scoped_and_does_not_use_quota_twice
     db.table.return_value.insert.return_value.execute.side_effect = insert
     request = {"files": {"audio": ("test.wav", b"audio", "audio/wav")},
                "data": {"recording_id": "saved-offline-1", "started_at": "2026-08-31T23:00:00Z"}}
+    main.fetch_user_settings.return_value = UserSettings(coaching_goal="make_friends")
     first = client.post("/sessions", **request)
+    main.fetch_user_settings.return_value = UserSettings(coaching_goal="confidence")
     replay = client.post("/sessions", **request)
     assert first.status_code == replay.status_code == 200
     assert first.json()["debrief"]["id"] == replay.json()["debrief"]["id"]
+    assert replay.json()["debrief"]["stats"]["metadata"]["coaching_goal"] == "make_friends"
     assert first.json()["debrief"]["stats"]["metadata"]["started_at"] == request["data"]["started_at"]
     reserve.assert_called_once()
     main.coordinator.run.assert_called_once()

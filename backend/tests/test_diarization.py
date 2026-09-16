@@ -146,7 +146,7 @@ def test_no_speech_skips_coaching_and_returns_empty_transcript(monkeypatch, loca
     transcribe, analyze = MagicMock(return_value=[]), MagicMock()
     monkeypatch.setattr(coordinator, "transcribe", transcribe)
     monkeypatch.setattr(coordinator, "analyze", analyze)
-    result = coordinator.run(buf.getvalue())
+    result = coordinator.run(buf.getvalue(), coaching_goal="confidence")
     assert result["transcript"] == ""
     assert result["stats"]["metadata"]["diarization"]["speaker_count"] == 0
     assert result["stats"]["total_word_count"] == 0

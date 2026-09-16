@@ -96,6 +96,7 @@ def ready(db: Client = Depends(get_db)):
         if not settings.openai_api_key:
             raise ValueError('Missing AI credential')
         db.table('debrief_deletions').select('debrief_id').limit(0).execute()
+        db.table('user_settings').select('coaching_goal').limit(0).execute()
     except Exception:
         return JSONResponse(status_code=503, content={'status': 'not_ready'})
     return {'status': 'ready'}
@@ -356,7 +357,7 @@ def _process_session(audio, started_at, client_duration_seconds, title, user_id,
     try:
         user_settings = fetch_user_settings(db, user_id)
         try:
-            result = coordinator.run(audio_bytes, content_type=content_type)
+            result = coordinator.run(audio_bytes, content_type=content_type, coaching_goal=user_settings.coaching_goal)
         except TranscriptionInputTooLarge as exc:
             raise HTTPException(status_code=413, detail="Recording is too large to transcribe. Use a shorter recording or upload M4A, MP3, or WebM.") from exc
         except coordinator.AudioDurationTooLong as exc:
@@ -370,6 +371,7 @@ def _process_session(audio, started_at, client_duration_seconds, title, user_id,
             "title": title,
             "original_filename": audio.filename,
             "content_type": content_type,
+            "coaching_goal": user_settings.coaching_goal,
         }
         stats = {**result["stats"], "metadata": {
             **result["stats"].get("metadata", {}),
@@ -468,6 +470,7 @@ def reflect(
         coaching_tone=user_settings.coaching_tone,
         coaching_depth=user_settings.coaching_depth,
         include_transcript=user_settings.include_transcript_in_reflect,
+        coaching_goal=user_settings.coaching_goal,
     )
     if text:
         return {"reply": text, "used_model": True}

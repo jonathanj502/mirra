@@ -14,6 +14,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   includeTranscriptInReflect: false,
   coachingTone: 'warm_reflective',
   coachingDepth: 'balanced',
+  coachingGoal: 'general',
 };
 
 export function useUserSettings(token: string | null) {

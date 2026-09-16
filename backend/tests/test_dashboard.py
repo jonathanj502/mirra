@@ -295,6 +295,7 @@ def test_reflect_uses_openai_when_configured(reflection_api):
 def test_reflect_uses_saved_coaching_and_privacy_settings(reflection_api):
     settings_row = {
         "coaching_tone": "direct_practical",
+        "coaching_goal": "assertiveness",
         "coaching_depth": "quick",
         "include_transcript_in_reflect": True,
     }
@@ -307,6 +308,8 @@ def test_reflect_uses_saved_coaching_and_privacy_settings(reflection_api):
     body = json.loads(reflection_api.call_args.args[0].content)
     assert "direct, practical" in body["input"][0]["content"]
     assert "one short sentence" in body["input"][0]["content"]
+    assert "respectful boundaries" in body["input"][0]["content"]
+    assert "Never claim to know another person's perception" in body["input"][0]["content"]
     assert "Honestly, what was that like?" in body["input"][-1]["content"]
 
 

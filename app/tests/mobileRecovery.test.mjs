@@ -43,6 +43,8 @@ function hooks() {
   };
 }
 
+const goals = load('data/coachingGoals.ts', {});
+
 const privacy = { requestAIConsent: async () => true, withdrawAIConsent: async () => {} };
 const confirmation = { confirmAction: async () => true };
 
@@ -293,8 +295,9 @@ test('profile loads account data without a plan request', () => {
   const state = hooks();
   let summaryState = { summary: null, error: 'Offline' };
   const { ProfileScreen } = load('screens/ProfileScreen.tsx', {
+    '@/data/coachingGoals': goals,
     react: state.react, 'react-native': { StyleSheet: { create: styles => styles } },
-    'expo-router': { useRouter: () => ({}) }, 'expo-linear-gradient': {}, 'react-native-svg': {}, '@/components/Screen': {},
+    'expo-router': { useRouter: () => ({}), useLocalSearchParams: () => ({}) }, 'expo-linear-gradient': {}, 'react-native-svg': {}, '@/components/Screen': {},
     '@/components/ui': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
     '@/theme/tokens': { colors: {}, fonts: {} }, '@/api/client': {}, '@/auth/AuthContext': auth,
     '@/utils/exportData': {}, '@/utils/confirm': confirmation, '@/storage/pendingRecordings': {}, '@/config/legal': {},
@@ -320,6 +323,58 @@ test('profile loads account data without a plan request', () => {
   assert.doesNotMatch(loaded, /Current plan|Try Pro|Manage plan/);
 });
 
+test('conversation goals round-trip through the API and profile choices save the selected goal', async (t) => {
+  const api = load('api/client.ts', { '@/api/http': http });
+  let stored = {};
+  const requests = [];
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    requests.push({ url, options });
+    if (options.method === 'PATCH') stored = { ...stored, ...JSON.parse(options.body) };
+    return new Response(JSON.stringify(stored));
+  });
+  assert.equal((await api.fetchUserSettings('owner')).coachingGoal, 'general');
+  let settings = await api.updateUserSettings('owner', { coachingGoal: 'make_friends' });
+  assert.deepEqual(JSON.parse(requests.at(-1).options.body), { coaching_goal: 'make_friends' });
+  assert.equal(requests.at(-1).options.headers.Authorization, 'Bearer owner');
+  assert.equal((await api.fetchUserSettings('owner')).coachingGoal, 'make_friends');
+  const state = hooks();
+  let saving = false;
+  const changes = [];
+  const { ProfileScreen } = load('screens/ProfileScreen.tsx', {
+    react: state.react, 'react-native': { StyleSheet: { create: styles => styles } },
+    'expo-router': { useRouter: () => ({}), useLocalSearchParams: () => ({}) },
+    'expo-linear-gradient': {}, 'react-native-svg': {}, '@/components/Screen': {}, '@/components/ui': {},
+    '@/components/Typography': {}, '@/components/Icon': { Icon: {} }, '@/theme/tokens': { colors: {}, fonts: {} },
+    '@/api/client': api, '@/auth/AuthContext': auth, '@/data/coachingGoals': goals,
+    '@/utils/exportData': {}, '@/utils/confirm': confirmation, '@/storage/pendingRecordings': {}, '@/config/legal': {},
+    '@/privacy/aiConsent': privacy, '@/hooks/useRecordAudio': { useRecordAudio: () => ({}) },
+    '@/hooks/useProfileSummary': { useProfileSummary: () => ({ summary: null }) },
+    '@/hooks/useUserSettings': { useUserSettings: () => ({ settings, saving,
+      updateSettings: async patch => { changes.push(patch); settings = await api.updateUserSettings('owner', patch); } }) },
+  });
+  function find(node, predicate) {
+    if (!node || typeof node !== 'object') return;
+    if (predicate(node)) return node;
+    for (const child of [node.props?.children].flat(Infinity)) { const found = find(child, predicate); if (found) return found; }
+  }
+  find(state.render(ProfileScreen), node => node.props?.label === 'Your conversation goal').props.onPress();
+  const sheet = find(state.render(ProfileScreen), node => node.type?.name === 'SettingsSheet');
+  assert.equal(sheet.props.panel, 'goal');
+  const tree = sheet.type(sheet.props);
+  for (const option of goals.COACHING_GOALS) {
+    const choice = find(tree, node => node.props?.label === option.label);
+    assert.equal(choice.props.selected, option.value === 'make_friends');
+    choice.props.onPress();
+    await flush();
+    assert.equal(settings.coachingGoal, option.value);
+  }
+  assert.deepEqual(changes.map(patch => patch.coachingGoal), goals.COACHING_GOALS.map(goal => goal.value));
+  saving = true;
+  const busy = find(state.render(ProfileScreen), node => node.type?.name === 'SettingsSheet');
+  const busyTree = busy.type(busy.props);
+  assert.equal(find(busyTree, node => node.props?.children?.props?.children === 'Done').props.disabled, true);
+});
+
 test('account actions save audio before sign-out and clear local data only after confirmed server deletion', async () => {
   const state = hooks();
   const events = [];
@@ -327,8 +382,9 @@ test('account actions save audio before sign-out and clear local data only after
   let canSave = false;
   let deleteSucceeds = false;
   const { ProfileScreen } = load('screens/ProfileScreen.tsx', {
+    '@/data/coachingGoals': goals,
     react: state.react, 'react-native': { StyleSheet: { create: value => value } },
-    'expo-router': { useRouter: () => ({}) }, 'expo-linear-gradient': {}, 'react-native-svg': {},
+    'expo-router': { useRouter: () => ({}), useLocalSearchParams: () => ({}) }, 'expo-linear-gradient': {}, 'react-native-svg': {},
     '@/components/Screen': {}, '@/components/ui': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
     '@/theme/tokens': { colors: {}, fonts: {} }, '@/utils/exportData': {}, '@/config/legal': {},
     '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' }, accessToken: 'owner-token', signOut: async () => events.push('sign-out') }) },
@@ -391,6 +447,7 @@ test('conversation deletion confirms on web and native, retains failures, and na
       session_duration_minutes: 2, user_speech_duration_minutes: 1, estimated_wpm: 120 },
   });
   const { AnalyticsScreen } = load('screens/AnalyticsScreen.tsx', {
+    '@/data/coachingGoals': goals,
     react: state.react,
     'react-native': { Platform: platform, Alert: { alert: (_title, _message, actions) => { buttons = actions; } },
       StyleSheet: { create: styles => styles } },

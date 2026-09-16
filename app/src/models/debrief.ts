@@ -136,6 +136,7 @@ export type WeeklySummaryDay = 'sunday' | 'monday' | 'tuesday' | 'wednesday' | '
 export type WeeklySummaryTime = 'early_morning' | 'morning' | 'midday' | 'afternoon' | 'evening' | 'night';
 export type CoachingTone = 'warm_reflective' | 'direct_practical' | 'curious_gentle';
 export type CoachingDepth = 'quick' | 'balanced' | 'deep';
+export type CoachingGoal = 'general' | 'make_friends' | 'confidence' | 'listening' | 'clarity' | 'assertiveness';
 
 export interface UserSettings {
   notificationsEnabled: boolean;
@@ -147,4 +148,5 @@ export interface UserSettings {
   includeTranscriptInReflect: boolean;
   coachingTone: CoachingTone;
   coachingDepth: CoachingDepth;
+  coachingGoal: CoachingGoal;
 }

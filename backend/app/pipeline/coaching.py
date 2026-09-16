@@ -2,6 +2,8 @@ from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.config import settings
+from app.coaching_goals import goal_instructions
+from app.models.settings import CoachingGoal
 
 _SYSTEM = (
     "You are a conversational coaching AI. Analyze the transcript and conversation stats, "
@@ -26,14 +28,14 @@ class CoachingOutput(BaseModel):
     thing_to_try_next: str = Field(min_length=1, description="One concrete thing to try in the next conversation")
 
 
-def analyze(transcript: str, stats: dict) -> dict:
+def analyze(transcript: str, stats: dict, coaching_goal: CoachingGoal = "general") -> dict:
     user_msg = f"Transcript:\n{transcript}\n\nConversation stats:\n{stats}"
     with OpenAI(api_key=settings.openai_api_key, timeout=60.0, max_retries=2) as client:
         for _ in range(3):  # Two retries for missing or invalid structured output.
             try:
                 response = client.responses.parse(
                     model=settings.openai_debrief_model,
-                    instructions=_SYSTEM,
+                    instructions=f"{_SYSTEM} {goal_instructions(coaching_goal)}",
                     input=user_msg,
                     text_format=CoachingOutput,
                     max_output_tokens=1024,
