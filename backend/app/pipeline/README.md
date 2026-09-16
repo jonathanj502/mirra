@@ -46,7 +46,9 @@ The existing `OPENAI_API_KEY` powers transcription, debrief coaching and Reflect
 
 The app retains its original until a saved debrief is acknowledged or cancellation
 is acknowledged by the backend. Uploading needs the app foregrounded; server analysis
-continues independently. Transient job failures receive three attempts. Restarted jobs
+continues independently. Transient job failures receive three attempts, then a 15-minute
+cooldown. The foreground app can automatically resume them afterward without reuploading.
+Invalid media does not trigger repeated analysis. Restarted jobs
 reprocess the recording, since per-chunk transcription checkpoints are not implemented.
 Do not run multiple workers or replicas against this local queue. Shared object storage
 and a database lease are required before scaling horizontally.

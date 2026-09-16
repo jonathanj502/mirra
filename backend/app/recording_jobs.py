@@ -91,7 +91,8 @@ class RecordingJobs:
                     raise HTTPException(409, "This recording ID belongs to a different audio file.")
                 if job["status"] == "cancelled":
                     raise HTTPException(410, "This recording was discarded.")
-                if job["status"] == "failed" and job.get("error_status") == 402:
+                if job["status"] == "failed" and (job.get("error_status") == 402 or
+                        job.get("error_status", 0) >= 500 and job["retry_at"] <= time.time()):
                     job.update(status="uploading", attempts=0, updated_at=time.time())
                     self._write(job)
                 return self.status(user_id, key)
@@ -206,7 +207,8 @@ class RecordingJobs:
                     current.update(status="queued" if retry else "failed", error_status=code,
                                    error=str(exc.detail) if isinstance(exc, HTTPException) else
                                    "Could not finish processing. Your original recording is still saved on your device.",
-                                   retry_at=time.time() + 60 * current["attempts"], updated_at=time.time())
+                                   retry_at=time.time() + (60 * current["attempts"] if retry else 15 * 60),
+                                   updated_at=time.time())
                     self._write(current)
                     logger.warning("Recording processing failed (%s)", type(exc).__name__)
         finally:

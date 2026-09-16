@@ -113,7 +113,7 @@ def test_jobs_recover_restart_cancel_safely_and_expire_abandoned_audio(tmp_path)
     assert not restarted._path(abandoned['id']).exists()
 
 
-def test_worker_retries_transient_errors_but_keeps_audio_on_permanent_failure(tmp_path):
+def test_worker_retains_audio_after_retries_and_resumes_transient_failures_after_cooldown(tmp_path):
     jobs = RecordingJobs(tmp_path)
     job = jobs.create('owner', RecordingUpload(recording_id='one', total_bytes=3, content_type='audio/mp4'))
     jobs.append('owner', job['id'], 0, b'123')
@@ -126,11 +126,22 @@ def test_worker_retries_transient_errors_but_keeps_audio_on_permanent_failure(tm
         assert state['attempts'] == attempt
         assert state['status'] == ('failed' if attempt == 3 else 'queued')
         assert 'private provider' not in state['error']
-        state['retry_at'] = 0
-        jobs._write(state)
+        if attempt < 3:
+            state['retry_at'] = 0
+            jobs._write(state)
     assert not jobs.process_one(fail)
     assert (jobs._path(job['id']) / 'audio').read_bytes() == b'123'
     assert jobs.export('other') == []
+    payload = RecordingUpload(recording_id='one', total_bytes=3, content_type='audio/mp4')
+    assert jobs.create('owner', payload)['status'] == 'failed'
+    state = jobs._read(job['id'])
+    state['retry_at'] = 0
+    jobs._write(state)
+    assert jobs.create('owner', payload)['status'] == 'uploading'
+    jobs.enqueue('owner', job['id'])
+    assert jobs.process_one(lambda *_: None)
+    assert jobs.status('owner', job['id'])['status'] == 'completed'
+    assert not (jobs._path(job['id']) / 'audio').exists()
     jobs.remove_user('owner')
     assert jobs.export('owner') == []
 
