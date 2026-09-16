@@ -32,10 +32,11 @@ const downloads = [
 const storeUrl = config.appStoreUrl || config.playStoreUrl;
 const storeLabel = config.appStoreUrl ? 'Download for iPhone' : 'Get it for Android';
 const iphoneAvailable = config.iphoneAvailable === true || Boolean(config.appStoreUrl);
-const availablePlatforms = [iphoneAvailable && 'iPhone', config.playStoreUrl && 'Android'].filter(Boolean).join(' and ');
-const launchStatus = iphoneAvailable ? 'Available for iPhone' : 'Coming first to iPhone';
+const androidAvailable = config.androidAvailable === true || Boolean(config.playStoreUrl);
+const availablePlatforms = [iphoneAvailable && 'iPhone', androidAvailable && 'Android'].filter(Boolean).join(' and ');
+const launchStatus = availablePlatforms ? `Available for ${availablePlatforms}` : 'Coming first to iPhone';
 const availability = availablePlatforms
-  ? `Mirra is available for ${availablePlatforms}.${!config.playStoreUrl ? ' Android is not available yet.' : ''}`
+  ? `Mirra is available for ${availablePlatforms}.${!androidAvailable ? ' Android is not available yet.' : ''}`
   : 'Mirra is preparing for its first iPhone release, with Android to follow. Store downloads are not available yet.';
 const headerAction = storeUrl
   ? `<a class="header-cta" href="${esc(storeUrl)}">${storeLabel} <span aria-hidden="true">↗</span></a>`
@@ -58,7 +59,7 @@ function page(file, title, description, content, document = false) {
 page('index.html', 'Mirra: more real life, less app', 'Your quiet conversation coach. Start a recording, be in the conversation, then get a short debrief tailored to your goal: friendship, confidence, listening, and more.', readFileSync(join(root, 'home.html'), 'utf8')
   .replace('{{heroAction}}', heroAction)
   .replace('{{availabilityEyebrow}}', availablePlatforms ? 'Make room for connection' : 'Preparing for launch')
-  .replace('{{availabilityTitle}}', iphoneAvailable ? 'Now on<br><em>iPhone.</em>' : storeUrl ? 'Make room<br><em>for connection.</em>' : 'Coming first<br><em>to iPhone.</em>')
+  .replace('{{availabilityTitle}}', iphoneAvailable && androidAvailable ? 'Now on iPhone.<br><em>And Android.</em>' : availablePlatforms ? `Now on<br><em>${availablePlatforms}.</em>` : 'Coming first<br><em>to iPhone.</em>')
   .replace('{{availabilityDescription}}', availability)
   .replace('{{availabilityAnswer}}', `${availability}${storeUrl ? ' Use the store links on this page to download.' : ''}`)
   .replace('{{downloads}}', downloads));

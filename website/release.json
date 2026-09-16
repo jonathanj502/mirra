@@ -3,6 +3,7 @@
   "operatorName": "",
   "supportEmail": "",
   "iphoneAvailable": true,
+  "androidAvailable": true,
   "appStoreUrl": "",
   "playStoreUrl": "",
   "backendUrl": "",
