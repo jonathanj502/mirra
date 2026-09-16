@@ -4,6 +4,8 @@ This file provides project-specific guidance to Codex when working in this repos
 
 Verify implementation details against the code before relying on descriptions of current status.
 
+Never use em dashes in new or revised copy, generated coaching, or user-facing responses. Coaching examples must be supported by relevant research and conversation context; do not present speaking ratios, question counts, pauses, or confidence phrases as universal rules. See `docs/WEBSITE-CONTENT-REVIEW.md` for sources and limits.
+
 ## Project Overview
 
 Mirra is a conversational coaching iOS/Android app. It records real conversations, analyzes the user's speech for social signals (talk/listen ratio, question frequency, interruptions, energy, vocabulary), and surfaces a debrief card with coaching bullets and an AI-powered Reflect chat.

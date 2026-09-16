@@ -1,4 +1,4 @@
-# Website UX review — September 15, 2026
+# Website UX review: September 15, 2026
 
 Mirra is prelaunch. The website should explain the product, demonstrate its value, and make availability clear. It should not manufacture clicks or imply that an unavailable app can be downloaded.
 
@@ -6,7 +6,7 @@ Mirra is prelaunch. The website should explain the product, demonstrate its valu
 
 | Source | Finding | Applied to Mirra |
 | --- | --- | --- |
-| [Willow](https://willowvoice.com/) — [YC Spring 2025](https://www.ycombinator.com/companies/willow) | The homepage identifies voice dictation immediately and offers actual downloads. | Explain the recording-to-coaching mechanism in the opening paragraph. Show plain launch status until a verified store URL exists; then link directly to that store. |
+| [Willow](https://willowvoice.com/): [YC Spring 2025](https://www.ycombinator.com/companies/willow) | The homepage identifies voice dictation immediately and offers actual downloads. | Explain the recording-to-coaching mechanism in the opening paragraph. Show plain launch status until a verified store URL exists; then link directly to that store. |
 | [Granola](https://www.granola.ai/) | Specific sample output supports its promise of attention returned to conversation. | Retain the illustrated debrief and working sample controls, alongside specific goal-based suggestions. |
 | [Linear](https://linear.app/) | Signup/login and feature destinations provide concrete actions. | Keep navigation for orientation and reserve prominent action styling for an available task. Do not create a new page merely to justify a button. |
 | [NN/g: Homepage Design Principles](https://www.nngroup.com/articles/homepage-design-principles/) | A homepage should quickly communicate its purpose and help visitors find relevant content. | Preserve the brand headline but make supporting copy explicit about the product, audience goals and output. |

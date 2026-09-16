@@ -158,7 +158,7 @@ def test_coordinator_resamples_stereo_audio_for_voice_analysis(mock_detect, mock
 # --- mocked I/O tests ---
 
 @pytest.mark.parametrize("invalid_attempts", [0, 2, 3])
-@pytest.mark.parametrize("goal, guidance", [("make_friends", "warmth"), ("confidence", "measured pace")])
+@pytest.mark.parametrize("goal, guidance", [("make_friends", "mutual self-disclosure"), ("confidence", "Preserve honest uncertainty")])
 def test_analyze_validates_openai_output_and_bounds_retries(monkeypatch, invalid_attempts, goal, guidance):
     expected = {"observation": "x", "pattern_to_reduce": "y", "thing_to_try_next": "z"}
     requests = []
@@ -195,6 +195,10 @@ def test_analyze_validates_openai_output_and_bounds_retries(monkeypatch, invalid
     assert guidance in body["instructions"]
     assert "Do not invent a problem" in body["instructions"]
     assert "Do not assign daily exercises" in body["instructions"]
+    assert "no universal ideal talk/listen ratio" in body["instructions"]
+    assert "Speaking-time share does not measure listening quality" in body["instructions"]
+    assert "Speaker identity and timing are estimates" in body["instructions"]
+    assert "Do not use em dashes" in body["instructions"]
     assert body["text"]["format"]["strict"] is True
     assert set(body["text"]["format"]["schema"]["required"]) == set(expected)
 

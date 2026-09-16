@@ -44,6 +44,7 @@ test('all website pages have working local links, accessible landmarks, and no f
   }
   for (const name of ['index.html', 'privacy.html', 'terms.html', 'support.html', 'delete-account.html']) {
     const html = readFileSync(join(root, 'dist', name), 'utf8');
+    assert.doesNotMatch(html, /\u2014|&mdash;|&#0*8212;|&#x0*2014;/i, `Em dash in ${name}`);
     assert.match(html, /<html lang="en"/);
     assert.match(html, /id="main"/);
     assert.equal((html.match(/<h1[ >]/g) || []).length, 1);
