@@ -17,6 +17,8 @@ Updated September 15, 2026. **Prelaunch; not approved for public app distributio
 
 ## Verified evidence
 
+- September 15 website usability review: removed promotional links that only scroll to the next section, replaced unavailable download buttons with plain launch status, made copy/headings more specific, and enlarged explanatory text. Five website tests pass, including prelaunch/iPhone/Android availability branches. Browser checks cover 320, 393, 768, 1024 and 1440 pixels, sample controls, keyboard operation and mobile navigation. Research and decisions are recorded in `docs/WEBSITE-UX.md`; no conversion uplift or field-performance measurement is claimed.
+
 - September 15 coaching goals: TypeScript, 25 app tests, 144 backend tests and 4 website tests pass. Tests cover default and invalid goals, persisted preferences, AI request instructions, no-speech behavior, upload replay retaining the original goal, export, and picker/API mapping. The new database migration is included in schema CI; hosted schema application and backend/app release remain separate deployment steps.
 
 - September 15 website redesign: original forest-green/ivory design, illustrated app preview, keyboard-accessible Record/Debrief/Reflect tabs, responsive navigation and FAQ. References reviewed: [Linear](https://linear.app/), [Granola](https://www.granola.ai/), [Willow](https://willowvoice.com/), [Touchy](https://touchyapp.com/) and [Apple](https://www.apple.com/airpods-pro/). Four website tests cover preview interactions, menu behavior, local links/assets/anchors and deletion protections. Browser checks cover 320, 393, 768, 1024 and 1440 pixel viewports. Demo content is explicitly illustrative; store links remain unavailable until real listings exist.

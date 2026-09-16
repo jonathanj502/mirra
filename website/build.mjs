@@ -25,21 +25,39 @@ for (const family of ['inter', 'instrument-serif']) copyFileSync(join(root, '../
 
 const preview = !config.privacyApproved || !config.operatorName || !config.supportEmail;
 const notice = preview ? '<aside class="notice"><strong>Prelaunch preview.</strong> Mirra is not yet available in the stores. These policies describe the current implementation; operator and private-support details must be finalized before public release.</aside>' : '';
-const downloads = `${config.appStoreUrl ? `<a class="button" href="${esc(config.appStoreUrl)}">Download for iPhone ↗</a>` : '<span class="button secondary" aria-disabled="true">iPhone · coming soon</span>'}
-  ${config.playStoreUrl ? `<a class="button secondary" href="${esc(config.playStoreUrl)}">Get it for Android ↗</a>` : '<span class="button secondary" aria-disabled="true">Android · coming later</span>'}`;
+const downloads = [
+  config.appStoreUrl && `<a class="button" href="${esc(config.appStoreUrl)}">Download for iPhone ↗</a>`,
+  config.playStoreUrl && `<a class="button secondary" href="${esc(config.playStoreUrl)}">Get it for Android ↗</a>`,
+].filter(Boolean).join('');
+const storeUrl = config.appStoreUrl || config.playStoreUrl;
+const storeLabel = config.appStoreUrl ? 'Download for iPhone' : 'Get it for Android';
+const headerAction = storeUrl
+  ? `<a class="header-cta" href="${esc(storeUrl)}">${storeLabel} <span aria-hidden="true">↗</span></a>`
+  : '<span class="header-status">Coming first to iPhone</span>';
+const heroAction = storeUrl
+  ? `<a class="button" href="${esc(storeUrl)}">${storeLabel} <span aria-hidden="true">↗</span></a>`
+  : '<p class="launch-status"><span class="status-dot" aria-hidden="true"></span>Coming first to iPhone</p>';
 const support = config.supportEmail ? `<a href="mailto:${esc(config.supportEmail)}">${esc(config.supportEmail)}</a>` : 'Private support contact is being finalized before launch. Do not post recordings, transcripts, passwords, or personal information on public issue trackers.';
-const navigation = '<a href="./#product-preview">The app</a><a href="./#your-goals">Your goals</a><a href="./#how-it-works">How it works</a><a href="./#your-data">Your data</a><a href="./support.html">Support</a>';
+const navigation = '<a href="./#your-goals">Your goals</a><a href="./#how-it-works">How it works</a><a href="./privacy.html">Privacy</a><a href="./support.html">Support</a>';
 function page(file, title, description, content, document = false) {
   const canonical = `${config.siteUrl}/${file === 'index.html' ? '' : file}`;
   writeFileSync(join(out, file), `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="theme-color" content="#faf9f5"><title>${esc(title)}</title><meta name="description" content="${esc(description)}"><meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(description)}"><meta property="og:type" content="website"><meta property="og:site_name" content="Mirra"><meta property="og:url" content="${esc(canonical)}"><link rel="canonical" href="${esc(canonical)}"><link rel="icon" href="./mark.svg" type="image/svg+xml"><link rel="stylesheet" href="./styles.css?v=${version}"><script src="./site.js?v=${version}" defer></script>${preview ? '<meta name="robots" content="noindex">' : ''}</head>
 <body><a class="skip" href="#main">Skip to content</a>
-<header class="site-header"><div class="header-inner container"><a class="brand" href="./" aria-label="Mirra home"><img src="./mark.svg" alt="" width="38" height="38">mirra</a><nav class="desktop-nav" aria-label="Main">${navigation}</nav><a class="header-cta" href="./#download">Get Mirra <span aria-hidden="true">↗</span></a><details class="mobile-menu"><summary aria-label="Navigation menu"></summary><nav aria-label="Mobile">${navigation}<a href="./#download">Get Mirra ↗</a></nav></details></div></header>
+<header class="site-header"><div class="header-inner container"><a class="brand" href="./" aria-label="Mirra home"><img src="./mark.svg" alt="" width="38" height="38">mirra</a><nav class="desktop-nav" aria-label="Main">${navigation}</nav>${headerAction}<details class="mobile-menu"><summary aria-label="Navigation menu"></summary><nav aria-label="Mobile">${navigation}${headerAction}</nav></details></div></header>
 <main id="main"${document ? ' class="document"' : ''}>${content}</main>
-<footer class="site-footer container"><div class="footer-top"><div class="footer-brand"><a class="footer-wordmark" href="./" aria-label="Mirra home"><img src="./mark.svg" alt="" width="76" height="76">mirra</a><p>Less app. More room for connection.</p></div><nav class="footer-links" aria-label="Footer"><div><strong>Explore</strong><a href="./#product-preview">The app</a><a href="./#how-it-works">How it works</a><a href="./#download">Get Mirra</a></div><div><strong>Here to help</strong><a href="./support.html">Support</a><a href="./delete-account.html">Delete account</a></div><div><strong>The details</strong><a href="./privacy.html">Privacy</a><a href="./terms.html">Terms</a></div></nav></div><div class="footer-bottom"><span>© ${new Date().getUTCFullYear()} Mirra</span><p>For adults 18+. AI guidance and conversation statistics are estimates. Mirra is a reflection tool, not medical or mental-health care.</p></div></footer>
+<footer class="site-footer container"><div class="footer-top"><div class="footer-brand"><a class="footer-wordmark" href="./" aria-label="Mirra home"><img src="./mark.svg" alt="" width="76" height="76">mirra</a><p>Less app. More room for connection.</p></div><nav class="footer-links" aria-label="Footer"><div><strong>Explore</strong><a href="./#product-preview">Sample conversation</a><a href="./#how-it-works">How it works</a><a href="./#download">Availability</a></div><div><strong>Here to help</strong><a href="./support.html">Support</a><a href="./delete-account.html">Delete account</a></div><div><strong>The details</strong><a href="./privacy.html">Privacy</a><a href="./terms.html">Terms</a></div></nav></div><div class="footer-bottom"><span>© ${new Date().getUTCFullYear()} Mirra</span><p>For adults 18+. AI guidance and conversation statistics are estimates. Mirra is a reflection tool, not medical or mental-health care.</p></div></footer>
 </body></html>`.replaceAll('./mark.svg', `./mark.svg?v=${version}`));
 }
-page('index.html', 'Mirra — more real life, less app', 'Your quiet conversation coach. Start a recording, be in the conversation, then get a short debrief tailored to your goal: friendship, confidence, listening, and more.', readFileSync(join(root, 'home.html'), 'utf8').replace('{{downloads}}', downloads));
+page('index.html', 'Mirra — more real life, less app', 'Your quiet conversation coach. Start a recording, be in the conversation, then get a short debrief tailored to your goal: friendship, confidence, listening, and more.', readFileSync(join(root, 'home.html'), 'utf8')
+  .replace('{{heroAction}}', heroAction)
+  .replace('{{availabilityEyebrow}}', storeUrl ? 'Get Mirra' : 'Preparing for launch')
+  .replace('{{availabilityTitle}}', storeUrl ? 'Make room<br><em>for connection.</em>' : 'Coming first<br><em>to iPhone.</em>')
+  .replace('{{availabilityDescription}}', storeUrl ? 'Download Mirra to start your first conversation.' : 'Android will follow. Store downloads are not available yet.')
+  .replace('{{availabilityAnswer}}', storeUrl
+    ? `Use the store links on this page. Mirra is available for ${[config.appStoreUrl && 'iPhone', config.playStoreUrl && 'Android'].filter(Boolean).join(' and ')}.`
+    : 'Mirra is preparing for its first iPhone release, with Android to follow. Store downloads are not available yet.')
+  .replace('{{downloads}}', downloads));
 
 page('privacy.html', 'Privacy Policy — Mirra', 'What Mirra collects, how AI processing works, and how to access or delete your data.', `<p class="eyebrow">Your data, explained</p><h1>Privacy Policy</h1><p class="muted">Version September 14, 2026</p>${notice}
 <h2>Who is responsible</h2><p>${config.operatorName ? esc(config.operatorName) : 'The service operator is not yet confirmed for public launch.'} Contact: ${support}</p>

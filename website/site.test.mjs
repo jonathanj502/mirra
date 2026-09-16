@@ -4,8 +4,38 @@ import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
+import { createHash } from 'node:crypto';
 
 const root = dirname(fileURLToPath(import.meta.url));
+test('promotional actions lead to stores only when available, with consistent availability copy', () => {
+  const source = readFileSync(join(root, 'build.mjs'), 'utf8').replace(/^import .*;\r?$/gm, '').replace('import.meta.url', 'buildUrl');
+  const originalConfig = JSON.parse(readFileSync(join(root, 'release.json')));
+  for (const [appStoreUrl, playStoreUrl] of [
+    ['', ''], ['https://apps.apple.com/app/id123', ''], ['', 'https://play.google.com/store/apps/details?id=com.mirra.app'],
+  ]) {
+    const pages = new Map();
+    runInNewContext(source, {
+      readFileSync: (path, encoding) => path === join(root, 'release.json')
+        ? JSON.stringify({ ...originalConfig, appStoreUrl, playStoreUrl }) : readFileSync(path, encoding),
+      writeFileSync: (path, content) => pages.set(path, content), mkdirSync() {}, copyFileSync() {},
+      join, dirname, fileURLToPath, createHash, URL, buildUrl: new URL('./build.mjs', import.meta.url).href,
+      console: { log() {} },
+    });
+    const home = pages.get(join(root, 'dist/index.html'));
+    const main = home.match(/<main[^>]*>([\s\S]*?)<\/main>/)[1];
+    assert.doesNotMatch(main, /href="(?:\.\/)?#/); // Keep orientation links in navigation, not promotional copy.
+    assert.doesNotMatch(home, /\{\{|aria-disabled="true"|See the quick debrief|See how little it takes/);
+    if (appStoreUrl || playStoreUrl) {
+      assert.ok(home.includes(`href="${appStoreUrl || playStoreUrl}"`));
+      assert.doesNotMatch(main, /downloads are not available yet|Coming first to iPhone/);
+    } else {
+      assert.doesNotMatch(home, /class="(?:header-cta|button secondary)"|>Get Mirra/);
+      assert.match(main, /Coming first to iPhone/);
+      assert.match(main, /Store downloads are not available yet/);
+    }
+  }
+});
+
 test('all website pages have working local links, accessible landmarks, and no fabricated store downloads', () => {
   const config = JSON.parse(readFileSync(join(root, 'release.json')));
   const css = readFileSync(join(root, 'dist/styles.css'), 'utf8');
