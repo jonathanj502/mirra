@@ -7,10 +7,12 @@ debrief coaching (`gpt-4.1`) and Reflect chat (`gpt-4.1-mini`). Optional model
 overrides are `OPENAI_DEBRIEF_MODEL` and `OPENAI_REFLECT_MODEL`. Supabase still
 requires its own server-side credential for database access.
 
-1. Decode the recording and prepare mono 16 kHz audio for acoustic analysis.
-   M4A/AAC decoding uses librosa's fallback and needs a supported decoder such as
-   FFmpeg installed on the backend host.
-2. Use Silero VAD only to skip recordings with no detected speech. Send the entire
+1. Decode in blocks, downmixing and resampling directly to mono 16 kHz audio for
+   acoustic analysis. M4A/AAC uses audioread and needs a supported decoder such as
+   FFmpeg installed on the backend host. Full stereo PCM is never retained.
+2. Use Silero VAD's bundled ONNX model only to skip recordings with no detected
+   speech, preserving its default thresholds and minimum speech duration.
+   Its recurrent state is separate for every recording. Send the entire
    timeline to OpenAI as PCM WAV, with `response_format="diarized_json"` and
    `chunking_strategy="auto"`. There is no speech concatenation or local splitting.
 3. Use the returned speaker labels and segment timestamps. Merge overlapping
@@ -23,7 +25,8 @@ requires its own server-side credential for database access.
 5. Compute word, filler, question, speaking-rate, and acoustic statistics for that
    selected speaker. Other-speaker durations use the other labels. Interruption
    counts are only a heuristic for overlap initiated by the selected speaker;
-   rapid responses after another speaker finishes are not counted.
+   rapid responses after another speaker finishes are not counted. Pitch uses
+   the original centered YIN frames in batches of 128 to bound FFT memory.
 6. Send the complete speaker-labeled transcript and selected-speaker statistics
    to OpenAI using `responses.parse` and the `CoachingOutput` Pydantic schema.
    Coaching instructions explicitly describe identity and timing uncertainty.
@@ -42,10 +45,25 @@ Speaker segment durations include pauses within a returned turn; word timestamps
 are unavailable from this model. Speaker splitting, overlap, and acoustic measures
 remain estimates. The model does not separate individual voices out of mixed audio.
 
-If decoded PCM exceeds the API's 25 MB limit, the supported original M4A, MP3,
-WAV, or WebM is sent instead when it fits. If neither representation fits, the
-endpoint returns HTTP 413 and refunds the reserved free session. The recording is
-never silently truncated, and separately generated speaker IDs are never joined.
+Captured and imported conversations have a one-hour maximum and a 100 MiB
+upload cap. The server stops decoding overlong input before retaining more than
+the limit (with one second allowed for encoder padding), returns HTTP 413, and
+refunds reserved usage. Client-provided duration is not trusted for enforcement.
+
+If decoded PCM exceeds the transcription API's separate 25 MB limit, the supported
+original M4A, MP3, WAV, or WebM is sent instead when it fits. Otherwise FFmpeg
+encodes the complete mono timeline to 48 kbps MP3, approximately 21.6 MB/hour.
+The generated file is size-checked before sending. FFmpeg with `libmp3lame` is
+required; the deployment warm-up checks that encoder. The recording is never
+silently truncated, and separately generated speaker IDs are never joined.
+
+Only one audio request runs per server process. A competing request receives 503
+with `Retry-After: 60` before reading its audio into memory or reserving usage;
+the device queue keeps its clip and retries. Run a single Uvicorn worker on a
+small instance. Decoding separately bounds duration to one hour. The 512 MB
+hosting gate remains open pending deployment
+and actual production measurement; local Linux checks are in
+`docs/testflight-acceptance.md` at the repository root.
 
 Run validation from `backend`:
 

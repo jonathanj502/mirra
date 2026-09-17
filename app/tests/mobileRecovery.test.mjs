@@ -12,6 +12,7 @@ function load(file, dependencies, window) {
   } });
   const module = { exports: {} };
   const require = (name) => {
+    if (name === '@/config/recording') return load('config/recording.ts', {});
     assert.ok(name in dependencies, `Missing test dependency: ${name}`);
     return dependencies[name];
   };
@@ -206,7 +207,7 @@ test('recording saves before upload, allows another offline clip, and retains th
       setAudioModeAsync: async () => {}, RecordingPresets: { HIGH_QUALITY: {} },
       useAudioRecorderState: () => ({ durationMillis: 7500 }),
       useAudioRecorder: () => ({
-        async prepareToRecordAsync() {}, record() { starts++; },
+        async prepareToRecordAsync() {}, record(options) { assert.equal(options.forDuration, 3600); starts++; },
         async stop() { stops++; }, uri: 'blob:test-recording',
         getStatus: () => ({ durationMillis: 7500 }),
       }),
@@ -372,6 +373,32 @@ test('audio import handles metadata becoming ready before its listener is attach
   assert.equal(unsubscribed, 1);
 });
 
+test('imports accept an hour at recording quality and reject overlong or oversized files before upload', async () => {
+  const state = hooks();
+  let seconds = 3600;
+  let size = 58_000_000;
+  let uploaded = 0;
+  const { useImportAudio } = load('hooks/useImportAudio.ts', {
+    react: state.react, '@/auth/AuthContext': auth, '@/api/http': http,
+    '@/privacy/aiConsent': consentGranted,
+    '@/utils/timeFormat': { titleFromFilename: () => 'Conversation' },
+    '@/api/client': { async uploadSession() { uploaded++; return { debrief: { id: 'hour' } }; } },
+    'expo-audio': { createAudioPlayer: () => ({ isLoaded: true, duration: seconds, remove() {} }) },
+    'expo-document-picker': { async getDocumentAsync() {
+      return { canceled: false, assets: [{ uri: 'file:///hour.m4a', name: 'hour.m4a', size }] };
+    } },
+  });
+  assert.deepEqual(await state.render(useImportAudio).importAudio(), { id: 'hour' });
+  seconds = 3602;
+  assert.equal(await state.render(useImportAudio).importAudio(), null);
+  assert.match(state.render(useImportAudio).error, /one hour/);
+  seconds = 3600;
+  size = 100 * 1024 * 1024 + 1;
+  assert.equal(await state.render(useImportAudio).importAudio(), null);
+  assert.match(state.render(useImportAudio).error, /100 MB/);
+  assert.equal(uploaded, 1);
+});
+
 test('native uploads preserve the supplied filename, MIME and bytes independently of the cache filename', async (t) => {
   let inferredType;
   const { uploadSession } = load('api/client.ts', {
@@ -418,7 +445,10 @@ test('native interruptions do not force resume; notification stop retains one cl
   const recorder = {
     uri: null,
     async prepareToRecordAsync() { this.uri = `file:///clip-${starts + 1}.m4a`; },
-    record() { starts++; status = { durationMillis: 0, isRecording: true, canRecord: true }; },
+    record(options) {
+      assert.equal(options.forDuration, 3600);
+      starts++; status = { durationMillis: 0, isRecording: true, canRecord: true };
+    },
     async stop() {
       stops++;
       status = { durationMillis: 0, isRecording: false, canRecord: false };
@@ -488,6 +518,18 @@ test('native interruptions do not force resume; notification stop retains one cl
   assert.equal(render().isRecording, false);
   assert.equal(render().hasUnsavedRecording, false);
   assert.match(render().error, /microphone stopped unexpectedly/);
+
+  await render().startRecording();
+  status = { durationMillis: 3600000, isRecording: true, canRecord: true };
+  render();
+  const hourFinished = { isFinished: true, hasError: false, url: recorder.uri };
+  listener(hourFinished);
+  listener(hourFinished);
+  await flush();
+  assert.equal(render().isRecording, false);
+  assert.equal(saved.length, 3);
+  assert.equal(saved[2].seconds, 3600);
+  assert.equal(stops, 1, 'A native auto-stop does not call Stop again');
 });
 
 test('AI consent requires explicit approval, survives restart per account, and can be withdrawn', async () => {

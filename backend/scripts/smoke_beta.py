@@ -22,7 +22,7 @@ def main():
     args = parser.parse_args()
     audio = args.audio.read_bytes()
     assert args.audio.suffix.lower() == ".m4a", "Use synthetic M4A audio to exercise the iOS codec"
-    assert 0 < len(audio) <= 25 * 1024 * 1024
+    assert 0 < len(audio) <= 100 * 1024 * 1024
     username, password = f"beta_{uuid4().hex[:16]}", secrets.token_urlsafe(24)
     user_id = None
     with httpx.Client(base_url=args.url.rstrip("/"), timeout=600) as client:

@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 import soundfile as sf
+import soxr
 
 from app.pipeline import coordinator, transcription
 from app.pipeline.prosody import compute_stats
@@ -59,9 +60,27 @@ def test_compressed_source_is_used_when_decoded_wav_exceeds_limit(monkeypatch, t
 @pytest.mark.parametrize("source,content_type", [(None, None), (b"x" * 101, "audio/mp4"), (b"small", "audio/aac")])
 def test_oversized_audio_is_not_split_or_silently_truncated(monkeypatch, transcription_client, source, content_type):
     monkeypatch.setattr(transcription, "MAX_TRANSCRIPTION_BYTES", 100)
+    monkeypatch.setattr(transcription.subprocess, "run", lambda *_args, **kwargs: kwargs["stdout"].write(b"x" * 101))
     with pytest.raises(TranscriptionInputTooLarge):
         transcription.transcribe(np.zeros(16000), 16000, source_audio=source, content_type=content_type)
     transcription_client.assert_not_called()
+
+
+def test_large_audio_is_compressed_as_one_complete_timeline(monkeypatch, transcription_client):
+    monkeypatch.setattr(transcription, "MAX_TRANSCRIPTION_BYTES", 100)
+    audio = np.linspace(-0.5, 0.5, 16000, dtype=np.float32)
+
+    def encode(command, **kwargs):
+        assert command[0] == "ffmpeg" and "48k" in command
+        np.testing.assert_array_equal(np.frombuffer(kwargs["input"], dtype="<f4"), audio)
+        kwargs["stdout"].write(b"compressed full conversation")
+
+    monkeypatch.setattr(transcription.subprocess, "run", encode)
+    transcription.transcribe(audio, 16000, source_audio=b"x" * 101, content_type="audio/mp4")
+    request = transcription_client.call_args.kwargs
+    assert request["file"].read() == b"compressed full conversation"
+    assert request["file"].name == "conversation.mp3"
+    transcription_client.assert_called_once()
 
 
 @pytest.mark.parametrize("segment", [
@@ -120,7 +139,7 @@ def test_coordinator_keeps_quiet_user_turns_and_supplies_full_context(monkeypatc
     audio = np.concatenate([np.full(sr, level, dtype=np.float32) for level in (0.8, 0.4, 0.05, 0)])
     buf = io.BytesIO()
     sf.write(buf, audio, sr, format="WAV")
-    monkeypatch.setattr(coordinator, "detect_segments", lambda *_: [Segment(0, 3, 0.5)])
+    monkeypatch.setattr(coordinator, "has_speech", lambda *_: [Segment(0, 3, 0.5)])
     transcribe = MagicMock(return_value=[TranscribedTurn(0, 1, "A", "Um, hello."),
         TranscribedTurn(1, 2, "B", "Why now? Uh, okay."), TranscribedTurn(2, 3, "A", "What changed?")])
     monkeypatch.setattr(coordinator, "transcribe", transcribe)
@@ -142,7 +161,7 @@ def test_coordinator_keeps_quiet_user_turns_and_supplies_full_context(monkeypatc
 def test_no_speech_skips_coaching_and_returns_empty_transcript(monkeypatch, local_speech):
     buf = io.BytesIO()
     sf.write(buf, np.zeros(16000), 16000, format="WAV")
-    monkeypatch.setattr(coordinator, "detect_segments", lambda *_: [Segment(0, 1, 0)] if local_speech else [])
+    monkeypatch.setattr(coordinator, "has_speech", lambda *_: [Segment(0, 1, 0)] if local_speech else [])
     transcribe, analyze = MagicMock(return_value=[]), MagicMock()
     monkeypatch.setattr(coordinator, "transcribe", transcribe)
     monkeypatch.setattr(coordinator, "analyze", analyze)
@@ -155,17 +174,49 @@ def test_no_speech_skips_coaching_and_returns_empty_transcript(monkeypatch, loca
 
 
 def test_decode_fallback_uses_a_closed_file_and_cleans_it_up(monkeypatch):
-    monkeypatch.setattr(coordinator.sf, "read", MagicMock(side_effect=RuntimeError("Unsupported codec")))
+    monkeypatch.setattr(coordinator.sf, "SoundFile", MagicMock(side_effect=sf.LibsndfileError(1)))
     paths = []
 
-    def decode(path, **_kwargs):
+    def decode(path):
         paths.append(Path(path))
         assert Path(path).read_bytes() == b"encoded m4a"
-        return np.array([[0.2, 0.4, 0.6], [0.4, 0.6, 0.8]], dtype=np.float32), 44100
+        source = MagicMock()
+        source.__enter__.return_value = source
+        source.samplerate, source.channels = 16000, 2
+        source.__iter__.return_value = [np.array([8192, 16384], dtype="<i2").tobytes(),
+                                        np.array([16384, 24576], dtype="<i2").tobytes()]
+        return source
 
-    monkeypatch.setattr(coordinator.librosa, "load", decode)
+    monkeypatch.setattr(coordinator.audioread, "audio_open", decode)
     audio, sr = coordinator._decode_audio(b"encoded m4a", "audio/mp4")
-    np.testing.assert_allclose(audio, [0.3, 0.5, 0.7])
-    assert sr == 44100
+    np.testing.assert_allclose(audio, [0.375, 0.625])
+    assert sr == 16000
     assert paths[0].suffix == ".m4a"
     assert not paths[0].exists()
+
+
+@pytest.mark.parametrize("sr", [16000, 22050, 44100, 48000])
+def test_streaming_decode_preserves_downmix_and_resampling_across_blocks(sr):
+    signal = np.random.default_rng(0).uniform(-0.5, 0.5, (sr * 3 + 17, 2)).astype(np.float32)
+    expected = soxr.resample(signal.mean(axis=1), sr, 16000, quality="HQ")
+    encoded = io.BytesIO()
+    sf.write(encoded, signal, sr, format="WAV", subtype="FLOAT")
+    actual, actual_sr = coordinator._decode_audio(encoded.getvalue(), "audio/wav")
+    assert actual_sr == 16000 and actual.dtype == np.float32
+    np.testing.assert_allclose(actual, expected, atol=1e-6)
+
+
+def test_decode_stops_at_duration_limit_without_retaining_the_rest(monkeypatch):
+    monkeypatch.setattr(coordinator, "MAX_RECORDING_SECONDS", 1)
+    consumed = []
+
+    def blocks():
+        for index in range(100):
+            consumed.append(index)
+            yield np.zeros((4000, 2), dtype=np.float32)
+
+    with pytest.raises(coordinator.RecordingTooLong):
+        coordinator._read_mono(blocks(), 16000)
+    assert len(consumed) < 12
+    accepted, sr = coordinator._read_mono([np.zeros((16000, 2), dtype=np.float32)], 16000)
+    assert len(accepted) == sr

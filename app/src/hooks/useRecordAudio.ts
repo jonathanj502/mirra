@@ -5,6 +5,7 @@ import { friendlyErrorMessage } from '@/api/http';
 import { useAuth } from '@/auth/AuthContext';
 import { PendingRecording, recordingId } from '@/storage/pendingRecordings';
 import { requestAIConsent } from '@/privacy/aiConsent';
+import { MAX_RECORDING_SECONDS } from '@/config/recording';
 import { usePendingRecordings } from './usePendingRecordings';
 
 function recordingName() {
@@ -36,7 +37,7 @@ function useRecorderState() {
     setRecording(false);
     if (status.url) {
       unsaved.current = { ...active, audio: { ...active.audio, uri: status.url } };
-      // A notification Stop saves through the same durable queue as the app Stop button.
+      // Native duration limits and notification Stop use the same durable save path.
       void stopRecording();
     } else {
       setError(status.error || 'The microphone stopped unexpectedly. Please try recording again.');
@@ -80,7 +81,7 @@ function useRecorderState() {
         id: recordingId(), userId: user.id, startedAt: new Date().toISOString(), seconds: 0,
         audio: { uri: Platform.OS === 'web' ? '' : recorder.uri ?? '', name: recordingName(), type: recordingMimeType() },
       };
-      recorder.record();
+      recorder.record({ forDuration: MAX_RECORDING_SECONDS });
       setRecording(!!activeRecording.current);
     } catch (err) {
       activeRecording.current = null;

@@ -4,6 +4,14 @@ This file contains shared project guidance for Claude Code and Codex.
 
 Verify implementation details against the code before relying on descriptions of current status.
 
+## Current beta checkpoint
+
+The beta investigation is paused at the user's request. Read
+`docs/beta-pause.md` before resuming release work. The local one-hour candidate
+is **not deployable as one-hour support**: the live transcription model rejects
+inputs longer than 1400 seconds. Memory/component tests do not close this gap.
+Production and billing are unchanged; all TestFlight acceptance gates remain open.
+
 ## Project Overview
 
 Mirra is a conversational coaching iOS/Android app. It records real conversations, analyzes the user's speech for social signals (talk/listen ratio, question frequency, interruptions, energy, vocabulary), and surfaces a debrief card with coaching bullets and an AI-powered Reflect chat.
@@ -56,11 +64,25 @@ recording. After `uv sync`, build with
 `NUMBA_CPU_NAME=generic uv run python -m scripts.warm_audio`; use the same
 `NUMBA_CPU_NAME=generic` prefix on the Uvicorn start command so the compiled
 cache is portable between Render's build and runtime CPUs. The warm-up uses
-synthetic samples and checks the existing resampling/pitch functions.
+synthetic samples and checks the speech gate and batched pitch calculation.
+The current memory candidate uses streaming mono decoding and Silero's bundled
+ONNX model without importing PyTorch. Linux installations use CPU-only Torch
+wheels for Silero's transitive dependencies. One audio request runs at a time
+per server process; other requests receive retryable 503 before reserving usage.
+Local Linux testing still exceeded 512 MiB; see the acceptance ledger before
+assuming the free Render instance can run this pipeline reliably.
+
+The MVP maximum is one hour for both captured and imported conversations.
+Native recording uses Expo's `record({ forDuration: 3600 })`; its finish event
+saves through the existing durable device queue. Imports are capped at 100 MiB,
+enough for one hour at the current 128 kbps recording preset. Backend decoding
+enforces the duration independently, allowing one second of encoder padding.
+Overlong recordings return 413 and refund reserved usage. One-hour production
+and physical-device acceptance remain open in the ledger.
 
 ### Audio Pipeline (the core product)
 
-All audio capture happens on-device via `expo-audio` (`useRecordAudio.ts`), encoded as `.m4a` (`.webm` on web) — not WAV; no streaming or on-device VAD. On stop, the app saves the file to its per-account device queue before uploading to `POST /sessions` when connected and AI consent is active. The backend accepts several container formats (`SUPPORTED_AUDIO_TYPES` in `main.py`: aac, mp4/m4a, mpeg, ogg, wav, webm) and decodes with `soundfile`, falling back to `librosa.load` for formats it can't parse (`coordinator.py`). The backend runs a synchronous pipeline in order:
+All audio capture happens on-device via `expo-audio` (`useRecordAudio.ts`), encoded as `.m4a` (`.webm` on web) — not WAV; no streaming or on-device VAD. On stop, the app saves the file to its per-account device queue before uploading to `POST /sessions` when connected and AI consent is active. The backend accepts several container formats (`SUPPORTED_AUDIO_TYPES` in `main.py`: aac, mp4/m4a, mpeg, ogg, wav, webm) and decodes in blocks with `soundfile`, falling back to `audioread` for formats it can't parse (`coordinator.py`). Each block is downmixed and resampled to mono 16 kHz before retaining it. The backend runs a synchronous pipeline in order:
 
 1. `pipeline/vad.py` — Silero VAD checks whether any speech is present; it does not filter the audio sent to transcription.
 2. `pipeline/transcription.py` — Sends the complete recording to `gpt-4o-transcribe-diarize` with `diarized_json` output and automatic server chunking. Speaker labels and timestamps refer to the original timeline.
@@ -125,7 +147,7 @@ Note: the original plan called for `react-native-receive-sharing-intent` handlin
 
 - **Speaker classification accuracy** — diarization groups voices but does not identify the recording owner. `speaker.py` still assumes the user is closer to the mic and chooses the loudest speaker by duration-weighted RMS. Document this constraint in onboarding. All turns of the chosen label are retained; speaker splitting and mixed-voice overlap can still affect metrics. `stats.metadata.diarization.user_speaker_confirmed` is false; there is no voice enrollment or speaker-correction UI.
 
-- **Transcription 25MB limit** — `main.py` limits uploaded bytes before processing. `transcription.py` separately checks encoded PCM against the API's 25,000,000-byte limit and uses the original supported compressed recording when PCM is too large. If neither fits, return 413 and refund reserved usage. Do not split into independent requests without a strategy to reconcile speaker IDs; labels are local to each request.
+- **Transcription 25MB limit** — `main.py` caps incoming uploads at 100 MiB; this is separate from OpenAI's 25,000,000-byte limit. `transcription.py` uses PCM WAV when it fits, then the supported original compressed file when it fits, otherwise FFmpeg encodes the complete mono timeline as 48 kbps MP3 (about 21.6 MB/hour). FFmpeg with `libmp3lame` is required and checked by `scripts.warm_audio`. The generated file is size-checked before sending. Do not split into independent requests without reconciling speaker IDs; labels are local to each request.
 
 - **JWT verification is ES256/JWKS, not a shared secret** — this Supabase project signs tokens with asymmetric keys, so an HS256 `SUPABASE_JWT_SECRET` can never verify them (this once silently broke every authenticated request). `app/auth.py` fetches the public JWKS once and caches it for the process lifetime; restart the backend if Supabase signing keys are ever rotated.
 
@@ -148,7 +170,7 @@ Monthly cap: 5 debriefs per user, configured by `FREE_TIER_CAP`. Enforced server
 
 | Endpoint | Description |
 |---|---|
-| `POST /sessions` | multipart `audio` (WAV/M4A ≤25MB) + JSON metadata → runs pipeline → returns `{ debrief, usedThisMonth, remaining }` |
+| `POST /sessions` | multipart `audio` (supported format, ≤100 MiB and ≤1 hour) + form metadata → runs pipeline → returns `{ debrief, usedThisMonth, remaining }` |
 | `GET /debriefs`, `GET /debriefs/{id}` | paginated debrief history / single debrief for the authenticated user |
 | `DELETE /debriefs/{id}` | deletes the authenticated owner's saved conversation, transcript, and metrics; returns 204 even if already absent; does not refund monthly usage |
 | `GET /usage` | `{ usedThisMonth, remaining, resetsAt }` |

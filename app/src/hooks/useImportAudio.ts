@@ -7,8 +7,8 @@ import { useAuth } from '@/auth/AuthContext';
 import { DebriefCard } from '@/models/debrief';
 import { titleFromFilename } from '@/utils/timeFormat';
 import { requestAIConsent } from '@/privacy/aiConsent';
+import { MAX_AUDIO_BYTES, MAX_RECORDING_SECONDS } from '@/config/recording';
 
-const MAX_BYTES = 25 * 1024 * 1024;
 const AUDIO_TYPES = [
   'audio/*',
   'audio/mpeg',
@@ -80,12 +80,16 @@ export function useImportAudio() {
 
       const asset = result.assets[0];
       const size = asset.size ?? 0;
-      if (size > MAX_BYTES) {
-        setError('Please choose an audio file under 25 MB.');
+      if (size > MAX_AUDIO_BYTES) {
+        setError('Please choose an audio file under 100 MB.');
         return null;
       }
 
       const durationSeconds = await getAudioDuration(asset.uri);
+      if (durationSeconds > MAX_RECORDING_SECONDS + 1) {
+        setError('Please choose a conversation no longer than one hour.');
+        return null;
+      }
       if (!await requestAIConsent(user?.id)) return null;
       const response = await uploadSession(
         accessToken,

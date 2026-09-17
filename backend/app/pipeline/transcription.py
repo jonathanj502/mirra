@@ -2,6 +2,8 @@
 from dataclasses import dataclass
 import io
 import math
+import subprocess
+import tempfile
 
 import numpy as np
 from openai import OpenAI
@@ -65,10 +67,11 @@ def transcribe(
     if not len(audio):
         return []
     # Preserve pauses and all speakers so timestamps refer to the original recording.
-    buf = io.BytesIO()
-    sf.write(buf, audio, sample_rate, format="WAV", subtype="PCM_16")
-    buf.name = "conversation.wav"
-    if buf.tell() > MAX_TRANSCRIPTION_BYTES:
+    if len(audio) * 2 + 44 <= MAX_TRANSCRIPTION_BYTES:
+        buf = io.BytesIO()
+        sf.write(buf, audio, sample_rate, format="WAV", subtype="PCM_16")
+        buf.name = "conversation.wav"
+    else:
         suffix = SOURCE_SUFFIXES.get((content_type or "").split(";", 1)[0].strip().lower())
         if source_audio and suffix and len(source_audio) <= MAX_TRANSCRIPTION_BYTES:
             # A long M4A/WebM can fit when its decoded PCM does not. Keep one
@@ -76,7 +79,21 @@ def transcribe(
             buf = io.BytesIO(source_audio)
             buf.name = "conversation" + suffix
         else:
-            raise TranscriptionInputTooLarge("Recording exceeds the transcription upload limit")
+            # Keep the full timeline and speaker identities in a single request.
+            # Mono 48 kbps MP3 is about 21.6 MB for the one-hour MVP maximum.
+            with tempfile.TemporaryFile() as encoded:
+                subprocess.run([
+                    "ffmpeg", "-nostdin", "-v", "error", "-f", "f32le",
+                    "-ar", str(sample_rate), "-ac", "1", "-i", "pipe:0",
+                    "-map_metadata", "-1", "-c:a", "libmp3lame", "-b:a", "48k",
+                    "-f", "mp3", "pipe:1",
+                ], input=memoryview(audio.astype("<f4", copy=False)).cast("B"),
+                    stdout=encoded, stderr=subprocess.PIPE, check=True, timeout=120)
+                encoded.seek(0)
+                buf = io.BytesIO(encoded.read(MAX_TRANSCRIPTION_BYTES + 1))
+            buf.name = "conversation.mp3"
+    if buf.getbuffer().nbytes > MAX_TRANSCRIPTION_BYTES:
+        raise TranscriptionInputTooLarge("Recording exceeds the transcription upload limit")
     buf.seek(0)
     with OpenAI(api_key=settings.openai_api_key, timeout=180.0, max_retries=1) as client:
         response = client.audio.transcriptions.create(

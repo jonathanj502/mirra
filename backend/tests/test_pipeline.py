@@ -16,7 +16,7 @@ import app.main as main
 from app.pipeline.vad import Segment
 from app.pipeline.speaker import select_user_speaker
 from app.pipeline.transcription import TranscribedTurn, TranscriptionInputTooLarge
-from app.pipeline.prosody import compute_stats
+from app.pipeline.prosody import compute_stats, _pitch_for_segments
 from app.pipeline import coaching
 from openai import OpenAI
 
@@ -132,9 +132,21 @@ def test_compute_stats_adds_voice_analysis_from_audio():
     assert stats["filler_counts"][0] == {"phrase": "like", "count": 1}
 
 
+@pytest.mark.parametrize("length", [65535, 65536, 65537, 160000])
+def test_batched_pitch_preserves_full_turn_median_at_frame_boundaries(length):
+    import librosa
+
+    sr = 16000
+    time = np.arange(length) / sr
+    audio = np.sin(2 * np.pi * (120 * time + 8 * time**2)).astype(np.float32)
+    expected = float(np.median(librosa.yin(audio, fmin=50, fmax=500, sr=sr)))
+    actual = _pitch_for_segments(audio, sr, [Segment(0, length / sr, 1)])
+    assert actual == pytest.approx(expected, abs=1e-5)
+
+
 @patch("app.pipeline.coordinator.analyze")
 @patch("app.pipeline.coordinator.transcribe")
-@patch("app.pipeline.coordinator.detect_segments")
+@patch("app.pipeline.coordinator.has_speech")
 def test_coordinator_resamples_stereo_audio_for_voice_analysis(mock_detect, mock_transcribe, mock_analyze):
     from app.pipeline import coordinator
 
@@ -262,10 +274,11 @@ def test_post_sessions_rejects_unsupported_audio_type(mock_run):
 
 
 @patch("app.main.coordinator.run")
-def test_post_sessions_rejects_oversized_audio(mock_run):
+def test_post_sessions_rejects_oversized_audio(mock_run, monkeypatch):
     app.dependency_overrides[get_db] = lambda: _db_for_sessions(under_cap=True)
     app.dependency_overrides[verify_token] = lambda: "user-1"
-    oversized = b"0" * (25 * 1024 * 1024 + 1)
+    monkeypatch.setattr(main, "MAX_AUDIO_BYTES", 100)
+    oversized = b"0" * 101
     r = TestClient(app).post("/sessions", files={"audio": ("test.wav", oversized, "audio/wav")})
     assert r.status_code == 413
     mock_run.assert_not_called()
@@ -392,6 +405,15 @@ def test_transcription_upload_limit_returns_413_and_refunds_usage(session_io):
     refund.assert_called_once_with(_db, "user-1", "2026-08")
 
 
+def test_one_hour_limit_returns_413_and_refunds_usage(session_io):
+    client, db, _reserve, refund = session_io
+    main.coordinator.run.side_effect = main.coordinator.RecordingTooLong("Conversations must be no longer than one hour.")
+    response = client.post("/sessions", files={"audio": ("test.m4a", b"audio", "audio/mp4")})
+    assert response.status_code == 413
+    assert "one hour" in response.json()["detail"]
+    refund.assert_called_once_with(db, "user-1", "2026-08")
+
+
 def test_offline_recording_replay_is_account_scoped_and_does_not_use_quota_twice(session_io, monkeypatch):
     client, db, reserve, refund = session_io
     saved = {}
@@ -433,6 +455,28 @@ def test_concurrent_recovery_waits_for_the_original_upload(session_io, monkeypat
     main.coordinator.run.side_effect = processing
     assert client.post("/sessions", **request).status_code == 200
     reserve.assert_called_once()
+    assert not main._processing_sessions
+
+
+def test_another_recording_retries_without_reserving_usage(session_io, monkeypatch):
+    client, _db, reserve, _refund = session_io
+    monkeypatch.setattr(main, "_fetch_debrief_row", lambda *_args: None)
+    request = {"files": {"audio": ("test.wav", b"audio", "audio/wav")}, "data": {"recording_id": "waiting-recording"}}
+
+    def processing(*_args, **_kwargs):
+        response = client.post("/sessions", **request)
+        assert response.status_code == 503
+        assert response.headers["Retry-After"] == "60"
+        reserve.assert_called_once()
+        return dict(SAMPLE_DEBRIEF)
+
+    main.coordinator.run.side_effect = processing
+    assert client.post("/sessions", files=request["files"]).status_code == 200
+    main.coordinator.run.side_effect = None
+    main.coordinator.run.return_value = dict(SAMPLE_DEBRIEF)
+    assert client.post("/sessions", **request).status_code == 200
+    assert reserve.call_count == 2
+    assert not main._audio_pipeline_lock.locked()
     assert not main._processing_sessions
 
 

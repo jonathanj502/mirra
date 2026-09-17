@@ -27,7 +27,7 @@ from app.user_settings import fetch_user_settings, save_user_settings
 
 app = FastAPI(title="Mirra Backend")
 
-MAX_AUDIO_BYTES = 25 * 1024 * 1024
+MAX_AUDIO_BYTES = 100 * 1024 * 1024
 SUPPORTED_AUDIO_TYPES = {
     "audio/aac",
     "audio/mp4",
@@ -45,6 +45,8 @@ logger = logging.getLogger("uvicorn.error")
 
 _session_lock = Lock()
 _processing_sessions: set[str] = set()
+# ponytail: one audio job at a time bounds memory; use a job queue if scaling workers.
+_audio_pipeline_lock = Lock()
 
 
 # Starlette's default 500 handler returns a plain-text body, which breaks clients that assume
@@ -276,7 +278,12 @@ def create_session(
                 raise HTTPException(status_code=409, detail="This recording is already being processed.")
             _processing_sessions.add(debrief_id)
     try:
-        return _process_session(audio, started_at, client_duration_seconds, title, user_id, db, debrief_id)
+        if not _audio_pipeline_lock.acquire(blocking=False):
+            raise HTTPException(status_code=503, detail="Another recording is processing. Please retry shortly.", headers={"Retry-After": "60"})
+        try:
+            return _process_session(audio, started_at, client_duration_seconds, title, user_id, db, debrief_id)
+        finally:
+            _audio_pipeline_lock.release()
     finally:
         if debrief_id:
             with _session_lock:
@@ -299,7 +306,7 @@ def _process_session(audio, started_at, client_duration_seconds, title, user_id,
 
     audio_bytes = audio.file.read(MAX_AUDIO_BYTES + 1)
     if len(audio_bytes) > MAX_AUDIO_BYTES:
-        raise HTTPException(status_code=413, detail="Audio file is too large")
+        raise HTTPException(status_code=413, detail="Please choose an audio file under 100 MB.")
 
     logger.info("Session pipeline: reserving usage")
     reservation_month = check_and_increment(db, user_id)
@@ -309,6 +316,8 @@ def _process_session(audio, started_at, client_duration_seconds, title, user_id,
         user_settings = fetch_user_settings(db, user_id)
         try:
             result = coordinator.run(audio_bytes, content_type=content_type)
+        except coordinator.RecordingTooLong as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
         except TranscriptionInputTooLarge as exc:
             raise HTTPException(status_code=413, detail="Recording is too large to transcribe. Use a shorter recording or upload M4A, MP3, or WebM.") from exc
         except ValueError as exc:

@@ -1,10 +1,132 @@
 # Mirra TestFlight beta acceptance
 
-Updated: 2026-09-15. Starting commit: `f628b73`.
+Updated: 2026-09-17. Starting commit: `f628b73`.
 
-The user agreed to these gates on 2026-09-15. Preserve the existing design and
+**Paused at the user's request for a reset/planning discussion.** See
+[beta-pause.md](beta-pause.md) for the checkpoint, confirmed issues, and resume
+order. Experimental one-hour changes are not deployed or release-approved.
+
+The user agreed to the original gates on 2026-09-15 and a one-hour maximum for
+both captured and imported conversations on 2026-09-17. Preserve the existing design and
 features. A passing unit test or JavaScript export does not close a production
 or physical-device gate. Keep failures and untested steps open.
+
+Hosting direction on 2026-09-17: investigate memory and validate recording first.
+The user initially chose the current free Render plan and subsequently reopened
+discussion of an upgrade or alternative host. No paid upgrade is authorized.
+The confirmed 512 MB memory failure remains open.
+
+## Memory investigation — 2026-09-17
+
+Local candidate changes stream decoding directly to mono 16 kHz, batch pitch
+analysis into the original overlapping frames, and run the same Silero 6.2.1
+speech model through ONNX Runtime without importing PyTorch. Concurrent audio
+jobs receive a retryable 503 before reserving usage. These changes are not yet
+reviewed, pushed, or deployed.
+
+- Backend tests: **149 passed**. Streaming decode matches whole-file resampling;
+  pitch medians match the original YIN calculation at frame boundaries; speech
+  thresholds, model-state reset, and busy-request retry/usage behavior pass.
+- The old and ONNX speech models differed by at most `5.96e-7` across 195 frames
+  of synthetic speech. This is a fixture comparison, not a speech-quality study.
+- Linux amd64 / Python 3.14.3 container, hard 512 MiB cap, no swap: **FAIL**;
+  Docker confirmed `OOMKilled=true`, exit 137 during acoustic analysis.
+- Same candidate at a 1 GiB cap: **PASS** for decoding, speech detection, and
+  acoustic metrics on a 310.524-second stereo M4A, three sequential runs.
+  Process peak RSS: **687.2 MiB**; CPU-stage elapsed time: **38.7 seconds** total.
+  A single continuous speaker turn exercised the long-turn pitch path.
+  This used x86 emulation on the Mac; timing and memory require Render validation.
+  The memory run used dummy credentials and did not exercise live transcription,
+  coaching, database writes, Reflect, or physical iPhone recording.
+- Logs: `/private/tmp/mirra-linux-onnx.log` and
+  `/private/tmp/mirra-linux-onnx-1gb.log` (temporary local evidence).
+- Render compute screen verified: free = 512 MB; $7/month = 512 MB;
+  the first memory upgrade is $25/month for 2 GB and 1 CPU. No plan was changed.
+- Xcode downloaded successfully from the App Store for possible free own-device
+  signing. Initial setup, signing, and physical-device tests remain open.
+
+### Hours-long recording capacity — initial investigation
+
+The user raised hours-long conversations as a realistic use case. The current
+app uses Expo's HIGH_QUALITY preset: 44.1 kHz, stereo, target 128 kbps AAC.
+At that target bitrate, an hour is approximately 57.6 MB before container
+overhead; actual encoded size varies. The backend and file importer cap uploads
+at 25 MiB, and the transcription endpoint accepts at most 25 MB. These limits
+prevent ordinary hours-long captures from completing even with additional RAM.
+That investigation did not change upload limits or recording settings. The user
+subsequently selected one hour as the MVP maximum; the candidate changes below
+implement that scope.
+
+An isolated macOS / Python 3.13 test of the local candidate allocated synthetic
+16 kHz float32 mono audio, encoded its PCM WAV, then calculated actual speaker
+energy and acoustic metrics for one continuous speaker turn:
+
+| Duration | Decoded audio alone | Measured process peak RSS |
+| --- | --- | --- |
+| 1 hour | 230.4 MB | 885.3 MiB (about 0.93 GB) |
+| 2 hours | 460.8 MB | 1421.8 MiB (about 1.49 GB) |
+| 4 hours | 921.6 MB | 2736.6 MiB (about 2.87 GB) |
+
+This is a synthetic component benchmark, not a full recording-flow pass or
+production capacity guarantee. It excludes compressed-file decode/upload,
+real transcription, coaching, DB operations, and concurrent jobs. The VAD model
+was loaded, but the synthetic tone was not run through full speech detection.
+macOS memory measurements are not interchangeable with Render/Linux measurements.
+The earlier Linux Docker image was no longer available, so these new checks ran
+locally. Temporary reproduction script: `/private/tmp/mirra-profile-long.py`;
+logs: `/private/tmp/mirra-profile-{60,120,240}m.log`.
+
+Reliable hours-long support needs bounded audio processing, an upload/transcription
+strategy within provider limits, consistent speaker labels across any separately
+transcribed sections, and controlled processing concurrency. A larger instance
+alone does not close these gaps. No hosting purchase or pipeline redesign was made.
+
+### One-hour MVP candidate — 2026-09-17
+
+The user explicitly confirmed one hour for **both captured and imported audio**.
+Candidate changes (not yet deployed): native auto-stop/save at 3600 seconds;
+import and server upload cap 100 MiB; decoded duration checked independently of
+client metadata; one second of encoder-padding tolerance; overlong input gets
+413 with usage refunded. The complete conversation stays in one transcription
+request, using a 48 kbps mono MP3 when neither PCM nor the original fits 25 MB.
+
+Local full-hour synthetic M4A: **58.13 MB input → 21,597,452-byte MP3**; decoding,
+speech gate, actual compression, speaker energy, and pitch/metrics passed in
+36.0 seconds, peak RSS **860.4 MiB** on macOS. Transcription/coaching were mocked;
+this does not prove real model quality, production capacity, or native capture.
+Evidence: `/private/tmp/mirra-profile-hour-flow.log`.
+
+Linux amd64 / Python 3.14.3, 2 GiB hard limit, no swap, one CPU: the same
+58.13 MB full-hour input passed actual decoding/compression/metrics with AI
+mocked. Peak process RSS **1151.0 MiB** (about 1.12 GiB); elapsed **109.1 seconds**.
+Evidence: `/private/tmp/mirra-linux-hour-2gb.log`; Docker image
+`mirra-memory-hour:latest`, container `mirra-memory-hour-2gb`.
+This supports testing a 2 GB single-worker service, not claiming full production
+capacity or simultaneous processing of multiple jobs.
+
+**Live API test: FAIL.** Production sign-up/sign-in and authenticated reads passed
+through the candidate local backend. The one-hour transcription request was
+rejected with OpenAI HTTP 400: `audio duration 3599.568 seconds is longer than
+1400 seconds which is the maximum for this model`. This is a separate model
+duration ceiling of 23 minutes 20 seconds, despite the compressed file fitting
+25 MB. The temporary test account was verified and cleaned up. No debrief was
+saved. Logs: `/private/tmp/mirra-hour-live-smoke.log` and
+`/private/tmp/mirra-hour-server.log`.
+
+The single-request one-hour candidate therefore **does not work end to end**.
+The user has been asked whether to retain one hour with section-based analysis
+and verified speaker continuity, or choose a 20-minute beta. The approved scope
+remains one hour unless the user changes it. Do not deploy or mark TF-7 passed
+on the strength of mocked tests. Official documentation supports up to four
+2–10-second speaker references per request; its suitability for preserving
+speaker identity across sections is not yet validated.
+
+Backend tests: **152 passed**. App TypeScript check passed; recording auto-stop
+options, exactly-once native finish saving, valid one-hour import, oversized and
+overlong import rejection are covered by the app hook tests. Existing visual
+design is retained with a short limits note. Native screen-lock/auto-stop,
+production one-hour processing, model quality after compression, and competing
+uploads remain open. No paid hosting change is authorized or applied.
 
 ## Acceptance ledger
 
@@ -16,6 +138,7 @@ or physical-device gate. Keep failures and untested steps open.
 | TF-4 | Offline stopped clips survive force-quit/relaunch; reconnect uploads each exactly once without losing audio, duplicating debriefs, or charging usage twice. | OPEN | App queue/recovery tests pass; backend replay/usage tests pass. Physical device, token refresh, and account-switch checks remain. |
 | TF-5 | Denying microphone permission is recoverable; granting permission in Settings allows recording without a crash or stuck recorder. | OPEN | Device check pending. |
 | TF-6 | Recording continues for at least five minutes with the iPhone locked; after unlock/Stop, audio from before, during, and after lock reaches the debrief. | OPEN | Native audio background mode and Expo recording configuration exist. Real-device check pending. |
+| TF-7 | Both native capture and import support a full one-hour conversation (imports ≤100 MiB), producing a saved debrief/history/Reflect result. Native recording stops and saves at the limit; overlong input fails clearly without consuming usage. Competing uploads retry safely. | OPEN | Full-hour local codec/acoustic test passed with mocked AI. Duration/size rejection and auto-stop/save hook tests pass. Real API, production memory, concurrent retry, and physical-device validation remain required. |
 
 ## Automated baseline
 
@@ -133,9 +256,10 @@ over 512 MB. It recovered at 19:54 UTC. This run is a partial pass, not a stable
 production acceptance pass. Log:
 `/private/tmp/mirra-render-key-updated-short-smoke.log`.
 
-Hosting decision requested by iMessage: move to the existing 2 GB / 1 CPU plan
+Hosting option proposed by iMessage on 2026-09-15: move to the 2 GB / 1 CPU plan
 at $25/month and rerun the short and five-minute production checks. The $7/month
-plan still has 512 MB. No paid upgrade has been made or approved yet.
+plan still has 512 MB. On 2026-09-17 the user chose to keep the current plan;
+no upgrade is authorized or pending. No paid upgrade has been made.
 A local CPU-stage check of the 303-second stereo fixture peaked at 702.6 MiB
 RSS after decoding, resampling, VAD, and acoustic statistics (4.4 seconds).
 This is macOS evidence supporting the capacity concern, not a Linux/Render

@@ -198,6 +198,7 @@ export function HomeScreen() {
         <RecordButton size={172} recording={isRecording} loading={isSavingRecording || isStartingRecording}
           disabled={importing} onPress={handleRecord} />
         <Body style={styles.heroHint}>{heroHint}</Body>
+        <Body style={styles.consentHint}>Up to one hour per conversation · imports up to 100 MB.</Body>
         <Body style={styles.consentHint}>Get everyone’s consent to recording and AI analysis.</Body>
         {recordingError ? <Body accessibilityRole="alert" style={styles.audioError}>{recordingError}</Body> : null}
         {importError ? <Body accessibilityRole="alert" style={styles.audioError}>{importError}</Body> : null}
