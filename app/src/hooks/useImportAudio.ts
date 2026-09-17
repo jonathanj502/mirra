@@ -1,14 +1,15 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
 import { createAudioPlayer } from 'expo-audio';
 import { friendlyErrorMessage } from '@/api/http';
-import { uploadSession } from '@/api/client';
+import { useRecordAudio } from '@/hooks/useRecordAudio';
+import { recordingId } from '@/storage/pendingRecordings';
 import { useAuth } from '@/auth/AuthContext';
 import { DebriefCard } from '@/models/debrief';
 import { titleFromFilename } from '@/utils/timeFormat';
 import { requestAIConsent } from '@/privacy/aiConsent';
 
-const MAX_BYTES = 25 * 1024 * 1024;
+const MAX_BYTES = 2 * 1024 * 1024 * 1024;
 const AUDIO_TYPES = [
   'audio/*',
   'audio/mpeg',
@@ -27,10 +28,8 @@ async function getAudioDuration(uri: string): Promise<number> {
   try {
     if (!player.isLoaded) {
       await new Promise<void>((resolve, reject) => {
-        timeout = setTimeout(() => {
-          reject(new Error('Could not read the audio file. Try another format.'));
-        }, 10000);
-        subscription = player.addListener('playbackStatusUpdate', (status) => {
+        timeout = setTimeout(() => reject(new Error('Could not read audio duration.')), 10000);
+        subscription = player.addListener('playbackStatusUpdate', status => {
           if (status.isLoaded) resolve();
         });
         if (player.isLoaded) resolve();
@@ -45,31 +44,36 @@ async function getAudioDuration(uri: string): Promise<number> {
 }
 
 function mimeTypeFor(name: string, provided?: string | null): string {
-  if (provided && provided !== 'application/octet-stream') return provided;
+  if (provided && ['audio/mpeg','audio/mp4','audio/x-m4a','audio/wav','audio/x-wav','audio/ogg','audio/aac','audio/webm'].includes(provided)) return provided;
   const ext = name.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase();
   if (ext === 'mp3') return 'audio/mpeg';
   if (ext === 'wav') return 'audio/wav';
   if (ext === 'm4a' || ext === 'mp4') return 'audio/mp4';
   if (ext === 'ogg') return 'audio/ogg';
   if (ext === 'aac') return 'audio/aac';
-  return 'audio/mp4';
+  if (ext === 'webm') return 'audio/webm';
+  throw new Error('Choose an M4A, MP3, WAV, OGG, AAC or WebM audio file.');
 }
 
 export function useImportAudio() {
-  const { accessToken, user } = useAuth();
+  const { user } = useAuth();
+  const { enqueue } = useRecordAudio();
+  const selecting = useRef(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const importAudio = useCallback(async (): Promise<DebriefCard | null> => {
+    if (selecting.current) return null;
+    selecting.current = true;
     setImporting(true);
     setError(null);
     try {
-      if (!accessToken) {
+      if (!user) {
         setError('Please sign in before uploading a conversation.');
         return null;
       }
 
-      if (!await requestAIConsent(user?.id)) return null;
+      if (!await requestAIConsent(user.id)) return null;
       const result = await DocumentPicker.getDocumentAsync({
         type: AUDIO_TYPES,
         copyToCacheDirectory: true,
@@ -81,30 +85,30 @@ export function useImportAudio() {
       const asset = result.assets[0];
       const size = asset.size ?? 0;
       if (size > MAX_BYTES) {
-        setError('Please choose an audio file under 25 MB.');
+        setError('Please choose an audio file no larger than 2 GB.');
         return null;
       }
 
-      const durationSeconds = await getAudioDuration(asset.uri);
-      if (!await requestAIConsent(user?.id)) return null;
-      const response = await uploadSession(
-        accessToken,
-        { uri: asset.uri, name: asset.name, type: mimeTypeFor(asset.name, asset.mimeType) },
-        { title: titleFromFilename(asset.name), clientDurationSeconds: durationSeconds }
-      );
-
-      return response.debrief;
+      // The original file remains with its owner; save a durable copy before any network request.
+      const durationSeconds = await getAudioDuration(asset.uri).catch(() => 0);
+      const id = recordingId();
+      const type = mimeTypeFor(asset.name, asset.mimeType);
+      const extension = type.includes('webm') ? 'webm' : type.includes('wav') ? 'wav' : type.includes('mpeg') ? 'mp3' : type.includes('ogg') ? 'ogg' : type.includes('aac') ? 'aac' : 'm4a';
+      await enqueue({ id, userId: user.id, startedAt: new Date().toISOString(), seconds: durationSeconds,
+        title: titleFromFilename(asset.name).slice(0, 200), audio: { uri: asset.uri, name: `mirra-import-${id}.${extension}`, type } });
+      return null;
     } catch (err) {
       const message = friendlyErrorMessage(
         err,
-        'Could not analyze that audio file. Try another format or a shorter recording.'
+        'Could not import that audio file. Check available device storage and try again.'
       );
       setError(message);
       return null;
     } finally {
+      selecting.current = false;
       setImporting(false);
     }
-  }, [accessToken, user?.id]);
+  }, [user, enqueue]);
 
   return { importAudio, importing, error };
 }

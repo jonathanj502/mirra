@@ -12,7 +12,6 @@ from app.pipeline.vad import Segment
 
 FILLER_PHRASES = ("you know", "i mean", "kind of", "sort of", "like", "honestly", "actually", "right", "um", "uh")
 OPEN_QUESTION_STARTS = ("what", "how", "why", "when", "where", "who", "which", "tell", "describe", "walk")
-QUESTION_LEAD_INS = {"honestly", "actually", "like", "so", "okay", "well", "um", "uh"}
 FUNCTION_WORD_GROUPS = {
     "pronouns": {"i", "me", "my", "mine", "you", "your", "yours", "we", "us", "our", "they", "them", "their"},
     "articles": {"a", "an", "the"},
@@ -46,11 +45,11 @@ def _words(transcript: str) -> list[str]:
 
 
 def _question_counts(transcript: str) -> tuple[int, int, int]:
-    questions = [part.strip().lower() for part in re.findall(r"([^?]+)\?", transcript)]
+    questions = re.findall(r"([^.!?\n]+)\?", transcript.lower())
     open_count = 0
     for question in questions:
-        lead_words = _words(question)[:4]
-        if any(word in OPEN_QUESTION_STARTS for word in lead_words if word not in QUESTION_LEAD_INS):
+        lead_words = _words(re.sub(r"^(?:(?:i mean|you know|honestly|actually|like|so|okay|well|um|uh)[,\s]+)+", "", question.strip()))
+        if lead_words and lead_words[0] in OPEN_QUESTION_STARTS:
             open_count += 1
     total = len(questions)
     return total, open_count, max(0, total - open_count)
@@ -80,9 +79,9 @@ def _rms(values: np.ndarray) -> float:
 
 
 def _mean_energy(segments: list[Segment]) -> float:
-    if not segments:
-        return 0.0
-    return float(np.mean([max(0.0, segment.energy) for segment in segments]))
+    duration = sum(max(0.0, segment.end - segment.start) for segment in segments)
+    power = sum(max(0.0, segment.energy) ** 2 * max(0.0, segment.end - segment.start) for segment in segments)
+    return math.sqrt(power / duration) if duration else 0.0
 
 
 def _match_ratio(left: float, right: float) -> float:
@@ -93,8 +92,11 @@ def _match_ratio(left: float, right: float) -> float:
 
 def _pitch_for_segments(audio: np.ndarray, sample_rate: int, segments: list[Segment]) -> float:
     pitches: list[float] = []
-    for segment in segments:
-        chunk = _segment_slice(audio, sample_rate, segment)
+    # Bounded, evenly distributed excerpts keep pitch estimation practical for day-long audio.
+    for index in np.linspace(0, len(segments) - 1, min(64, len(segments)), dtype=int):
+        segment = segments[index]
+        chunk = _segment_slice(audio, sample_rate, Segment(segment.start, min(segment.end, segment.start + 5), segment.energy))
+        chunk = np.nan_to_num(chunk, nan=0.0, posinf=0.0, neginf=0.0)
         if len(chunk) < max(400, sample_rate // 12):
             continue
         try:
@@ -126,14 +128,19 @@ def _energy_series(audio: np.ndarray, sample_rate: int, segments: list[Segment],
     for index in range(buckets):
         bucket_start = total_seconds * index / buckets
         bucket_end = total_seconds * (index + 1) / buckets
-        chunks: list[np.ndarray] = []
+        power, samples = 0.0, 0
         for segment in segments:
             overlap_start = max(segment.start, bucket_start)
             overlap_end = min(segment.end, bucket_end)
             if overlap_end <= overlap_start:
                 continue
-            chunks.append(_segment_slice(audio, sample_rate, Segment(overlap_start, overlap_end, segment.energy)))
-        values.append(_rms(np.concatenate(chunks)) if chunks else 0.0)
+            start, end = int(overlap_start * sample_rate), min(len(audio), int(overlap_end * sample_rate))
+            for offset in range(start, end, sample_rate * 30):
+                chunk = np.nan_to_num(np.asarray(audio[offset:min(end, offset + sample_rate * 30)], dtype=np.float64),
+                                      copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+                power += float(np.sum(chunk ** 2))
+                samples += len(chunk)
+        values.append(math.sqrt(power / samples) if samples else 0.0)
     return _normalize_series(values)
 
 
@@ -200,6 +207,7 @@ def compute_stats(
     total_seconds: float,
     audio: np.ndarray | None = None,
     sample_rate: int | None = None,
+    other_transcript: str | None = None,
 ) -> dict[str, Any]:
     user_speech = sum(s.end - s.start for s in user_segments)
     other_speech = max(0.0, sum(s.end - s.start for s in all_segments) - user_speech)
@@ -209,12 +217,14 @@ def compute_stats(
     interruptions, average_turn_offset_ms, turn_offset_series = _turn_offsets(all_segments, user_segments)
 
     user_energy = _mean_energy(user_segments)
+    user_keys = {_segment_key(user) for user in user_segments}
     other_segments = [
         segment for segment in all_segments
-        if _segment_key(segment) not in {_segment_key(user) for user in user_segments}
+        if _segment_key(segment) not in user_keys
     ]
     other_energy = _mean_energy(other_segments)
     volume_match = _match_ratio(user_energy, other_energy)
+    user_pitch = other_pitch = 0.0
     pitch_match = 0.0
     energy_series_user = [0.0] * 16
     energy_series_other = [0.0] * 16
@@ -226,16 +236,14 @@ def compute_stats(
         energy_series_other = _energy_series(audio, sample_rate, other_segments, total_seconds)
 
     estimated_wpm = round(len(tokenized) / (user_speech / 60), 1) if user_speech > 0 else 0.0
-    speech_rate_score = _clamp(1.0 - abs(estimated_wpm - 145.0) / 110.0) if estimated_wpm else 0.0
-    total_speech = user_speech + other_speech
-    talk_share = user_speech / total_speech if total_speech > 0 else 0.0
-    balance_score = _clamp(1.0 - abs(talk_share - 0.5) / 0.5) if user_speech > 0 and other_speech > 0 else 0.0
+    other_wpm = round(len(_words(other_transcript)) / (other_speech / 60), 1) if other_transcript and other_speech > 0 else None
     energy_axes = [
         _round_float(volume_match),
         _round_float(pitch_match),
-        _round_float(speech_rate_score),
+        _round_float(_match_ratio(estimated_wpm, other_wpm or 0)),
     ]
-    energy_score = round(100 * _clamp(float(np.mean([*energy_axes, balance_score])) - min(0.25, interruptions * 0.025)))
+    # Retained for older clients. Similarity is not a measure of conversation quality.
+    energy_score = round(100 * float(np.mean(energy_axes)))
 
     function_profile = _function_profile(tokenized)
     language_score = _language_style_score(function_profile)
@@ -256,6 +264,11 @@ def compute_stats(
         "user_speech_duration_minutes": round(user_speech / 60, 3),
         "other_speech_duration_minutes": round(other_speech / 60, 3),
         "estimated_wpm": estimated_wpm,
+        "other_estimated_wpm": other_wpm,
+        "user_volume_dbfs": round(20 * math.log10(user_energy), 1) if user_energy > 0 else None,
+        "other_volume_dbfs": round(20 * math.log10(other_energy), 1) if other_energy > 0 else None,
+        "user_pitch_hz": round(user_pitch, 1) if user_pitch > 0 else None,
+        "other_pitch_hz": round(other_pitch, 1) if other_pitch > 0 else None,
         "energy_score": int(max(0, min(100, energy_score))),
         "energy_axes": energy_axes,
         "energy_series_user": energy_series_user,
@@ -265,6 +278,7 @@ def compute_stats(
         "lsm_dimensions_reference": BASELINE_FUNCTION_PROFILE,
         "total_word_count": total_word_count,
         "unique_word_count": unique_word_count,
+        "repeated_words": [{"phrase": word, "count": count} for word, count in Counter(tokenized).most_common(10) if count > 1],
         "vocabulary_richness": _round_float(unique_word_count / total_word_count) if total_word_count else 0.0,
         "filler_counts": _filler_counts(transcript),
     }

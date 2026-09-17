@@ -123,3 +123,17 @@ def test_jwks_network_failure_returns_503(monkeypatch):
     monkeypatch.setattr(httpx, "get", unavailable)
     r = client.get("/me", headers={"Authorization": f"Bearer {_token({'sub': 'user-123'})}"})
     assert r.status_code == 503
+
+
+def test_jwks_rotation_refresh_is_bounded(monkeypatch):
+    monkeypatch.setattr(app.auth, '_jwks', {'keys': [{'kid': 'old'}]})
+    monkeypatch.setattr(app.auth, '_jwks_fetched_at', 100)
+    monkeypatch.setattr(app.auth, 'monotonic', lambda: 131)
+    calls = []
+    def rotated(*args, **kwargs):
+        calls.append(1)
+        return httpx.Response(200, json={'keys': [{'kid': 'new'}]}, request=httpx.Request('GET', 'https://test.invalid'))
+    monkeypatch.setattr(httpx, 'get', rotated)
+    assert app.auth._get_jwks('new')['keys'][0]['kid'] == 'new'
+    app.auth._get_jwks('random-attacker-kid')
+    assert len(calls) == 1

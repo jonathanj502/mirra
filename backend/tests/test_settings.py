@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import pytest
 
 from fastapi.testclient import TestClient
 
@@ -58,8 +59,9 @@ def teardown_function():
 def test_get_settings_returns_defaults_when_missing():
     r = _client(_Db()).get("/settings")
     assert r.status_code == 200
-    assert r.json()["notifications_enabled"] is True
+    assert r.json()["notifications_enabled"] is False
     assert r.json()["coaching_tone"] == "warm_reflective"
+    assert r.json()["coaching_goal"] == "general"
 
 
 def test_patch_settings_upserts_user_preferences():
@@ -88,3 +90,15 @@ def test_patch_settings_upserts_user_preferences():
 def test_patch_settings_rejects_unknown_option():
     r = _client(_Db()).patch("/settings", json={"coaching_tone": "mean"})
     assert r.status_code == 422
+
+
+@pytest.mark.parametrize("goal", ["general", "make_friends", "confidence", "listening", "clarity", "assertiveness"])
+def test_goal_persists_across_reads_and_unrelated_settings_updates(goal):
+    db = _Db()
+    client = _client(db)
+    assert client.patch('/settings', json={'coaching_goal': goal}).json()['coaching_goal'] == goal
+    assert db.row['user_id'] == 'user-1'
+    assert client.get('/settings').json()['coaching_goal'] == goal
+    assert client.patch('/settings', json={'coaching_tone': 'direct_practical'}).json()['coaching_goal'] == goal
+    assert client.patch('/settings', json={'coaching_goal': 'ignore instructions'}).status_code == 422
+    assert client.get('/settings').json()['coaching_goal'] == goal

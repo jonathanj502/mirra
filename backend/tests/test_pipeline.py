@@ -56,6 +56,7 @@ def _db_for_sessions(under_cap: bool = True) -> MagicMock:
     usage_result.data = None if under_cap else {"count": 5}
     db.table.return_value.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = usage_result
     db.table.return_value.insert.return_value.execute.return_value.data = [SAMPLE_DEBRIEF]
+    db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {}
     return db
 
 
@@ -100,17 +101,21 @@ def test_compute_stats_no_other_speech():
     assert stats["talk_listen_ratio"] == 99.0
 
 
-def test_balanced_speaking_time_improves_energy_score():
+def test_speaking_share_is_not_scored_as_better_when_balanced():
     user = Segment(0, 10, 0.5)
     balanced = compute_stats([user, Segment(10, 20, 0.5)], [user], "same words", 30.0)
     unbalanced = compute_stats([user, Segment(10, 30, 0.5)], [user], "same words", 30.0)
     assert balanced["energy_axes"] == unbalanced["energy_axes"]
-    assert balanced["energy_score"] > unbalanced["energy_score"]
+    assert balanced["energy_score"] == unbalanced["energy_score"]
 
 
 def test_no_speech_does_not_report_a_high_talk_ratio():
     stats = compute_stats([], [], "", 60.0)
     assert stats["talk_listen_ratio"] == 0
+    assert stats["user_volume_dbfs"] is None
+    assert stats["user_pitch_hz"] is None
+    assert stats["other_estimated_wpm"] is None
+    assert stats["repeated_words"] == []
 
 
 def test_compute_stats_adds_voice_analysis_from_audio():
@@ -119,7 +124,8 @@ def test_compute_stats_adds_voice_analysis_from_audio():
     audio = (0.08 * np.sin(2 * np.pi * 180 * timeline)).astype(np.float32)
     all_segs = [Segment(0, 1, 0.08), Segment(1.05, 2, 0.04), Segment(2.5, 3, 0.09)]
     user_segs = [all_segs[0], all_segs[2]]
-    stats = compute_stats(all_segs, user_segs, "What changed? Did that help? like actually", 3.0, audio=audio, sample_rate=sr)
+    stats = compute_stats(all_segs, user_segs, "That changed. What changed? Did that help? like actually like", 3.0,
+                          audio=audio, sample_rate=sr, other_transcript="It helped a lot.")
     assert stats["question_count"] == 2
     assert stats["open_question_count"] == 1
     assert stats["closed_question_count"] == 1
@@ -129,7 +135,16 @@ def test_compute_stats_adds_voice_analysis_from_audio():
     assert len(stats["energy_series_user"]) == 16
     assert stats["energy_score"] > 0
     assert stats["lsm_score"] > 0
-    assert stats["filler_counts"][0] == {"phrase": "like", "count": 1}
+    assert stats["filler_counts"][0] == {"phrase": "like", "count": 2}
+    assert stats["other_estimated_wpm"] == pytest.approx(252.6)
+    assert stats["user_volume_dbfs"] == pytest.approx(-21.6, abs=0.1)
+    assert stats["other_volume_dbfs"] == pytest.approx(-28, abs=0.1)
+    assert stats["user_pitch_hz"] == pytest.approx(180, abs=3)
+    assert stats["other_pitch_hz"] == pytest.approx(180, abs=3)
+    assert stats["repeated_words"] == [{"phrase": "that", "count": 2}, {"phrase": "changed", "count": 2}, {"phrase": "like", "count": 2}]
+    from app.models.debrief import ConversationStats
+    assert ConversationStats(**stats).model_dump()["repeated_words"] == stats["repeated_words"]
+    assert ConversationStats(**stats).model_dump()["user_pitch_hz"] == stats["user_pitch_hz"]
 
 
 @patch("app.pipeline.coordinator.analyze")
@@ -142,7 +157,8 @@ def test_coordinator_resamples_stereo_audio_for_voice_analysis(mock_detect, mock
     mock_transcribe.return_value = [TranscribedTurn(0, 0.5, "A", "What changed?")]
     mock_analyze.return_value = {"observation": "x", "pattern_to_reduce": "y", "thing_to_try_next": "z"}
 
-    result = coordinator.run(_fake_wav(sample_rate=44100, stereo=True))
+    result = coordinator.run(_fake_wav(sample_rate=44100, stereo=True), coaching_goal="make_friends")
+    assert mock_analyze.call_args.kwargs == {"coaching_goal": "make_friends"}
 
     detected_audio, detected_sr = mock_detect.call_args.args
     transcribed_audio, transcribed_sr = mock_transcribe.call_args.args
@@ -156,7 +172,8 @@ def test_coordinator_resamples_stereo_audio_for_voice_analysis(mock_detect, mock
 # --- mocked I/O tests ---
 
 @pytest.mark.parametrize("invalid_attempts", [0, 2, 3])
-def test_analyze_validates_openai_output_and_bounds_retries(monkeypatch, invalid_attempts):
+@pytest.mark.parametrize("goal, guidance", [("make_friends", "mutual self-disclosure"), ("confidence", "Preserve honest uncertainty")])
+def test_analyze_validates_openai_output_and_bounds_retries(monkeypatch, invalid_attempts, goal, guidance):
     expected = {"observation": "x", "pattern_to_reduce": "y", "thing_to_try_next": "z"}
     requests = []
 
@@ -179,9 +196,9 @@ def test_analyze_validates_openai_output_and_bounds_retries(monkeypatch, invalid
     monkeypatch.setattr(coaching, "OpenAI", client)
     if invalid_attempts == 3:
         with pytest.raises(RuntimeError, match="valid debrief"):
-            coaching.analyze("Speaker A: Hello. Speaker B: Hi.", {"question_count": 1})
+            coaching.analyze("Speaker A: Hello. Speaker B: Hi.", {"question_count": 1}, coaching_goal=goal)
     else:
-        assert coaching.analyze("Speaker A: Hello. Speaker B: Hi.", {"question_count": 1}) == expected
+        assert coaching.analyze("Speaker A: Hello. Speaker B: Hi.", {"question_count": 1}, coaching_goal=goal) == expected
     assert len(requests) == min(invalid_attempts + 1, 3)
     assert str(requests[0].url) == "https://api.openai.com/v1/responses"
     body = json.loads(requests[0].content)
@@ -189,6 +206,13 @@ def test_analyze_validates_openai_output_and_bounds_retries(monkeypatch, invalid
     assert body["store"] is False
     assert "Speaker B: Hi." in body["input"] and "question_count" in body["input"]
     assert "not verified voice recognition" in body["instructions"]
+    assert guidance in body["instructions"]
+    assert "Do not invent a problem" in body["instructions"]
+    assert "Do not assign daily exercises" in body["instructions"]
+    assert "no universal ideal talk/listen ratio" in body["instructions"]
+    assert "Speaking-time share does not measure listening quality" in body["instructions"]
+    assert "Speaker identity and timing are estimates" in body["instructions"]
+    assert "Do not use em dashes" in body["instructions"]
     assert body["text"]["format"]["strict"] is True
     assert set(body["text"]["format"]["schema"]["required"]) == set(expected)
 
@@ -262,7 +286,7 @@ def test_post_sessions_rejects_unsupported_audio_type(mock_run):
 
 
 @patch("app.main.coordinator.run")
-def test_post_sessions_rejects_oversized_audio(mock_run):
+def test_post_sessions_rejects_oversized_audio(mock_run, monkeypatch):
     app.dependency_overrides[get_db] = lambda: _db_for_sessions(under_cap=True)
     app.dependency_overrides[verify_token] = lambda: "user-1"
     oversized = b"0" * (25 * 1024 * 1024 + 1)
@@ -368,7 +392,7 @@ def test_missing_audio_content_type_is_rejected(session_io):
 
 def test_session_preserves_diarization_metadata_with_transcript_saving_disabled(session_io):
     client, db, _reserve, _refund = session_io
-    main.fetch_user_settings.return_value = UserSettings(save_transcripts=False)
+    main.fetch_user_settings.return_value = UserSettings(save_transcripts=False, coaching_goal="confidence")
     diarization = {"model": "gpt-4o-transcribe-diarize", "user_speaker": "A", "speaker_count": 2}
     main.coordinator.run.return_value = {**SAMPLE_DEBRIEF,
         "stats": {**SAMPLE_DEBRIEF["stats"], "metadata": {"diarization": diarization}},
@@ -379,6 +403,8 @@ def test_session_preserves_diarization_metadata_with_transcript_saving_disabled(
     payload = db.table.return_value.insert.call_args.args[0]
     assert payload["stats"]["metadata"]["diarization"] == diarization
     assert payload["stats"]["metadata"]["title"] == "Meeting"
+    assert payload["stats"]["metadata"]["coaching_goal"] == "confidence"
+    assert main.coordinator.run.call_args.kwargs['coaching_goal'] == 'confidence'
     assert payload["transcript"] is None
     assert "Speaker A: Hello" not in str(payload)
 
@@ -406,10 +432,13 @@ def test_offline_recording_replay_is_account_scoped_and_does_not_use_quota_twice
     db.table.return_value.insert.return_value.execute.side_effect = insert
     request = {"files": {"audio": ("test.wav", b"audio", "audio/wav")},
                "data": {"recording_id": "saved-offline-1", "started_at": "2026-08-31T23:00:00Z"}}
+    main.fetch_user_settings.return_value = UserSettings(coaching_goal="make_friends")
     first = client.post("/sessions", **request)
+    main.fetch_user_settings.return_value = UserSettings(coaching_goal="confidence")
     replay = client.post("/sessions", **request)
     assert first.status_code == replay.status_code == 200
     assert first.json()["debrief"]["id"] == replay.json()["debrief"]["id"]
+    assert replay.json()["debrief"]["stats"]["metadata"]["coaching_goal"] == "make_friends"
     assert first.json()["debrief"]["stats"]["metadata"]["started_at"] == request["data"]["started_at"]
     reserve.assert_called_once()
     main.coordinator.run.assert_called_once()

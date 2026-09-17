@@ -1,5 +1,5 @@
-import { File } from 'expo-file-system';
-import { endpoint, parseResponse } from '@/api/http';
+import { ApiError, endpoint, parseResponse } from '@/api/http';
+import { openAudioSource } from '@/storage/audioSource';
 import {
   AccountExport,
   ConversationSummary,
@@ -24,8 +24,13 @@ type RawStats = {
   turn_offset_series?: { t: string; ms: number }[];
   session_duration_minutes: number;
   user_speech_duration_minutes: number;
-  other_speech_duration_minutes?: number;
+  other_speech_duration_minutes?: number | null;
   estimated_wpm: number;
+  other_estimated_wpm?: number | null;
+  user_volume_dbfs?: number | null;
+  other_volume_dbfs?: number | null;
+  user_pitch_hz?: number | null;
+  other_pitch_hz?: number | null;
   energy_score?: number;
   energy_axes?: number[];
   energy_series_user?: number[];
@@ -35,6 +40,7 @@ type RawStats = {
   lsm_dimensions_reference?: Record<string, number>;
   total_word_count?: number;
   unique_word_count?: number;
+  repeated_words?: RawFillerCount[] | null;
   vocabulary_richness?: number;
   filler_counts?: RawFillerCount[];
   metadata?: Record<string, unknown>;
@@ -137,10 +143,13 @@ type RawUserSettings = {
   save_transcripts: boolean;
   include_transcript_in_reflect: boolean;
   coaching_tone: UserSettings['coachingTone'];
+  coaching_goal?: UserSettings['coachingGoal'];
   coaching_depth: UserSettings['coachingDepth'];
 };
 
 type RawAccountExport = {
+  pending_recordings?: Record<string, unknown>[];
+  deleted_conversation_ids?: string[];
   exported_at: string;
   user_id: string;
   profile: RawProfileSummary;
@@ -163,12 +172,17 @@ function toStats(raw: RawStats) {
     openQuestionCount: raw.open_question_count ?? 0,
     closedQuestionCount: raw.closed_question_count ?? 0,
     interruptionCount: raw.interruption_count,
-    averageTurnOffsetMs: raw.average_turn_offset_ms ?? (raw.interruption_count > 0 ? 160 : 220),
+    averageTurnOffsetMs: raw.average_turn_offset_ms ?? 0,
     turnOffsetSeries: raw.turn_offset_series ?? [],
     sessionDurationMinutes: raw.session_duration_minutes,
     userSpeechDurationMinutes: raw.user_speech_duration_minutes,
-    otherSpeechDurationMinutes: raw.other_speech_duration_minutes ?? Math.max(0, raw.session_duration_minutes - raw.user_speech_duration_minutes),
+    otherSpeechDurationMinutes: raw.other_speech_duration_minutes ?? null,
     estimatedWpm: raw.estimated_wpm,
+    otherEstimatedWpm: raw.other_estimated_wpm ?? null,
+    userVolumeDbfs: raw.user_volume_dbfs ?? null,
+    otherVolumeDbfs: raw.other_volume_dbfs ?? null,
+    userPitchHz: raw.user_pitch_hz ?? null,
+    otherPitchHz: raw.other_pitch_hz ?? null,
     energyScore: raw.energy_score ?? 0,
     energyAxes: raw.energy_axes ?? [0, 0, 0],
     energySeriesUser: raw.energy_series_user ?? [],
@@ -178,6 +192,7 @@ function toStats(raw: RawStats) {
     lsmDimensionsReference: raw.lsm_dimensions_reference ?? {},
     totalWordCount: raw.total_word_count ?? 0,
     uniqueWordCount: raw.unique_word_count ?? 0,
+    repeatedWords: raw.repeated_words?.map(toFillerCount) ?? null,
     vocabularyRichness: raw.vocabulary_richness ?? 0,
     fillerCounts: raw.filler_counts?.map(toFillerCount) ?? [],
     metadata: raw.metadata ?? {},
@@ -272,11 +287,13 @@ function toProfileSummary(raw: RawProfileSummary): ProfileSummary {
 }
 
 function toUserSettings(raw: RawUserSettings): UserSettings {
-  return camelizeKeys<UserSettings>(raw);
+  return { ...camelizeKeys<UserSettings>(raw), coachingGoal: raw.coaching_goal ?? 'general' };
 }
 
 function toAccountExport(raw: RawAccountExport): AccountExport {
   return {
+    deletedConversationIds: raw.deleted_conversation_ids ?? [],
+    pendingRecordings: raw.pending_recordings ?? [],
     exportedAt: raw.exported_at,
     userId: raw.user_id,
     profile: toProfileSummary(raw.profile),
@@ -295,6 +312,7 @@ function toRawUserSettingsPatch(patch: Partial<UserSettings>): Partial<RawUserSe
   if (patch.saveTranscripts !== undefined) raw.save_transcripts = patch.saveTranscripts;
   if (patch.includeTranscriptInReflect !== undefined) raw.include_transcript_in_reflect = patch.includeTranscriptInReflect;
   if (patch.coachingTone !== undefined) raw.coaching_tone = patch.coachingTone;
+  if (patch.coachingGoal !== undefined) raw.coaching_goal = patch.coachingGoal;
   if (patch.coachingDepth !== undefined) raw.coaching_depth = patch.coachingDepth;
   return raw;
 }
@@ -348,6 +366,12 @@ export async function exportAccountData(token: string): Promise<AccountExport> {
   return toAccountExport(raw);
 }
 
+export async function deleteAccount(token: string): Promise<void> {
+  await fetch(endpoint('/account'), {
+    method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+  }).then(r => parseResponse<void>(r));
+}
+
 export async function fetchUserSettings(token: string): Promise<UserSettings> {
   const raw = await fetch(endpoint('/settings'), {
     headers: { Authorization: `Bearer ${token}` },
@@ -367,7 +391,7 @@ export async function updateUserSettings(token: string, patch: Partial<UserSetti
 export async function sendReflection(
   token: string,
   payload: { conversationId?: string; prompt: string; messages: ReflectMessage[] }
-): Promise<string> {
+): Promise<{ reply: string; usedModel: boolean }> {
   const raw = await fetch(endpoint('/reflect'), {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -377,41 +401,80 @@ export async function sendReflection(
       messages: payload.messages,
     }),
   }).then((r) => parseResponse<{ reply: string; used_model: boolean }>(r));
-  return raw.reply;
+  return { reply: raw.reply, usedModel: raw.used_model };
 }
 
 export async function uploadSession(
   token: string,
   audio: { uri: string; name: string; type: string },
   metadata: { title?: string; clientDurationSeconds?: number; recordingId?: string; startedAt?: string },
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options?: { accessToken?: () => Promise<string>; onProgress?: (message: string) => void }
 ): Promise<SessionResponse> {
-  const form = new FormData();
-  if (audio.uri.startsWith('blob:') || audio.uri.startsWith('data:')) {
-    const blob = await fetch(audio.uri).then((response) => response.blob());
-    form.append('audio', blob, audio.name);
-  } else {
-    const file = new File(audio.uri);
-    form.append('audio', file.slice(0, file.size, audio.type), audio.name);
+  if (!metadata.recordingId) throw new Error('A saved recording ID is required.');
+  const source = await openAudioSource(audio.uri);
+  const path = `/recordings/${encodeURIComponent(metadata.recordingId)}`;
+  type UploadState = { status: string; uploaded_bytes: number; chunk_bytes: number; progress: number;
+    error?: string; error_status?: number; debrief?: RawDebrief; used_this_month: number; remaining: number };
+  async function request(url: string, init: RequestInit = {}): Promise<UploadState> {
+    if (signal?.aborted) throw new Error('Upload paused.');
+    const currentToken = options?.accessToken ? await options.accessToken() : token;
+    if (signal?.aborted) throw new Error('Upload paused.');
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    // Bound each small request, not the lifetime of a multi-hour recording job.
+    const timer = setTimeout(abort, 120_000);
+    try {
+      return await fetch(endpoint(url), { ...init,
+        headers: { ...init.headers, Authorization: `Bearer ${currentToken}` }, signal: controller.signal,
+      }).then(r => parseResponse<UploadState>(r));
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+    }
   }
-  form.append('started_at', metadata.startedAt ?? new Date().toISOString());
-  if (metadata.recordingId) form.append('recording_id', metadata.recordingId);
-  if (metadata.title) form.append('title', metadata.title);
-  if (metadata.clientDurationSeconds != null) {
-    form.append('client_duration_seconds', String(metadata.clientDurationSeconds));
+  try {
+    let state = await request('/recordings', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recording_id: metadata.recordingId, total_bytes: source.size,
+        content_type: audio.type, filename: audio.name, title: metadata.title,
+        started_at: metadata.startedAt, client_duration_seconds: metadata.clientDurationSeconds }),
+    });
+    while (state.status === 'uploading' && state.uploaded_bytes < source.size) {
+      const offset = state.uploaded_bytes;
+      const length = Math.min(state.chunk_bytes, 4 * 1024 * 1024);
+      if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length <= 0) {
+        throw new Error('Invalid upload position from server.');
+      }
+      options?.onProgress?.(`Uploading · ${Math.floor(100 * offset / source.size)}%`);
+      const body = await source.read(offset, Math.min(source.size, offset + length));
+      state = await request(`${path}/audio?offset=${offset}`, { method: 'PUT',
+        headers: { 'Content-Type': 'application/octet-stream' }, body });
+      if (state.uploaded_bytes <= offset) throw new Error('The upload did not advance. Your saved audio will resume.');
+    }
+    if (state.status === 'uploading') state = await request(`${path}/complete`, { method: 'POST' });
+    while (state.status !== 'completed') {
+      if (state.status === 'failed') throw new ApiError(state.error || 'Could not finish processing.', state.error_status || 503);
+      if (state.status === 'cancelled') throw new ApiError('This recording was discarded.', 410);
+      if (!['queued', 'processing'].includes(state.status)) throw new Error('Invalid recording status from server.');
+      options?.onProgress?.(state.status === 'queued' ? 'Waiting for processing' : `Processing · ${state.progress}%`);
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => { clearTimeout(timer); reject(new Error('Upload paused.')); };
+        const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, 5000);
+        if (signal?.aborted) abort();
+        else signal?.addEventListener('abort', abort, { once: true });
+      });
+      state = await request(path);
+    }
+    if (!state.debrief) throw new Error('The saved debrief is not available yet.');
+    return { debrief: toDebrief(state.debrief), usedThisMonth: state.used_this_month, remaining: state.remaining };
+  } finally {
+    source.close();
   }
+}
 
-  const response = await fetch(endpoint('/sessions'), {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-    body: form,
-    signal,
-  });
-  const raw = await parseResponse<{ debrief: RawDebrief; used_this_month: number; remaining: number }>(response);
-
-  return {
-    debrief: toDebrief(raw.debrief),
-    usedThisMonth: raw.used_this_month,
-    remaining: raw.remaining,
-  };
+export async function discardRecording(token: string, recordingId: string): Promise<void> {
+  await fetch(endpoint(`/recordings/${encodeURIComponent(recordingId)}`), {
+    method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+  }).then(r => parseResponse<void>(r));
 }

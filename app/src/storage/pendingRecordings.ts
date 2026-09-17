@@ -5,6 +5,7 @@ export type PendingRecording = {
   userId: string;
   startedAt: string;
   seconds: number;
+  title?: string;
   audio: { uri: string; name: string; type: string };
 };
 
@@ -59,4 +60,8 @@ export function releasePendingAudio(_audio: PendingRecording['audio']) {}
 
 export async function removePendingRecording(recording: PendingRecording) {
   await FileSystem.deleteAsync(directory(recording.userId, recording.id), { idempotent: true });
+}
+
+export async function clearPendingRecordings(userId: string) {
+  await FileSystem.deleteAsync(directory(userId), { idempotent: true });
 }

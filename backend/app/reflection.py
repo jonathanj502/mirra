@@ -5,6 +5,8 @@ from typing import Any
 from openai import OpenAI, OpenAIError
 
 from app.config import settings
+from app.coaching_goals import goal_instructions
+from app.models.settings import CoachingGoal
 from app.dashboard import talk_listen_percent, title_for
 from app.models.dashboard import ReflectRequest
 
@@ -63,12 +65,14 @@ def build_reflection_messages(
     include_transcript: bool = False,
     coaching_tone: str = "warm_reflective",
     coaching_depth: str = "balanced",
+    coaching_goal: CoachingGoal = "general",
 ) -> list[dict[str, str]]:
     system = " ".join(
         [
             _BASE_SYSTEM_PROMPT,
             _TONE_PROMPTS.get(coaching_tone, _TONE_PROMPTS["warm_reflective"]),
             _DEPTH_PROMPTS.get(coaching_depth, _DEPTH_PROMPTS["balanced"]),
+            goal_instructions(coaching_goal),
         ]
     )
     messages = [{"role": "system", "content": system}]
@@ -99,6 +103,7 @@ def generate_reflection(
     coaching_tone: str = "warm_reflective",
     coaching_depth: str = "balanced",
     include_transcript: bool = False,
+    coaching_goal: CoachingGoal = "general",
 ) -> str | None:
     if not settings.openai_api_key:
         return None
@@ -109,6 +114,7 @@ def generate_reflection(
         include_transcript=include_transcript,
         coaching_tone=coaching_tone,
         coaching_depth=coaching_depth,
+        coaching_goal=coaching_goal,
     )
     try:
         with OpenAI(api_key=settings.openai_api_key, timeout=30.0, max_retries=2) as client:

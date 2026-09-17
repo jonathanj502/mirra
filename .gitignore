@@ -7,6 +7,7 @@ dist/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.recordings/
 
 # Environment
 .env
@@ -19,6 +20,9 @@ node_modules/
 dist/
 web-build/
 app/.expo-export-check/
+# Native projects are generated from app.json and plugins/ by Expo prebuild.
+app/ios/
+app/android/
 *.jks
 *.p8
 *.p12

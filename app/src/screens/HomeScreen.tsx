@@ -1,10 +1,10 @@
 // Home / Record screen.
-import React, { useEffect, useRef } from 'react';
-import { View, Pressable, StyleSheet, Animated, Easing, ActivityIndicator, Alert, Platform } from 'react-native';
+import React, { useEffect } from 'react';
+import { View, Pressable, StyleSheet, ActivityIndicator, Alert, Platform } from 'react-native';
 import Svg, { Defs, RadialGradient, Stop, Circle, Rect, Path } from 'react-native-svg';
 import { useRouter } from 'expo-router';
 import { Screen } from '@/components/Screen';
-import { Body, Serif, Eyebrow } from '@/components/Typography';
+import { Body, Serif, SerifItalic, Eyebrow } from '@/components/Typography';
 import { Icon } from '@/components/Icon';
 import { colors, fonts } from '@/theme/tokens';
 import { ConversationListItem } from '@/models/conversation';
@@ -13,6 +13,9 @@ import { useDebriefs } from '@/hooks/useDebriefs';
 import { useImportAudio } from '@/hooks/useImportAudio';
 import { useRecordAudio } from '@/hooks/useRecordAudio';
 import { PendingRecording } from '@/storage/pendingRecordings';
+import { useUserSettings } from '@/hooks/useUserSettings';
+import { coachingGoalLabel } from '@/data/coachingGoals';
+import { formatDuration } from '@/utils/timeFormat';
 
 function displayName(email?: string | null, username?: unknown) {
   if (typeof username === 'string' && username.trim()) return username.trim();
@@ -20,24 +23,13 @@ function displayName(email?: string | null, username?: unknown) {
   return 'there';
 }
 
-function BreathingRing({ inset, delay }: { inset: number; delay: number }) {
-  const v = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.timing(v, { toValue: 1, duration: 4000, delay, easing: Easing.inOut(Easing.ease), useNativeDriver: true })
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [v, delay]);
-  const scale = v.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 1.08, 1] });
-  const opacity = v.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.7, 0.2, 0.7] });
+function RecordRing({ inset }: { inset: number }) {
   return (
-    <Animated.View
+    <View
       style={{
         position: 'absolute', top: inset, left: inset, right: inset, bottom: inset,
         borderRadius: 999, borderWidth: 1,
         borderColor: inset < -20 ? 'rgba(208,136,102,0.22)' : 'rgba(208,136,102,0.35)',
-        transform: [{ scale }], opacity,
       }}
     />
   );
@@ -64,15 +56,15 @@ function RecordButton({
       accessibilityRole="button"
       accessibilityLabel={recording ? 'Stop recording' : 'Start recording'}
     >
-      <BreathingRing inset={-28} delay={0} />
-      <BreathingRing inset={-14} delay={600} />
+      <RecordRing inset={-28} />
+      <RecordRing inset={-14} />
       <View style={[styles.recordBtn, recording && styles.recordBtnActive, (loading || disabled) && styles.recordBtnDisabled, { width: size, height: size, borderRadius: size / 2 }]}>
         <Svg width={size} height={size} style={{ position: 'absolute' }}>
           <Defs>
             <RadialGradient id="rec" cx="35%" cy="30%" r="75%">
-              <Stop offset="0" stopColor="#E5A082" />
-              <Stop offset="0.55" stopColor="#D08866" />
-              <Stop offset="1" stopColor="#BA7253" />
+              <Stop offset="0" stopColor="#AC6248" />
+              <Stop offset="0.55" stopColor={colors.terracotta} />
+              <Stop offset="1" stopColor="#7D412F" />
             </RadialGradient>
           </Defs>
           <Circle cx={size / 2} cy={size / 2} r={size / 2} fill="url(#rec)" />
@@ -95,14 +87,13 @@ function RecordButton({
 
 function RecentRow({ item, isLast, onPress }: { item: ConversationListItem; isLast: boolean; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} style={[styles.recentRow, !isLast && styles.rowBorder]}>
+    <Pressable accessibilityRole="button" onPress={onPress} style={[styles.recentRow, !isLast && styles.rowBorder]}>
       <View style={[styles.dot, { backgroundColor: colors[item.tone as keyof typeof colors] ?? colors.sage }]} />
       <View style={{ flex: 1, minWidth: 0 }}>
         <Serif style={styles.recentTitle}>{item.title}</Serif>
         <Body style={styles.recentMeta}>
-          {item.when} · {item.duration}
+          {item.when} · {item.duration} · <SerifItalic style={styles.recentNote}>{item.note}</SerifItalic>
         </Body>
-        <Serif style={styles.recentNote}>{item.note}</Serif>
       </View>
       <Icon.chevron color="rgba(42,37,32,0.35)" />
     </Pressable>
@@ -117,6 +108,7 @@ function ImportButton({ onPress, loading, disabled }: { onPress: () => void; loa
       onPress={onPress}
       disabled={loading || disabled}
       accessibilityLabel="Import audio recording"
+      accessibilityRole="button"
     >
       {loading ? (
         <ActivityIndicator size="small" color={colors.terracotta} />
@@ -133,11 +125,12 @@ function ImportButton({ onPress, loading, disabled }: { onPress: () => void; loa
 
 export function HomeScreen() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, accessToken } = useAuth();
+  const { settings, loading: settingsLoading, loadError: settingsError } = useUserSettings(accessToken);
   const { listItems, loading, error, setDebriefs, refresh } = useDebriefs();
   const { importAudio, importing, error: importError } = useImportAudio();
   const { isRecording, isSavingRecording, isStartingRecording, hasUnsavedRecording, recordingSeconds,
-    pendingRecordings, uploadingId, latestDebrief, queueError, needsAIConsent, resumeUploads, discard,
+    pendingRecordings, uploadingId, uploadMessage, latestDebrief, queueError, needsAIConsent, resumeUploads, discard,
     toggleRecording, error: recordingError } = useRecordAudio();
   const busy = importing || isRecording || isSavingRecording || isStartingRecording || hasUnsavedRecording;
   useEffect(() => {
@@ -151,7 +144,7 @@ export function HomeScreen() {
   const heroHint = isSavingRecording
     ? 'Saving on this device…'
     : isRecording
-      ? `${Math.floor(recordingSeconds / 60)}:${String(Math.floor(recordingSeconds % 60)).padStart(2, '0')} · tap to stop`
+      ? `${recordingSeconds >= 3600 ? formatDuration(recordingSeconds) : `${Math.floor(recordingSeconds / 60)}:${String(Math.floor(recordingSeconds % 60)).padStart(2, '0')}`} · tap to stop`
       : isStartingRecording ? 'Starting microphone…' : hasUnsavedRecording ? 'Tap to save recording' : 'Tap to record · works offline';
   const greeting = listItems.length > 0
     ? `${listItems.length} ${listItems.length === 1 ? 'conversation' : 'conversations'} ready.`
@@ -167,7 +160,7 @@ export function HomeScreen() {
   }
 
   function confirmDiscard(recording: PendingRecording) {
-    const message = 'This permanently deletes the recording saved on this device. Discard it?';
+    const message = 'This cancels processing and deletes the uploaded copy and the recording saved on this device. Discard it?';
     if (Platform.OS === 'web') {
       if (window.confirm(message)) void discard(recording);
     } else {
@@ -185,8 +178,8 @@ export function HomeScreen() {
         <View style={{ flex: 1, minWidth: 0 }}>
           <Eyebrow>{today}</Eyebrow>
           <Serif style={styles.greetingTitle}>
-            Good evening,{'\n'}
-            {name}.
+            Hello,{'\n'}
+            <SerifItalic style={styles.greetingTitle}>{name}.</SerifItalic>
           </Serif>
         </View>
         <ImportButton onPress={handleImport} loading={importing} disabled={busy && !importing} />
@@ -218,18 +211,29 @@ export function HomeScreen() {
               <View key={recording.id} style={styles.pendingItem}>
                 <Body style={styles.pendingHint}>
                   {new Date(recording.startedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                  {' · '}{Math.ceil(recording.seconds)}s
-                  {'\n'}{uploadingId === recording.id ? 'Uploading and analyzing…' : recording.error || 'Waiting to upload'}
+                  {' · '}{formatDuration(recording.seconds)}
+                  {'\n'}{uploadingId === recording.id ? uploadMessage : recording.error || 'Waiting to upload'}
                 </Body>
                 <Pressable accessibilityRole="button" accessibilityLabel="Discard saved recording"
-                  disabled={uploadingId === recording.id} onPress={() => confirmDiscard(recording)} style={styles.recoveryButton}>
-                  <Body style={{ opacity: uploadingId === recording.id ? 0.4 : 1 }}>Discard recording</Body>
+                  onPress={() => confirmDiscard(recording)} style={styles.recoveryButton}>
+                  <Body>Discard recording</Body>
                 </Pressable>
               </View>
             ))}
           </View>
         ) : null}
       </View>
+
+      <Pressable accessibilityRole="button" accessibilityLabel="Change your conversation goal"
+        onPress={() => router.push({ pathname: '/profile', params: { panel: 'goal' } })}
+        style={styles.goalCard}>
+        <View style={{ flex: 1, gap: 5 }}>
+          <Eyebrow>Your focus</Eyebrow>
+          <Body>{settingsLoading ? 'Loading your goal…' : settingsError ? 'View your goal in settings' : coachingGoalLabel(settings.coachingGoal)}</Body>
+          <Body style={{ color: colors.muted, fontSize: 12 }}>Choose once. Your suggestions follow.</Body>
+        </View>
+        <Icon.chevron color={colors.muted} />
+      </Pressable>
 
       {/* Recent */}
       <View style={styles.recentSection}>
@@ -249,7 +253,7 @@ export function HomeScreen() {
             />
           ))}
           {!loading && !error && listItems.length === 0 && (
-            <Serif style={styles.emptyRecent}>No conversations yet.</Serif>
+            <SerifItalic style={styles.emptyRecent}>No conversations yet.</SerifItalic>
           )}
         </View>
       </View>
@@ -258,9 +262,10 @@ export function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
+  goalCard: { marginHorizontal: 22, marginBottom: 24, padding: 18, borderWidth: 1, borderColor: colors.hairline, borderRadius: 18, flexDirection: 'row', alignItems: 'center', gap: 12 },
   pendingItem: { borderTopWidth: 1, borderTopColor: colors.hairline, paddingTop: 12, width: '100%' },
   header: { paddingHorizontal: 24, flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
-  greetingTitle: { fontSize: 34, lineHeight: 42, marginTop: 8, color: colors.ink },
+  greetingTitle: { fontSize: 34, lineHeight: 36, marginTop: 8, color: colors.ink },
   greet: { fontSize: 13.5, color: colors.muted, marginTop: 10, lineHeight: 20, maxWidth: 300, paddingHorizontal: 24 },
   importBtn: {
     marginTop: 2, width: 44, height: 44, borderRadius: 22,
@@ -277,18 +282,18 @@ const styles = StyleSheet.create({
   recordBtnDisabled: { opacity: 0.72 },
   micIcon: { zIndex: 2, elevation: 2 },
   stopIcon: { zIndex: 2, width: 42, height: 42, borderRadius: 12, backgroundColor: '#fff' },
-  heroHint: { fontSize: 12.5, color: colors.muted, letterSpacing: 0.7, textTransform: 'uppercase', fontFamily: fonts.bodyMedium },
   consentHint: { fontSize: 12, lineHeight: 18, color: colors.ink2, textAlign: 'center', maxWidth: 280 },
+  heroHint: { fontSize: 12.5, color: colors.muted, letterSpacing: 0.7, textTransform: 'uppercase', fontFamily: fonts.bodyMedium },
   recentSection: { paddingHorizontal: 24, paddingTop: 20 },
   recentHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4 },
   recentCount: { fontSize: 11.5, color: colors.muted },
   recentRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14 },
   rowBorder: { borderBottomWidth: 1, borderBottomColor: colors.hairline2 },
   dot: { width: 8, height: 8, borderRadius: 4 },
-  recentTitle: { fontSize: 22, lineHeight: 30, color: colors.ink },
+  recentTitle: { fontSize: 19, lineHeight: 21, color: colors.ink },
   recentMeta: { fontSize: 11.5, color: colors.muted, marginTop: 4, letterSpacing: 0.2 },
-  recentNote: { fontSize: 18, lineHeight: 26, color: colors.ink2, marginTop: 6 },
-  emptyRecent: { textAlign: 'center', paddingVertical: 34, color: colors.ink2, fontSize: 18, lineHeight: 26 },
+  recentNote: { fontSize: 13, color: colors.muted },
+  emptyRecent: { textAlign: 'center', paddingVertical: 34, color: colors.muted, fontSize: 13, lineHeight: 20 },
   audioError: { textAlign: 'center', paddingHorizontal: 24, color: colors.coral, fontSize: 13, lineHeight: 19 },
   pending: { padding: 16, marginHorizontal: 24, borderRadius: 16, backgroundColor: colors.card, alignSelf: 'stretch' },
   pendingHint: { fontSize: 13, lineHeight: 19, textAlign: 'center', color: colors.muted },
