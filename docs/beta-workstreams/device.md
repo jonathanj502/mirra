@@ -69,8 +69,8 @@ All native, permission, network and auth boundaries in these hook tests are mock
 
 ## Hardware and provider status
 
-**Personal Team installation and USB-connected launch passed. Complete TF-1
-through TF-7 gates remain OPEN.**
+**TF-2 installed-device behavior PASS (user-observed on the Personal Team build).
+TF-1 and TF-3 through TF-7 remain OPEN.**
 
 Phone confirmed by distribution's device inventory: **iPhone 13 (`iPhone14,5`),
 iOS 26.6.2 (23G90)**. The user replied "connected" in this task after cable,
@@ -119,12 +119,21 @@ launch PASS** for source `a4b3c14dfaa8fa5950026aae173b901439ad02f1`:
 After this task asked the user to disconnect USB, force-close Mirra, and reopen
 it from its icon, the user reported: **"i see the sign in screen. the signin
 works"**. Independent launch to sign-in and successful sign-in are therefore
-**PASS (user-observed)** on the installed candidate. The next requested check is
-Wi-Fi off/cellular on, force-close/reopen, verify the same account is restored,
-then open Profile and conversation history without errors. Authenticated reads,
-cellular access, and session restoration remain pending; TF-2 is still OPEN.
+**PASS (user-observed)** on the installed candidate. After the next instruction
+to turn Wi-Fi off, leave cellular on, force-close/reopen, verify the same account
+is restored, and open Profile and conversation history without errors, the user
+reported **"everything is good"**. Recorded at **2026-09-18 01:21 UTC**:
+**TF-2 installed-device behavior PASS (user-observed)**, including independent
+launch, sign-in, same-account restore, and authenticated cellular reads. This
+checks the installed candidate's auth/read path against the current production
+backend; it does not validate candidate audio processing or change deployment.
 Personal Team delivery does not pass the TestFlight installation gate.
 Distribution retains native signing/install ownership for subsequent candidates.
+
+Next physical check requested: keep Wi-Fi off, enable Airplane Mode, tap Record,
+decline the iOS microphone permission, and report whether Mirra stays responsive
+and shows "Open microphone settings". Denial, Settings recovery, and actual
+capture/save are still pending; TF-5 remains OPEN.
 
 Production remains `https://mirra-backend-wp2b.onrender.com`, deployed commit
 `f8cf5d7196654aff3ff578bb5503668aa3ff15cd`, Free 512 MB, not this candidate.
@@ -134,7 +143,7 @@ separate evidence; complete microphone, local-save/restart, and lock checks offl
 
 | Gate | Required physical evidence | Status |
 | --- | --- | --- |
-| TF-2 | Installed build cold launch, public production auth, restored correct account/history after force-quit, cellular read | OPEN — install, independent launch and sign-in passed; restore/authenticated reads/cellular check pending |
+| TF-2 | Installed build cold launch, public production auth, restored correct account/history after force-quit, cellular read | PASS — user-observed on installed a4b3c14 Personal Team build, iPhone 13/iOS 26.6.2; recorded 2026-09-18 01:21 UTC |
 | TF-3 | Real 30–60s capture, one saved nonempty debrief, history after relaunch, model Reflect reply | OPEN — device and working backend needed |
 | TF-4 | Two offline stopped clips survive restart; reconnect yields two debriefs and exactly +2 usage; expired token/account switch/consent recovery | OPEN — device and provider evidence needed |
 | TF-5 | Deny mic, responsive error/Settings action, grant in Settings, return and record/Stop/save without stuck state | OPEN — mocked regression only |
