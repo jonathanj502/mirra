@@ -75,7 +75,7 @@ test('durable native queue survives restart, isolates accounts, serializes recon
   let mounted;
   try {
     await storage().savePendingRecording(clip('one'));
-    await storage().savePendingRecording(clip('two'));
+    await storage().savePendingRecording({ ...clip('two'), title: 'Imported meeting' });
     await storage().savePendingRecording(clip('private', 'other'));
     await fs.unlink(source); // Temporary recording cache is gone after restart.
     const uploads = [];
@@ -144,11 +144,59 @@ test('durable native queue survives restart, isolates accounts, serializes recon
     await until(async () => (await storage().listPendingRecordings('owner')).length === 0);
     await until(() => mounted.render().latestDebrief?.id === 'three');
     assert.deepEqual(uploads.slice(-3).map(row => row.metadata.recordingId), ['one', 'two', 'three']);
+    assert.equal(uploads.find(row => row.metadata.recordingId === 'two').metadata.title, 'Imported meeting');
+    assert.equal(uploads.find(row => row.metadata.recordingId === 'one').metadata.title, 'Recorded conversation');
     assert.equal((await storage().listPendingRecordings('other')).length, 1);
     assert.equal(uploads.at(-1).token, 'refreshed-token');
   } finally {
     mounted?.unmount();
     assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep + 'mirra-recording-test-'));
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('native save failures preserve source bytes; restart recovers a temporary manifest and legacy filenames', async () => {
+  const root = await fs.mkdtemp(join(tmpdir(), 'mirra-storage-reliability-'));
+  const cache = join(root, 'cache');
+  await fs.mkdir(cache);
+  const source = join(cache, 'original.m4a');
+  let failAt;
+  const disk = {
+    documentDirectory: `${root}/`, cacheDirectory: `${cache}/`,
+    makeDirectoryAsync: path => fs.mkdir(path, { recursive: true }),
+    async copyAsync({ from, to }) { if (failAt === 'copy') throw new Error('Storage full'); await fs.copyFile(from, to); },
+    async writeAsStringAsync(path, text) { if (failAt === 'write') throw new Error('Storage full'); await fs.writeFile(path, text); },
+    async moveAsync({ from, to }) { if (failAt === 'move') throw new Error('Storage full'); await fs.rename(from, to); },
+    readAsStringAsync: path => fs.readFile(path, 'utf8'), readDirectoryAsync: path => fs.readdir(path),
+    async getInfoAsync(path) { return { exists: await fs.stat(path).then(() => true, () => false) }; },
+    deleteAsync: path => fs.rm(path, { recursive: true, force: true }),
+  };
+  const storage = () => load('storage/pendingRecordings.ts', { 'expo-file-system/legacy': disk });
+  const clip = id => ({ id, userId: 'owner', startedAt: '2026-09-18T00:00:00Z', seconds: 4,
+    audio: { uri: source, name: '../recording.json', type: 'audio/mp4' } });
+  try {
+    await fs.writeFile(source, 'original audio');
+    for (failAt of ['copy', 'write', 'move']) {
+      await assert.rejects(storage().savePendingRecording(clip(failAt)), /Storage full/);
+      assert.equal(await fs.readFile(source, 'utf8'), 'original audio');
+    }
+    const recovered = await storage().listPendingRecordings('owner');
+    assert.deepEqual(recovered.map(row => row.id), ['move']);
+    assert.equal(await fs.readFile((await storage().readPendingAudio(recovered[0])).uri, 'utf8'), 'original audio');
+    failAt = undefined;
+    const saved = await storage().savePendingRecording(clip('saved'));
+    assert.equal(saved.audio.name, '../recording.json');
+    assert.equal(saved.audio.uri, `${root}/pending-recordings/owner/saved/audio`);
+    assert.equal(await fs.readFile(saved.audio.uri, 'utf8'), 'original audio');
+    await assert.rejects(fs.access(source)); // Only the cache copy is removed after commit.
+    const folder = `${root}/pending-recordings/owner/saved`;
+    await fs.rename(saved.audio.uri, `${folder}/legacy.m4a`);
+    await fs.writeFile(`${folder}/recording.json`, JSON.stringify({ ...saved,
+      audio: { ...saved.audio, name: 'legacy.m4a', uri: 'file:///previous-ios-container/legacy.m4a' },
+    }));
+    const restored = (await storage().listPendingRecordings('owner')).find(row => row.id === 'saved');
+    assert.equal(await fs.readFile(restored.audio.uri, 'utf8'), 'original audio');
+  } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
 });
