@@ -100,11 +100,12 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
   Settings recovery with a stopped clip saved offline. Two stopped clips also
   survived offline restart (partial TF-4). These checks used the current old
   production backend; candidate audio processing is not validated. Repeat the
-  release checks on TestFlight. TF-6 capture/save remains pending: the earlier
-  “yes” was ambiguous, so the device task is confirming the newest duration and
-  time locked. Actual audio markers and debrief are also unverified.
-  Device/distribution coordinate read-only local clip inspection while keeping
-  the originals queued and the phone offline.
+  release checks on TestFlight. TF-6 remains open: explicitly approved read-only
+  USB inspection measured three saved clips at 11.654966s, 10.493968s and
+  106.996100s. The newest/longest clip was copied locally and fully decoded; its
+  1m47s duration is below the required five minutes. This does not establish a
+  recorder bug. Device owns the longer check; markers and debrief are unverified.
+  Originals remain queued and unchanged; no backend/provider upload occurred.
 - No production migration, deployment, push or purchase. Independent pre-push
   review, actual Supabase/PostgREST validation, integrated real-provider memory,
   sustained load, TestFlight distribution and the remaining physical checks stay open.
