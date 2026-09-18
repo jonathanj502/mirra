@@ -1,5 +1,9 @@
 # Beta investigation checkpoint — 2026-09-17
 
+**Later direction:** the user requested parallel work in separate issue tasks and
+worktrees. See [beta-workstreams.md](beta-workstreams.md) for current ownership
+and integration. The pause and tests below describe the preserved checkpoint.
+
 ## State at the pause
 
 The user requested a reset and planning discussion before further implementation.

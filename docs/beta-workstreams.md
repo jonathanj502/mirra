@@ -1,0 +1,98 @@
+# Parallel beta work — 2026-09-17
+
+The user requested one independent Codex task and worktree per remaining issue,
+with eventual integration. This supersedes the earlier implementation pause.
+The product maximum remains **23 minutes 20 seconds for capture and import**;
+longer recordings are deferred. Keep the existing design and use minimal fixes.
+
+## Shared base and integration
+
+- Implementation base: `773d35f3e554f8c8353f17c81b7bd847cc9078a1`.
+- Preserved checkpoint: `codex/beta-pause-2026-09-17`.
+- Integration branch: `codex/beta-integration-2026-09-17`.
+- Integration task: `01a0a651-7a8c-76c3-8429-0e86526e0096`
+  (Prepare Mirra for TestFlight beta).
+- Each task must confirm its private checkout starts from the shared base.
+  Codex worktree creation may start at `main`; fast-forward that private branch
+  to the base before implementation. Never reset an unrelated checkout.
+- Each task commits locally and maintains its own evidence file under
+  `docs/beta-workstreams/`. Only the integration task edits the shared acceptance
+  ledger, this index, `CLAUDE.md`, and `docs/beta-pause.md`.
+
+## Responsibilities
+
+| Issue/task | Owned code or responsibility | Evidence file |
+| --- | --- | --- |
+| Mirra beta — server memory and hosting | Decoder/memory in `coordinator.py`, VAD/prosody, `speaker.py` RMS allocations, backend dependencies and memory/warm-up tools. Benchmark realistic maximum-length input; recommend capacity with evidence. | `memory.md` |
+| Mirra beta — transcription at 23 minutes 20 seconds | `transcription.py`, provider/codec checks and smoke tools. Real maximum-length transcription → debrief/history/Reflect. | `transcription.md` |
+| Mirra beta — audio imports and file limits | `useImportAudio.ts`, import tests, incoming file type/size validation in `main.py`. Formats, duration/size boundaries, visible failures and preserved originals. | `imports.md` |
+| Mirra beta — concurrent uploads and offline recovery | Session admission/idempotency/quota in `main.py`, pending-recording queue/storage and retry tests. Coordinate import/recorder hooks with their owners. | `reliability.md` |
+| Mirra beta — iPhone recording and recovery | `useRecordAudio.ts`, recording/permission UI and associated tests. Physical auth, mic, locked recording, auto-stop/save and offline checks with the user. | `device.md` |
+| Mirra beta — iOS build and TestFlight signing | EAS/Expo build settings, `app/ios`, production build scripts, global Xcode/signing setup. Prepare a free own-device path and track remaining TestFlight requirements. | `distribution.md` |
+
+Tasks may touch separate sections of an existing shared test/source file. Keep
+diffs narrow, coordinate interface changes, and resolve conflicts during integration
+without dropping either task's tests. Do not independently rewrite shared modules.
+
+## Active worktrees
+
+All six confirmed initialization at the shared `773d35f` implementation base.
+Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
+
+| Issue | Task ID | Branch | Worktree suffix |
+| --- | --- | --- | --- |
+| Memory | `01a0b1d5-a406-7de2-9ef1-5932f835e3d1` | `codex/beta-memory` | `c3a6/mirra` |
+| Transcription | `01a0b1d5-aa8e-70b3-a3a3-1e613af3f951` | `codex/beta-transcription-1400` | `b07f/mirra` |
+| Imports | `01a0b1d5-b7e6-7f72-a84a-7f78482db974` | `codex/beta-imports` | `8b65/mirra` |
+| Reliability | `01a0b1d5-c243-7e10-8ce5-8776f5f97780` | `codex/beta-reliability` | `0f48/mirra` |
+| Device | `01a0b1d5-d76c-76c0-9ac4-e499b15bdc2a` | `codex/beta-device-capture` | `3a46/mirra` |
+| Distribution | `01a0b1d5-ee26-7bb3-a253-c4c421279434` | `codex/beta-distribution-2026-09-17` | `7411/mirra` |
+
+### Coordinated dependencies
+
+- Imports owns extracting `app/src/utils/audioDuration.ts` from its existing
+  duration reader; device consumes it to measure native completed clips.
+- Imports owns routing its validated files into the existing recording queue and
+  import-specific HomeScreen handling. Reliability owns optional queued title
+  metadata and queue/storage changes. Device owns recording/permission HomeScreen
+  sections. No second queue or duplicate duration reader is needed.
+- Reliability is authorized to prepare a local durable quota-receipt migration
+  and transactional reserve/refund fix for the discovered server-crash charge
+  leak. Production schema changes remain deferred to coordinated integration;
+  rollout/compatibility and database test evidence must accompany that work.
+- Distribution and device coordinate free personal-team build installation and
+  physical checks directly. Device received reliability's TF-4 recovery checklist.
+
+## Shared resources and boundaries
+
+- Only distribution owns Xcode setup/signing/native build operations; device
+  testing uses its artifact. The user completes sign-in and legal agreements.
+- Use unique local ports, temp paths and container names. Do not stop other tasks'
+  processes. Coordinate live API tests; do not load-test the free production server.
+- Existing ignored configuration can support authorized tests; never print or
+  commit credentials, environment files, private recordings or transcripts.
+- Production remains the existing free Render service, with auto-deploy off.
+  No paid hosting change or Apple membership purchase is authorized.
+- Issue tasks prepare local changes. Integration coordinates any future push,
+  production deployment and shared configuration changes. No issue task merges
+  into the integration branch or changes production independently.
+
+## Evidence and merge procedure
+
+1. Each task records its branch, base/head commits, concrete fixes, commands and
+   results, and unresolved checks. Mocked/local checks do not pass device or
+   production gates. Send the handoff to the integration task.
+2. Integrate dependency-ready branches one at a time. Merge backend memory,
+   transcription and request handling carefully; then combine import/queue/device
+   work and build settings. Actual dependencies determine order.
+3. Resolve shared-file conflicts while preserving both behaviors and tests. Run
+   relevant checks on the combined state; rerun full recording-to-debrief checks
+   on that integrated candidate, not just individual branches.
+4. Before any GitHub push, obtain the independent `code-critic` review required
+   by `AGENTS.md` for the exact destination and outgoing base/head range. Review
+   subsequent fixes before pushing.
+5. Keep TF-1 through TF-7 open until the agreed production/device evidence exists.
+   Retain issue branches/worktrees until their integration has been verified.
+
+The original release goal is not complete. Work in the six tasks is authorized;
+the app's paused goal status is separately user-controlled.

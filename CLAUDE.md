@@ -6,8 +6,9 @@ Verify implementation details against the code before relying on descriptions of
 
 ## Current beta checkpoint
 
-The broader beta investigation is paused for planning. Read `docs/beta-pause.md`
-before resuming release work. The user subsequently authorized a narrower limit:
+The user resumed beta work in six independent issue tasks/worktrees. Read
+`docs/beta-workstreams.md` for ownership and integration, and `docs/beta-pause.md`
+for the prior checkpoint. The user authorized a narrower limit:
 **23 minutes 20 seconds (1400 seconds)** for capture and import, matching the
 observed single-request transcription ceiling. One-hour support is deferred.
 This local change is not deployed; production, billing, and open acceptance gates

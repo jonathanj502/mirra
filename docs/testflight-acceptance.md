@@ -2,9 +2,10 @@
 
 Updated: 2026-09-17. Starting commit: `f628b73`.
 
-**Broader release work is paused for a reset/planning discussion.** The user
-subsequently authorized limiting capture/import to one transcription request.
-See [beta-pause.md](beta-pause.md) for the checkpoint and remaining issues.
+**Parallel issue work is authorized in separate tasks/worktrees.** See
+[beta-workstreams.md](beta-workstreams.md) for ownership and integration. The user
+limited capture/import to one transcription request. See
+[beta-pause.md](beta-pause.md) for the prior checkpoint and remaining issues.
 The updated candidate is not deployed or release-approved.
 
 The user agreed to the original gates on 2026-09-15. On 2026-09-17 they first
