@@ -78,14 +78,25 @@ No iMessage coordination was used.
 Distribution task `01a0b1d5-ee26-7bb3-a253-c4c421279434` reports that capture
 commit `b406afe7668809537efad4369ded7e037b915c4c` and helper `b5bb77b` are now
 included in its build worktree (equivalent candidate HEAD `b32546e`), with local
-Release guard commit `13ae5d8`. Xcode 26.6 is installed; the first build attempt
-stopped before compilation because the required iOS platform is still downloading.
-Xcode has no Apple Account, and no iPhone is attached. Distribution has asked
-the user to sign in themselves through Xcode Settings → Apple Accounts. No valid
-signing identity, completed artifact, or installed Personal Team build has been
-supplied yet. Free signing can support own-device checks; it does not pass the
-TestFlight installation gate. Build identity and installation readiness remain
-with distribution before this task starts the TF-2 device check.
+Release guard commit `13ae5d8`. Xcode 26.6 and its downloaded iOS 26.5.1 platform
+are installed. The user signed into Xcode and a Personal Team is visible.
+
+Distribution reports **unsigned Release iPhone BUILD SUCCEEDED**:
+
+- Artifact: `/private/tmp/mirra-distribution-device/Build/Products/Release-iphoneos/Mirra.app`.
+- Source: `b32546e`, with distribution guard `13ae5d8`, helper cherry-pick
+  `404838c`, and capture cherry-pick `b32546e` (equivalent to this task's `b406afe`).
+- Identity: version 1.0.0, build 1, `com.mirra.app`, arm64 `iphoneos`.
+- Intended Render URL confirmed in production bundle; production environment
+  guard and 1883-module Hermes bundling passed. Distribution also reports 32 app
+  tests and TypeScript validation passed on its candidate.
+
+This artifact is unsigned and cannot be installed yet. Distribution found no
+physical device or signing identity. This task asked the user to connect, unlock,
+and trust their iPhone after compilation succeeded; a readiness reply is pending.
+Distribution owns the signed rebuild/install once the phone is available, including
+Developer Mode setup if required. Free signing can support own-device checks; it
+does not pass the TestFlight installation gate. TF-2 starts after installation.
 
 Production remains `https://mirra-backend-wp2b.onrender.com`, deployed commit
 `f8cf5d7196654aff3ff578bb5503668aa3ff15cd`, Free 512 MB, not this candidate.
