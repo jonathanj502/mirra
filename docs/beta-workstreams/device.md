@@ -159,10 +159,16 @@ test. The task asked for the newest clip's exact displayed duration and whether
 the phone was locked for five full minutes; **both the lock/save subcheck and
 full TF-6 remain PENDING** until clarified. The initial interpretation of that
 reply as a completed capture was corrected with integration and distribution.
-Read-only USB copying of only the newest queued test clip is authorized for
-local marker verification once connected, with Airplane Mode on/Wi-Fi off.
-Preserve the queued original; no provider/backend upload is authorized by this
-local inspection step.
+The user answered the duration/lock-time follow-up with "its good," without a
+numeric duration. Read-only USB copying of only the newest queued test clip is
+planned for local duration/marker verification with Airplane Mode on/Wi-Fi off.
+Distribution confirmed the phone is paired and connected over wired USB, with
+Developer Mode/device services available. Automatic approval review rejected the
+saved-recording metadata query before execution because access to private
+recording metadata/audio needs explicit user permission; delegated instructions
+were not accepted as sufficient. Distribution requested that narrow permission.
+**No recording metadata or audio has been read/copied.** Preserve the queued
+original; no provider/backend upload is authorized by this local inspection step.
 
 Production remains `https://mirra-backend-wp2b.onrender.com`, deployed commit
 `f8cf5d7196654aff3ff578bb5503668aa3ff15cd`, Free 512 MB, not this candidate.
