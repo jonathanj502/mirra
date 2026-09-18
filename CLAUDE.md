@@ -16,9 +16,12 @@ The transcription branch passed a real 1400-second local API flow in 351.5 secon
 integrated production, migration/PostgREST, and physical-device checks remain open.
 Production and billing are unchanged. The new backend requires the durable-receipt
 migration before deployment; see the reliability workstream's rollout instructions.
-The integrated unsigned iPhone Release build passed from source `a4b3c14`;
-artifact identity is in `docs/beta-workstreams/distribution.md`. Signing,
-installation and real iPhone behavior remain unverified.
+The integrated iPhone Release build from `a4b3c14` is signed and installed via
+the approved free Personal Team identifier `com.mirra.personal.dm85xzns55` on an
+iPhone 13 / iOS 26.6.2. Connected launch and user confirmation passed; standalone
+launch, auth and recording checks remain open. The shared release ID is unchanged;
+Apple rejected `com.mirra.app` for the current team, so confirm store-ID availability
+before TestFlight. Identity and provisioning expiry are in the distribution evidence.
 
 ## Project Overview
 

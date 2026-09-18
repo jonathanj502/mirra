@@ -72,7 +72,7 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
 | Imports and queue dependencies | `4264627`, `5a3ee41`; equivalents of `ea2c446` and `cbeb382` | Durable imports, input boundaries, consent/account/MIME checks, known metadata quirks and terminal-error retention. | Merged as `f18f6c8`; [evidence](beta-workstreams/imports.md). |
 | Device/capture | `b406afe`, docs through `7b83aae` | Fresh native files, actual saved duration with fallback, microphone Settings recovery and interruption UI. Physical TF-2–7 remain OPEN. | Merged as `c9eadd0`; [evidence](beta-workstreams/device.md). |
 | Transcription | `a907631` | Real 1400s local provider flow passed: 336.94s transcription / 351.5s complete session, history/Reflect/replay/refund checks. | Merged as `6dead13`; [evidence](beta-workstreams/transcription.md). |
-| Build/distribution | `13ae5d8`, `123699d`, `014eb8b` | Native Release production guard and unsigned integrated iPhone Release build passed at source `a4b3c14`. Signing/install remain open. | Guard merged as `62c5f61`; [build evidence](beta-workstreams/distribution.md) integrated through `014eb8b`. |
+| Build/distribution | `13ae5d8`; evidence through `9dd9a92` | Native Release source `a4b3c14` signed, installed and connected-launch verified with the approved free Personal Team ID. TestFlight and standalone/auth/recording checks remain open. | Guard merged as `62c5f61`; [build evidence](beta-workstreams/distribution.md) and device handoff `f3e90ed` integrated. |
 | Reliability/quota | `ecb3413`, `108e07c` (app dependencies above) | Durable quota receipts, SQL concurrency/crash checks and rollout instructions. Migration is local only. | Merged as `3fa5593`; [evidence](beta-workstreams/reliability.md). |
 
 ## Combined validation — 2026-09-18 UTC
@@ -91,6 +91,11 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
   `/private/tmp/mirra-distribution-artifacts/a4b3c14/Mirra.app`; identity and hashes
   are recorded in the distribution evidence. Signing, install and device checks
   remain open. Subsequent integration edits only record evidence.
+- Later physical preparation: signed Personal Team build installed and launched
+  on iPhone 13 / iOS 26.6.2; user confirmed “Mirra opens.” Approved device-only
+  ID `com.mirra.personal.dm85xzns55`; production ID unchanged. Developer Mode and
+  profile trust are resolved. Profile expires 2026-09-25 01:09:36 UTC. Device task
+  owns the pending disconnected launch/auth checks; no full gate is closed.
 - No production migration, deployment, push or purchase. Independent pre-push
   review, actual Supabase/PostgREST validation, integrated real-provider memory,
   sustained load, signed native build and physical checks remain open.

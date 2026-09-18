@@ -53,7 +53,11 @@ No push, deployment, production migration or hosting purchase has occurred.
   Artifact `/private/tmp/mirra-distribution-artifacts/a4b3c14/Mirra.app` retains
   the intended backend URL, background audio and microphone purpose text.
   Source, hashes and build logs are in the [distribution evidence](beta-workstreams/distribution.md).
-  No signed device/TestFlight install or paid membership has been verified.
+  Subsequently, free Personal Team signing/install and connected launch passed
+  on the verified iPhone 13 / iOS 26.6.2. The user confirmed “Mirra opens.” The
+  approved device-only bundle ID is `com.mirra.personal.dm85xzns55`; the shared
+  release ID remains unchanged. Standalone cold launch/auth checks are pending
+  in the device task. No TestFlight install or paid membership is verified.
 
 All acceptance gates below remain **OPEN**. A longer upload timeout does not fix
 the nearly six-minute processing latency or establish a production deadline.
@@ -198,8 +202,8 @@ The existing 100 MiB input cap is retained.
 
 | ID | Acceptance criterion | Status | Evidence / next check |
 | --- | --- | --- | --- |
-| TF-1 | Signed production build processes in App Store Connect, installs through TestFlight, and cold-launches without a development server. | OPEN | Integrated unsigned iPhone Release build passed at `a4b3c14` with production config and 1,883 bundled modules; prior EAS Simulator build passed. Personal Team is visible, but no signing identity, connected-device install or TestFlight build is verified. |
-| TF-2 | Installed build connects over public HTTPS to the intended backend; sign-up/sign-in, restored session, and authenticated reads work. | OPEN | Live Render health, sign-up/sign-in, JWT verification, history, and usage reads passed. Public URL and Supabase values saved to EAS production. Installed-device connection/session restoration remain untested. |
+| TF-1 | Signed production build processes in App Store Connect, installs through TestFlight, and cold-launches without a development server. | OPEN | Integrated Release source `a4b3c14` signed/installed/launched through free Personal Team using approved local ID. User confirmed “Mirra opens.” This is not TestFlight; store membership/signing, available release ID and TestFlight install still required. |
+| TF-2 | Installed build connects over public HTTPS to the intended backend; sign-up/sign-in, restored session, and authenticated reads work. | OPEN | Earlier live Render auth/read checks passed. The integrated Personal Team app is installed and connected launch passed; device task is awaiting disconnected cold launch, auth/session restoration and public-network results. |
 | TF-3 | A real iPhone recording produces a saved, nonempty debrief; it reopens from history after relaunch and Reflect returns a model reply about it. | OPEN | Render processed synthetic M4A → saved debrief → history → real Reflect reply in the live test. The service then exceeded its 512 MB memory limit and restarted; final usage read returned 502. Hosting capacity and physical recording checks remain open. |
 | TF-4 | Offline stopped clips survive force-quit/relaunch; reconnect uploads each exactly once without losing audio, duplicating debriefs, or charging usage twice. | OPEN | Combined app checks and local SQL crash/retry/accounting tests pass, including imported clips. New receipt migration needs Supabase/PostgREST rollout validation; physical device, token refresh, and account-switch checks remain. |
 | TF-5 | Denying microphone permission is recoverable; granting permission in Settings allows recording without a crash or stuck recorder. | OPEN | Device check pending. |
@@ -241,13 +245,17 @@ Run from `backend/`:
 
 ## Device test record
 
-Device: **iPhone 13 / iOS 26.6.2**, reported by the user via iMessage on 2026-09-15.
-Apple membership/team: **unverified**. The user has a personal Apple Account;
+Device: **iPhone 13 (iPhone14,5) / iOS 26.6.2 (23G90)**, confirmed by device
+inventory during the signed installation on 2026-09-18 UTC. Developer Mode is enabled.
+Apple team: free Personal Team verified; **paid membership unverified**. The user has a personal Apple Account;
 they confirmed Mirra is currently a personal project with company ambitions.
-Individual enrollment is recommended for the current beta; enrollment/payment
-and signing remain pending.
-Session-only coordination: questions sent to the user's own number ending 3399;
-replies are checked through Messages. No ongoing messaging automation is set up.
+Paid enrollment/payment and store signing remain pending. The approved free
+device-test app is `com.mirra.personal.dm85xzns55`, version 1.0.0 (1), source
+`a4b3c14`. Its profile expires 2026-09-25 01:09:36 UTC; renew free provisioning
+by rebuilding/reinstalling. Apple rejected the shared `com.mirra.app` identifier
+for the current team; resolve the intended store identifier before a TestFlight build.
+Earlier session-only iMessage coordination on 2026-09-15 is historical. Current
+device questions are in the device/distribution tasks; no messaging automation is set up.
 
 Expo account: `jjiang25`; [Mirra EAS project](https://expo.dev/accounts/jjiang25/projects/mirra),
 project ID `20253166-6402-4548-bb4a-5084bcc0dc03`. EAS initialized build number 1;
