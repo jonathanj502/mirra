@@ -1,82 +1,75 @@
 # Recording analysis
 
-The default transcription model is `gpt-4o-transcribe-diarize`, using the existing
-`OPENAI_API_KEY` in `backend/.env`. The backend requires OpenAI Python SDK 2.44.0
-or newer; the lockfile already resolves that version. The same key also powers
-debrief coaching (`gpt-4.1`) and Reflect chat (`gpt-4.1-mini`). Optional model
-overrides are `OPENAI_DEBRIEF_MODEL` and `OPENAI_REFLECT_MODEL`. Supabase still
-requires its own server-side credential for database access.
+MIRRA accepts recordings and imports up to 24 hours and 2 GiB through the resumable
+`/recordings` API. Capture uses mono 24 kHz, 64 kbps audio on iOS and Android.
+The existing `OPENAI_API_KEY` powers transcription, debrief coaching and Reflect.
 
-1. Decode in blocks, downmixing and resampling directly to mono 16 kHz audio for
-   acoustic analysis. M4A/AAC uses audioread and needs a supported decoder such as
-   FFmpeg installed on the backend host. Full stereo PCM is never retained.
-2. Use Silero VAD's bundled ONNX model only to skip recordings with no detected
-   speech, preserving its default thresholds and minimum speech duration.
-   Its recurrent state is separate for every recording. Send the entire
-   timeline to OpenAI as PCM WAV, with `response_format="diarized_json"` and
-   `chunking_strategy="auto"`. There is no speech concatenation or local splitting.
-3. Use the returned speaker labels and segment timestamps. Merge overlapping
-   intervals of the same speaker to avoid counting them twice; preserve overlap
-   between different speakers.
-4. Estimate the user as the speaker with the highest duration-weighted RMS audio
-   energy. Keep **all** turns with that label, including quieter turns. This is
-   still a microphone-placement assumption, not voice recognition or confirmed
-   identity. No speaker enrollment or correction UI is included in this change.
-5. Compute word, filler, question, speaking-rate, and acoustic statistics for that
-   selected speaker. Other-speaker durations use the other labels. Interruption
-   counts are only a heuristic for overlap initiated by the selected speaker;
-   rapid responses after another speaker finishes are not counted. Pitch uses
-   the original centered YIN frames in batches of 128 to bound FFT memory.
-6. Send the complete speaker-labeled transcript and selected-speaker statistics
-   to OpenAI using `responses.parse` and the `CoachingOutput` Pydantic schema.
-   Coaching instructions explicitly describe identity and timing uncertainty.
-   Invalid or missing output gets two retries before failing and refunding usage;
-   the SDK handles transient API errors with two retries. Empty speech returns a
-   neutral debrief without calling the coaching model. Text requests set
-   `store=False`; Reflect includes transcripts only when enabled by the user.
+1. The app durably saves stopped/imported audio before uploading. Native uploads
+   read at most 4 MiB at a time from an open file handle. Each authenticated request
+   refreshes the session and checks the account and device consent. Upload offsets
+   survive lost responses, reconnection and backend restart.
+2. Completing an upload queues a disk-backed background job. The app polls progress
+   and can close after upload completes. One process, worker and persistent private
+   volume are required. Set `RECORDING_STORAGE_DIR`, mount at least 32 GB, and exclude
+   it from backups and public serving. The queue permits four pending recordings per
+   account, 1,024 pending jobs globally, and 16 GiB of received audio. Declaring a
+   file size does not reserve storage. Each chunk checks the byte budget under the
+   storage lock before writing. These are operational ceilings, not an audio archive.
+3. FFmpeg decodes to disk-backed mono 16 kHz float PCM with allowlisted audio
+   demuxers, no network/playlist loading, and a 900-second timeout. A full day uses
+   approximately 5.5 GB of temporary PCM in addition to the compressed upload.
+   Read-only memory mapping and ten-minute analysis chunks bound array allocations.
+4. Silero VAD skips silent chunks. Speech-bearing chunks preserve all their samples
+   and pauses; a nearby detected pause is preferred at boundaries. Continuous speech
+   may cross a chunk boundary. Each PCM16 WAV sent to `gpt-4o-transcribe-diarize` is
+   under the provider's 25 MB limit, using `diarized_json` and automatic server
+   chunking. Chunk-relative timestamps are shifted back to the original timeline.
+5. Up to four clean 2 to 8 second voice excerpts help match speakers across requests.
+   These references exist only for the current analysis, not as saved enrollment.
+   Anonymous labels are prefixed by their chunk and never merged solely because
+   two requests return the same letter. Unmatched labels can still represent one
+   person; speaker splitting, mixed voices and matching errors affect estimates.
+6. Overlapping same-speaker intervals are merged. The highest duration-weighted RMS
+   speaker is the estimated user, without confirmed identity or a correction UI.
+   All of that label's turns contribute to word, question and speaking-time stats.
+   RMS calculations are bounded. Pitch samples at most 64 five-second excerpts per
+   speaker group. Diarization metadata records matching and sampling limitations.
+7. Structured coaching uses `responses.parse`, `CoachingOutput`, `store=False`, and
+   the saved goal at processing time. Long transcripts are summarized in bounded
+   sections that cover the whole recording before final coaching. The complete
+   labeled transcript is saved only if transcript storage is still enabled at
+   commit time. Summarized coaching is identified in statistics metadata. Empty
+   speech returns a neutral debrief without calling the coaching model.
+8. `complete_recording` atomically stores the debrief and increments monthly usage.
+   Replays cannot charge twice, failed processing consumes no allowance, and deletion
+   tombstones prevent cancelled or deleted recordings from being recreated. Apply
+   `20260916010000_long_recordings.sql` before deploying. `/ready` checks its RPC.
 
-The saved `transcript` now contains the full labeled conversation, for example
-`Speaker A: Hello.`. `stats.metadata.diarization` records the model, speaker count,
-estimated user label, selection method, and per-speaker durations. It contains no
-transcript text. The session endpoint preserves these fields while adding upload
-metadata. Disabling transcript saving still stores no transcript.
+The app retains its original until a saved debrief is acknowledged or cancellation
+is acknowledged by the backend. Uploading needs the app foregrounded; server analysis
+continues independently. Transient job failures receive three attempts, then a 15-minute
+cooldown. The foreground app can automatically resume them afterward without reuploading.
+Invalid media does not trigger repeated analysis. Restarted jobs
+reprocess the recording, since per-chunk transcription checkpoints are not implemented.
+Do not run multiple workers or replicas against this local queue. Shared object storage
+and a database lease are required before scaling horizontally.
 
-Speaker segment durations include pauses within a returned turn; word timestamps
-are unavailable from this model. Speaker splitting, overlap, and acoustic measures
-remain estimates. The model does not separate individual voices out of mixed audio.
+The running worker removes completed audio, cancelled jobs and abandoned analysis files.
+Empty uploads expire after 15 minutes; incomplete/failed uploads with audio expire
+after 24 hours without progress. Upload creation also performs expiry cleanup while
+the worker is busy. A stopped service cannot perform cleanup. Account export includes job
+metadata and account deletion cancels its jobs. Do not log audio, transcripts or tokens.
+The legacy synchronous `/sessions` endpoint retains its 25 MiB request limit; current
+mobile and web clients use resumable uploads for both short and long recordings.
 
-Captured and imported conversations have a 23-minute-20-second (1400-second)
-maximum and a 100 MiB upload cap. This matches the duration ceiling reported by
-the provider in the one-hour test. Overlong input returns HTTP 413 and refunds
-reserved usage. Client-provided duration is not trusted for enforcement.
-Compressed containers whose decoded metadata fits may emit up to one second of
-final-frame padding; decoded samples beyond 1400 seconds are removed. PCM and
-containers reporting a duration over the limit are rejected, not shortened.
-
-If decoded PCM exceeds the transcription API's separate 25 MB limit, the supported
-original M4A, MP3, WAV, or WebM is sent instead when it fits and has at least one
-second of duration headroom. Otherwise FFmpeg encodes the bounded mono timeline
-to 48 kbps MP3, approximately 8.4 MB at the limit. It writes a seekable file so
-gapless metadata preserves the actual duration without added encoder padding.
-The generated file is size-checked before sending. FFmpeg with `libmp3lame` is
-required; the deployment warm-up checks that encoder. Separately generated
-speaker IDs are never joined. Longer conversations are deferred.
-
-Only one audio request runs per server process. A competing request receives 503
-with `Retry-After: 60` before reading its audio into memory or reserving usage;
-the device queue keeps its clip and retries. Run a single Uvicorn worker on a
-small instance. Decoding separately bounds duration to 1400 seconds. The 512 MB
-hosting gate remains open pending deployment
-and actual production measurement; local Linux checks are in
-`docs/testflight-acceptance.md` at the repository root.
-
-Run validation from `backend`:
+Validation from `backend`:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
+# Optional paid requests using synthetic voices only:
+.\.venv\Scripts\python.exe scripts/smoke_ai.py --live --chunked
 ```
 
-Request options and limits follow the
-[OpenAI file-transcription documentation](https://developers.openai.com/api/docs/guides/speech-to-text#speaker-diarization).
-
+Provider limits and voice-reference options follow the
+[OpenAI speech-to-text documentation](https://developers.openai.com/api/docs/guides/speech-to-text).
 Coaching uses [OpenAI structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs).

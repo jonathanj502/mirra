@@ -8,8 +8,13 @@ export interface ConversationStats {
   turnOffsetSeries: { t: string; ms: number }[];
   sessionDurationMinutes: number;
   userSpeechDurationMinutes: number;
-  otherSpeechDurationMinutes: number;
+  otherSpeechDurationMinutes: number | null;
   estimatedWpm: number;
+  otherEstimatedWpm: number | null;
+  userVolumeDbfs: number | null;
+  otherVolumeDbfs: number | null;
+  userPitchHz: number | null;
+  otherPitchHz: number | null;
   energyScore: number;
   energyAxes: number[];
   energySeriesUser: number[];
@@ -19,6 +24,7 @@ export interface ConversationStats {
   lsmDimensionsReference: Record<string, number>;
   totalWordCount: number;
   uniqueWordCount: number;
+  repeatedWords: FillerCount[] | null;
   vocabularyRichness: number;
   fillerCounts: FillerCount[];
   metadata: Record<string, unknown>;
@@ -119,6 +125,8 @@ export interface ProfileSummary {
 }
 
 export interface AccountExport {
+  pendingRecordings: Record<string, unknown>[];
+  deletedConversationIds: string[];
   exportedAt: string;
   userId: string;
   profile: ProfileSummary;
@@ -135,6 +143,7 @@ export type WeeklySummaryDay = 'sunday' | 'monday' | 'tuesday' | 'wednesday' | '
 export type WeeklySummaryTime = 'early_morning' | 'morning' | 'midday' | 'afternoon' | 'evening' | 'night';
 export type CoachingTone = 'warm_reflective' | 'direct_practical' | 'curious_gentle';
 export type CoachingDepth = 'quick' | 'balanced' | 'deep';
+export type CoachingGoal = 'general' | 'make_friends' | 'confidence' | 'listening' | 'clarity' | 'assertiveness';
 
 export interface UserSettings {
   notificationsEnabled: boolean;
@@ -146,4 +155,5 @@ export interface UserSettings {
   includeTranscriptInReflect: boolean;
   coachingTone: CoachingTone;
   coachingDepth: CoachingDepth;
+  coachingGoal: CoachingGoal;
 }

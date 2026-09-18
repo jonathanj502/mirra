@@ -35,6 +35,7 @@ ROW_1 = {
         "question_count": 9,
         "interruption_count": 1,
         "average_turn_offset_ms": 220,
+        "turn_offset_series": [{"t": "00:04", "ms": 220}],
         "session_duration_minutes": 20.0,
         "user_speech_duration_minutes": 11.0,
         "estimated_wpm": 132.0,
@@ -62,6 +63,7 @@ ROW_2 = {
         "question_count": 2,
         "interruption_count": 3,
         "average_turn_offset_ms": 160,
+        "turn_offset_series": [{"t": "00:04", "ms": 160}],
         "session_duration_minutes": 40.0,
         "user_speech_duration_minutes": 28.0,
         "estimated_wpm": 145.0,
@@ -196,16 +198,16 @@ def test_build_progress_groups_daily_minutes_and_fillers():
     assert week.daily_minutes[1] == 20.0
     assert week.daily_minutes[2] == 40.0
     assert week.daily_questions[1] == 9
-    assert week.daily_open_questions[1] == 1
-    assert week.daily_closed_questions[1] == 1
+    assert week.daily_open_questions[1] == 2
+    assert week.daily_closed_questions[1] == 0
     assert week.daily_open_questions[2] == 0
     assert week.daily_closed_questions[2] == 2
     assert week.daily_interruptions[2] == 3
     assert week.daily_turn_offsets[1] == 220
     assert week.daily_turn_offsets[2] == 160
     assert week.total_questions == 11
-    assert week.total_open_questions == 1
-    assert week.total_closed_questions == 3
+    assert week.total_open_questions == 2
+    assert week.total_closed_questions == 2
     assert week.average_questions == 5.5
     assert week.average_turn_offset_ms == 190
     assert week.energy_score == 60
@@ -218,6 +220,17 @@ def test_build_progress_groups_daily_minutes_and_fillers():
     assert week.conversations[0].energy_score == 44
     assert week.conversations[0].lsm_score == 0.61
     assert any(item.phrase == "you know" for item in week.top_fillers)
+    assert week.wins == [ROW_2["observation"], ROW_1["observation"]]
+    assert week.nudges == [ROW_2["pattern_to_reduce"], ROW_1["pattern_to_reduce"]]
+
+
+def test_zero_turn_gap_is_present_but_absent_timing_is_not_fabricated():
+    row = {**ROW_1, "stats": {**ROW_1["stats"], "average_turn_offset_ms": 0,
+                            "turn_offset_series": [{"t": "00:04", "ms": 0}]}}
+    with patch("app.dashboard.datetime", _FrozenDatetime):
+        assert build_progress([row]).weeks[0].daily_turn_offsets[1] == 0
+        row["stats"]["turn_offset_series"] = []
+        assert build_progress([row]).weeks[0].daily_turn_offsets[1] is None
 
 
 def test_build_profile_summary_rolls_up_usage():
@@ -228,12 +241,33 @@ def test_build_profile_summary_rolls_up_usage():
     assert summary.used_this_month == 2
 
 
+def test_legacy_diarized_word_details_never_include_other_speakers():
+    stats = {key: value for key, value in ROW_1["stats"].items()
+             if key not in {"unique_word_count", "total_word_count", "filler_counts"}}
+    stats["metadata"] = {"diarization": {"user_speaker": "A"}}
+    row = {**ROW_1, "stats": stats,
+           "transcript": "Speaker B: Like like other words.\nSpeaker A: Hello hello. Why?"}
+    result = _client([row]).get(f"/debriefs/{row['id']}").json()["stats"]
+    assert result["total_word_count"] == 3
+    assert result["unique_word_count"] == 2
+    assert result["filler_counts"] == []
+    assert result["other_speech_duration_minutes"] is None
+    with patch("app.dashboard.datetime", _FrozenDatetime):
+        week = build_progress([row]).weeks[0]
+        assert week.vocabulary_total_words == 3
+        assert week.top_fillers == []
+    stats["metadata"] = {}
+    result = _client([row]).get(f"/debriefs/{row['id']}").json()["stats"]
+    assert result["total_word_count"] == 0
+    assert result["filler_counts"] == []
+
+
 def test_debrief_detail_returns_owned_row():
     r = _client([ROW_1]).get("/debriefs/00000000-0000-0000-0000-000000000101")
     assert r.status_code == 200
     assert r.json()["id"] == ROW_1["id"]
-    assert r.json()["stats"]["open_question_count"] == 1
-    assert r.json()["stats"]["closed_question_count"] == 1
+    assert r.json()["stats"]["open_question_count"] == 2
+    assert r.json()["stats"]["closed_question_count"] == 0
     assert r.json()["stats"]["filler_counts"][0] == {"phrase": "you know", "count": 1}
 
 
@@ -292,9 +326,11 @@ def test_reflect_uses_openai_when_configured(reflection_api):
     assert "Honestly, what was that like?" not in body["input"][-1]["content"]
 
 
-def test_reflect_uses_saved_coaching_and_privacy_settings(reflection_api):
+@pytest.mark.parametrize("goal, guidance", [("assertiveness", "respectful boundaries"), ("confidence", "Preserve honest uncertainty")])
+def test_reflect_uses_saved_coaching_and_privacy_settings(reflection_api, goal, guidance):
     settings_row = {
         "coaching_tone": "direct_practical",
+        "coaching_goal": goal,
         "coaching_depth": "quick",
         "include_transcript_in_reflect": True,
     }
@@ -307,6 +343,12 @@ def test_reflect_uses_saved_coaching_and_privacy_settings(reflection_api):
     body = json.loads(reflection_api.call_args.args[0].content)
     assert "direct, practical" in body["input"][0]["content"]
     assert "one short sentence" in body["input"][0]["content"]
+    assert guidance in body["input"][0]["content"]
+    assert "Never claim to know another person's perception" in body["input"][0]["content"]
+    assert "no universal ideal talk/listen ratio" in body["input"][0]["content"]
+    assert "Speaking-time share does not measure listening quality" in body["input"][0]["content"]
+    assert "Speaker identity and timing are estimates" in body["input"][0]["content"]
+    assert "Do not use em dashes" in body["input"][0]["content"]
     assert "Honestly, what was that like?" in body["input"][-1]["content"]
 
 

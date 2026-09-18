@@ -7,7 +7,7 @@ import ts from 'typescript';
 function importer() {
   const state = {
     user: { id: 'owner' }, asset: { uri: 'file:///original.m4a', name: 'original.m4a', size: 100 },
-    seconds: 1400, fileSize: 100, allowed: true, savedConsent: true, rows: [], pickCount: 0,
+    seconds: 86400, fileSize: 100, allowed: true, savedConsent: true, rows: [], pickCount: 0,
   };
   const slots = [];
   let cursor = 0;
@@ -79,14 +79,14 @@ test('supported formats retain source, title, owner and exact limits in the exis
     ['clip.wav', 'audio/x-wav', 'audio/x-wav'], ['clip.webm', 'application/octet-stream', 'audio/webm'],
     ['clip.webm', 'Audio/WebM; codecs=opus', 'audio/webm'],
   ]) {
-    state.asset = { ...state.asset, name, mimeType, size: 100 * 1024 * 1024 };
+    state.asset = { ...state.asset, name, mimeType, size: 2 * 1024 * 1024 * 1024 };
     await state.render().importAudio();
     const row = state.rows.at(-1);
     assert.equal(row.audio.uri, 'file:///original.m4a');
     assert.equal(row.audio.type, expected);
-    assert.equal(row.audio.name, name);
+    assert.match(row.audio.name, /^mirra-import-import-\d+\.(m4a|mp3|wav|webm)$/);
     assert.equal(row.title, name.replace(/\.[^.]+$/, ''));
-    assert.equal(row.seconds, 1400);
+    assert.equal(row.seconds, 86400);
     assert.equal(row.userId, 'owner');
     assert.ok(row.startedAt);
     assert.equal(state.render().error, null);
@@ -96,13 +96,12 @@ test('supported formats retain source, title, owner and exact limits in the exis
 
 test('oversized, overlong, unreadable, empty, and unsupported files never enter the queue', async () => {
   for (const [change, error] of [
-    [{ asset: { name: 'clip.wav', size: 100 * 1024 * 1024 + 1 } }, /100 MiB/],
-    [{ seconds: 1401.001 }, /23 minutes 20 seconds/],
+    [{ asset: { name: 'clip.wav', size: 2 * 1024 * 1024 * 1024 + 1 } }, /2 GiB/],
+    [{ seconds: 86401.001 }, /24 hours/],
     [{ asset: { name: 'clip.txt', size: 10 } }, /Unsupported audio type/],
     [{ asset: { name: 'clip.wav', size: 0 } }, /nonempty/],
     [{ asset: { name: 'clip.wav', size: NaN } }, /file size/],
     [{ asset: { name: 'clip.wav' }, fileSize: 0 }, /file size/],
-    [{ metadataError: new Error('Could not read the audio duration') }, /audio duration/],
     [{ pickError: new Error('Could not open audio file') }, /Could not open/],
   ]) {
     const state = Object.assign(importer(), change);
@@ -116,9 +115,9 @@ test('oversized, overlong, unreadable, empty, and unsupported files never enter 
 test('Apple MP3 padding and unavailable native metadata defer to strict server validation', async () => {
   const state = importer();
   state.asset.name = 'clip.mp3';
-  state.seconds = 1400.076;
+  state.seconds = 86400.076;
   await state.render().importAudio();
-  assert.equal(state.rows[0].seconds, 1400.076);
+  assert.equal(state.rows[0].seconds, 86400.076);
   state.asset.name = 'clip.webm';
   state.metadataError = new Error('Could not read the audio file. Try another format.');
   await state.render().importAudio();
@@ -128,12 +127,12 @@ test('Apple MP3 padding and unavailable native metadata defer to strict server v
 });
 
 test('missing picker size uses actual native file or web File size', async () => {
-  for (const file of [undefined, { size: 100 * 1024 * 1024 + 1 }]) {
+  for (const file of [undefined, { size: 2 * 1024 * 1024 * 1024 + 1 }]) {
     const state = importer();
     state.asset = { name: 'clip.wav', uri: 'file:///clip.wav', file };
-    state.fileSize = 100 * 1024 * 1024 + 1;
+    state.fileSize = 2 * 1024 * 1024 * 1024 + 1;
     await state.render().importAudio();
-    assert.match(state.render().error, /100 MiB/);
+    assert.match(state.render().error, /2 GiB/);
     assert.equal(state.rows.length, 0);
   }
 });

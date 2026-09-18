@@ -14,8 +14,8 @@ function reader(player) {
 
 test('duration reader accepts the maximum and cleans up without starting playback', async () => {
   let removed = 0;
-  const getDuration = reader({ isLoaded: true, duration: 1400, remove() { removed++; } });
-  assert.equal(await getDuration('file:///clip.m4a'), 1400);
+  const getDuration = reader({ isLoaded: true, duration: 86400, remove() { removed++; } });
+  assert.equal(await getDuration('file:///clip.m4a'), 86400);
   assert.equal(removed, 1);
 });
 
@@ -33,7 +33,7 @@ test('duration reader waits for metadata and handles the listener-registration r
     let removed = 0;
     let unsubscribed = 0;
     const player = {
-      isLoaded: false, duration: 1400,
+      isLoaded: false, duration: 86400,
       addListener(event, listener) {
         assert.equal(event, 'playbackStatusUpdate');
         if (race) this.isLoaded = true;
@@ -42,7 +42,7 @@ test('duration reader waits for metadata and handles the listener-registration r
       },
       remove() { removed++; },
     };
-    assert.equal(await reader(player)('file:///clip.m4a'), 1400);
+    assert.equal(await reader(player)('file:///clip.m4a'), 86400);
     assert.equal(removed, 1);
     assert.equal(unsubscribed, 1);
   }

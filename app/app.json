@@ -8,48 +8,96 @@
     "userInterfaceStyle": "light",
     "backgroundColor": "#F6EFE0",
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.mirra.app",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Mirra uses your microphone to record conversations you choose to debrief.",
+        "NSMicrophoneUsageDescription": "Record conversations with everyone’s permission. Mirra sends recordings to OpenAI to transcribe and provide coaching.",
         "UIBackgroundModes": [
           "audio"
+        ],
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "privacyManifests": {
+        "NSPrivacyTracking": false,
+        "NSPrivacyCollectedDataTypes": [
+          {
+            "NSPrivacyCollectedDataType": "NSPrivacyCollectedDataTypeEmailAddress",
+            "NSPrivacyCollectedDataTypeLinked": true,
+            "NSPrivacyCollectedDataTypeTracking": false,
+            "NSPrivacyCollectedDataTypePurposes": [
+              "NSPrivacyCollectedDataTypePurposeAppFunctionality"
+            ]
+          },
+          {
+            "NSPrivacyCollectedDataType": "NSPrivacyCollectedDataTypeUserID",
+            "NSPrivacyCollectedDataTypeLinked": true,
+            "NSPrivacyCollectedDataTypeTracking": false,
+            "NSPrivacyCollectedDataTypePurposes": [
+              "NSPrivacyCollectedDataTypePurposeAppFunctionality"
+            ]
+          },
+          {
+            "NSPrivacyCollectedDataType": "NSPrivacyCollectedDataTypeAudioData",
+            "NSPrivacyCollectedDataTypeLinked": true,
+            "NSPrivacyCollectedDataTypeTracking": false,
+            "NSPrivacyCollectedDataTypePurposes": [
+              "NSPrivacyCollectedDataTypePurposeAppFunctionality"
+            ]
+          },
+          {
+            "NSPrivacyCollectedDataType": "NSPrivacyCollectedDataTypeOtherUserContent",
+            "NSPrivacyCollectedDataTypeLinked": true,
+            "NSPrivacyCollectedDataTypeTracking": false,
+            "NSPrivacyCollectedDataTypePurposes": [
+              "NSPrivacyCollectedDataTypePurposeAppFunctionality"
+            ]
+          }
         ]
       }
     },
     "android": {
       "package": "com.mirra.app",
       "adaptiveIcon": {
-        "backgroundColor": "#ECE2D2"
+        "backgroundColor": "#B85136",
+        "foregroundImage": "./assets/adaptive-icon.png"
       },
       "permissions": [
         "RECORD_AUDIO",
+        "POST_NOTIFICATIONS",
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_MICROPHONE"
+      ],
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW"
       ]
     },
     "plugins": [
       "expo-router",
       "expo-asset",
       "expo-web-browser",
-      "expo-font",
+      "./plugins/withRecordingService",
       [
         "expo-splash-screen",
         {
-          "resizeMode": "contain",
-          "backgroundColor": "#ECE2D2"
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 180,
+          "backgroundColor": "#F6EFE0"
         }
       ],
+      "expo-font",
       "expo-status-bar",
       [
         "expo-audio",
         {
-          "microphonePermission": "Mirra uses your microphone to record conversations you choose to debrief.",
+          "microphonePermission": "Record conversations with everyone’s permission. Mirra sends recordings to OpenAI to transcribe and provide coaching.",
           "enableBackgroundRecording": true,
           "enableBackgroundPlayback": false
         }
       ]
     ],
+    "icon": "./assets/icon.png",
     "extra": {
       "eas": {
         "projectId": "20253166-6402-4548-bb4a-5084bcc0dc03"

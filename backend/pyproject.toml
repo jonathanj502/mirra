@@ -12,15 +12,11 @@ dependencies = [
     "python-jose[cryptography]>=3.3",
     "httpx>=0.27",
     "openai>=2.44.0",
-    "silero-vad==6.2.1",
+    "silero-vad>=5.0",
     "torch>=1.12.0",
-    "torchaudio>=0.12.0",
     "librosa>=0.10",
     "numpy>=1.24",
     "soundfile>=0.12",
-    "audioread>=3.0",
-    "soxr>=0.5",
-    "onnxruntime>=1.20",
 ]
 
 [project.optional-dependencies]
@@ -38,13 +34,3 @@ packages = ["app"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-
-# Render has no GPU; PyPI's Linux wheels otherwise pull in CUDA libraries.
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[tool.uv.sources]
-torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
-torchaudio = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]

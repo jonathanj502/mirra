@@ -100,7 +100,7 @@ export function ExpandableMetric({
 
   return (
     <Card style={styles.card}>
-      <Pressable onPress={toggle} style={styles.header}>
+      <Pressable accessibilityRole="button" aria-expanded={open} onPress={toggle} style={styles.header}>
         <ChartGlyph kind={chartKind} color={accent} />
         <View style={styles.headerMid}>
           <Eyebrow>{eyebrow}</Eyebrow>

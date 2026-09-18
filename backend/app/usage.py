@@ -35,28 +35,16 @@ def get_usage(db: Client, user_id: str) -> dict:
     }
 
 
-def _receipt_rpc(db: Client, name: str, user_id: str, debrief_id: str, attempt_id: str, **params):
+def complete_recording(db: Client, user_id: str, debrief_id: str, payload: dict) -> dict:
+    """Save and charge once in one transaction, shared by jobs and legacy uploads."""
     try:
-        return db.rpc(name, {
-            "p_user_id": user_id, "p_debrief_id": debrief_id, "p_attempt_id": attempt_id, **params,
+        return db.rpc("complete_recording", {
+            "owner_id": user_id, "target_id": debrief_id,
+            "payload": payload, "monthly_cap": settings.free_tier_cap,
         }).execute().data
     except APIError as exc:
-        if exc.code in {"PT402", "PT409", "PT410"}:
-            raise HTTPException(status_code=int(exc.code[2:]), detail=exc.message) from exc
+        if "monthly_debrief_limit" in exc.message:
+            raise HTTPException(402, "Monthly debrief limit reached") from exc
+        if "recording_deleted" in exc.message:
+            raise HTTPException(410, "This conversation was deleted. Discard its saved audio copy.") from exc
         raise
-
-
-def check_and_increment(db: Client, user_id: str, debrief_id: str, attempt_id: str) -> bool:
-    """Reuse a durable reservation on retry; False means this ID already completed."""
-    return _receipt_rpc(db, "reserve_debrief", user_id, debrief_id, attempt_id,
-                        p_month_key=_month_key(), p_cap=settings.free_tier_cap)
-
-
-def release(db: Client, user_id: str, debrief_id: str, attempt_id: str) -> None:
-    """Refund only this uncommitted attempt, in its original reservation month."""
-    _receipt_rpc(db, "release_debrief", user_id, debrief_id, attempt_id)
-
-
-def complete_debrief(db: Client, user_id: str, debrief_id: str, attempt_id: str, payload: dict) -> dict:
-    """Save the debrief and mark its charge committed in one database transaction."""
-    return _receipt_rpc(db, "complete_debrief", user_id, debrief_id, attempt_id, p_debrief=payload)[0]

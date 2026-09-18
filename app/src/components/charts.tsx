@@ -48,7 +48,7 @@ export function Donut({
       {(centerLabel || centerSub) && (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
           {centerLabel ? <Serif style={{ fontSize: size * 0.28, lineHeight: size * 0.3, color: colors.ink }}>{centerLabel}</Serif> : null}
-          {centerSub ? <Body style={{ fontSize: 10, color: 'rgba(42,37,32,0.55)', letterSpacing: 0.8, textTransform: 'uppercase', marginTop: 4 }}>{centerSub}</Body> : null}
+          {centerSub ? <Body style={{ fontSize: 10, color: colors.muted, letterSpacing: 0.8, textTransform: 'uppercase', marginTop: 4 }}>{centerSub}</Body> : null}
         </View>
       )}
     </View>
@@ -97,7 +97,7 @@ export function RadarChart({
   axes: { label: string }[]; series: RadarSeries[]; size?: number; rings?: number;
 }) {
   const cx = size / 2, cy = size / 2;
-  const radius = size * 0.36;
+  const radius = Math.max(24, size / 2 - 70);
   const n = axes.length;
   const angle = (i: number) => -Math.PI / 2 + (i * 2 * Math.PI) / n;
   const toXY = (i: number, v: number): [number, number] => [
@@ -275,6 +275,9 @@ export function TurnOffsetChart({
   data: OffsetPt[]; width?: number; height?: number; yMin?: number; yMax?: number; lineColor?: string;
 }) {
   const padL = 36, padR = 10, padT = 8, padB = 22;
+  const offsets = data.flatMap(point => point.ms == null ? [] : [point.ms]);
+  yMin = Math.min(yMin, ...offsets);
+  yMax = Math.max(yMax, ...offsets);
   const plotW = width - padL - padR;
   const plotH = height - padT - padB;
   const xToPx = (i: number) => padL + (data.length === 1 ? plotW / 2 : (i / (data.length - 1)) * plotW);
@@ -282,8 +285,7 @@ export function TurnOffsetChart({
 
   const zones = [
     { from: yMin, to: 0, color: colors.lavender, opacity: 0.10 },
-    { from: 0, to: 400, color: colors.sage, opacity: 0.16 },
-    { from: 400, to: yMax, color: colors.sand, opacity: 0.28 },
+    { from: 0, to: yMax, color: colors.sand, opacity: 0.20 },
   ];
 
   const points = data.map((d, i) => [xToPx(i), d.ms == null ? null : yToPx(d.ms)] as [number, number | null]);
@@ -302,14 +304,12 @@ export function TurnOffsetChart({
         return <Rect key={`z${i}`} x={padL} y={top} width={plotW} height={h} fill={z.color} opacity={z.opacity} />;
       })}
       <Line x1={padL} x2={padL + plotW} y1={yToPx(0)} y2={yToPx(0)} stroke="rgba(42,37,32,0.32)" strokeWidth={1} />
-      <Line x1={padL} x2={padL + plotW} y1={yToPx(200)} y2={yToPx(200)} stroke={colors.sage} strokeWidth={1.2} strokeDasharray={[4, 3]} opacity={0.85} />
-      <SvgText x={padL + plotW - 2} y={yToPx(200) - 3} textAnchor="end" fontFamily={FONT} fontSize={9} fill={colors.sage}>target +200</SvgText>
-      {[-200, 0, 200, 500].map((v) => (
-        <SvgText key={`yt${v}`} x={padL - 4} y={yToPx(v) + 3} fontFamily={FONT} fontSize={9} fill="rgba(42,37,32,0.55)" textAnchor="end">
+      {[yMin, 0, yMax].map((v) => (
+        <SvgText key={`yt${v}`} x={padL - 4} y={yToPx(v) + 3} fontFamily={FONT} fontSize={9} fill={colors.muted} textAnchor="end">
           {v > 0 ? `+${v}` : v}
         </SvgText>
       ))}
-      <SvgText x={4} y={padT + 5} fontFamily={FONT} fontSize={8} fill="rgba(42,37,32,0.5)">ms</SvgText>
+      <SvgText x={4} y={padT + 5} fontFamily={FONT} fontSize={8} fill={colors.muted}>ms</SvgText>
       {data.map((d, i) => {
         const skip = !allShort && data.length > 6 && i % 2 !== 0 && i !== data.length - 1 && i !== 0;
         if (skip) return null;
@@ -317,7 +317,7 @@ export function TurnOffsetChart({
         return (
           <SvgText
             key={`x${i}`} x={xToPx(i)} y={height - 4} textAnchor={anchor} fontFamily={FONT} fontSize={9}
-            fill={d.ms == null ? 'rgba(42,37,32,0.25)' : 'rgba(42,37,32,0.55)'}
+            fill={colors.muted}
           >
             {d.t}
           </SvgText>
@@ -388,7 +388,7 @@ export function LSMHistogram({
       {Array.from({ length: yMax + 1 }, (_, i) => i).map((v) => (
         <G key={`y${v}`}>
           <Line x1={padL} y1={yToPx(v)} x2={padL + plotW} y2={yToPx(v)} stroke={colors.hair} strokeDasharray={v === 0 ? undefined : [1, 4]} opacity={v === 0 ? 1 : 0.5} />
-          <SvgText x={padL - 4} y={yToPx(v) + 3} textAnchor="end" fontFamily={FONT} fontSize={9} fill="rgba(42,37,32,0.55)">{v}</SvgText>
+          <SvgText x={padL - 4} y={yToPx(v) + 3} textAnchor="end" fontFamily={FONT} fontSize={9} fill={colors.muted}>{v}</SvgText>
         </G>
       ))}
       {bins.map((count, i) => {
@@ -404,12 +404,12 @@ export function LSMHistogram({
         );
       })}
       {[0, 0.2, 0.4, 0.6, 0.8, 1.0].map((v) => (
-        <SvgText key={`x${v}`} x={padL + v * plotW} y={height - 4} textAnchor="middle" fontFamily={FONT} fontSize={9} fill="rgba(42,37,32,0.55)">
+        <SvgText key={`x${v}`} x={padL + v * plotW} y={height - 4} textAnchor="middle" fontFamily={FONT} fontSize={9} fill={colors.muted}>
           {v.toFixed(1)}
         </SvgText>
       ))}
       <SvgText
-        x={padL - 18} y={padT + plotH / 2} textAnchor="middle" fontFamily={FONT} fontSize={8} fill="rgba(42,37,32,0.5)"
+        x={padL - 18} y={padT + plotH / 2} textAnchor="middle" fontFamily={FONT} fontSize={8} fill={colors.muted}
         rotation={-90} originX={padL - 18} originY={padT + plotH / 2}
       >
         convos

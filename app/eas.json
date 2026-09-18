@@ -18,6 +18,18 @@
       "autoIncrement": true,
       "ios": {
         "image": "latest"
+      },
+      "android": {
+        "buildType": "app-bundle"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "ios": {
+        "simulator": true
+      },
+      "android": {
+        "buildType": "apk"
       }
     }
   },

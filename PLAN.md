@@ -1,10 +1,12 @@
 # Mirra — MVP Implementation Plan
 
+Historical planning document. It includes ideas that are not implemented. See [README.md](README.md), [AGENTS.md](AGENTS.md), and the [release record](docs/RELEASE.md) for the current product and release status.
+
 ## Context
 
 Mirra is a conversational coaching app that analyzes whether the user is a good *conversationalist* in daily life (not a public speaker). The target user struggles with making conversations engaging and doesn't know what they're doing wrong. Mirra records real conversations, analyzes the user's speech for social signals (talk/listen ratio, question frequency, interruptions, energy, vocabulary), and surfaces a debrief card with actionable coaching and an AI-powered Reflect chat grounded in the user's data.
 
-This is a greenfield project — the current repo contains only a `README.md` placeholder.
+At the time this plan was written, the repository contained only a README placeholder.
 
 **Key decisions:**
 - **Frontend:** React Native (cross-platform iOS + Android from one TS codebase)

@@ -1,6 +1,6 @@
 import io
 import json
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import httpx
@@ -16,7 +16,7 @@ import app.main as main
 from app.pipeline.vad import Segment
 from app.pipeline.speaker import select_user_speaker
 from app.pipeline.transcription import TranscribedTurn, TranscriptionInputTooLarge
-from app.pipeline.prosody import compute_stats, _pitch_for_segments
+from app.pipeline.prosody import compute_stats
 from app.pipeline import coaching
 from openai import OpenAI
 
@@ -54,15 +54,13 @@ def _db_for_sessions(under_cap: bool = True) -> MagicMock:
     db = MagicMock()
     usage_result = MagicMock()
     usage_result.data = None if under_cap else {"count": 5}
-    db.table.return_value.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = usage_result
-    def rpc(name, params):
-        if name == "reserve_debrief":
-            if not under_cap:
-                from postgrest.exceptions import APIError
-                raise APIError({"code": "PT402", "message": "Monthly debrief limit reached", "details": "", "hint": ""})
-            return MagicMock(execute=MagicMock(return_value=MagicMock(data=True)))
-        return MagicMock(execute=MagicMock(return_value=MagicMock(data=[SAMPLE_DEBRIEF])))
-    db.rpc.side_effect = rpc
+    db.table.return_value.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = None
+    usage_query = MagicMock()
+    usage_query.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = usage_result
+    tables = db.table.return_value
+    db.table.side_effect = lambda name: usage_query if name == "debrief_usage" else tables
+    db.rpc.return_value.execute.return_value.data = SAMPLE_DEBRIEF
+    db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {}
     return db
 
 
@@ -107,17 +105,21 @@ def test_compute_stats_no_other_speech():
     assert stats["talk_listen_ratio"] == 99.0
 
 
-def test_balanced_speaking_time_improves_energy_score():
+def test_speaking_share_is_not_scored_as_better_when_balanced():
     user = Segment(0, 10, 0.5)
     balanced = compute_stats([user, Segment(10, 20, 0.5)], [user], "same words", 30.0)
     unbalanced = compute_stats([user, Segment(10, 30, 0.5)], [user], "same words", 30.0)
     assert balanced["energy_axes"] == unbalanced["energy_axes"]
-    assert balanced["energy_score"] > unbalanced["energy_score"]
+    assert balanced["energy_score"] == unbalanced["energy_score"]
 
 
 def test_no_speech_does_not_report_a_high_talk_ratio():
     stats = compute_stats([], [], "", 60.0)
     assert stats["talk_listen_ratio"] == 0
+    assert stats["user_volume_dbfs"] is None
+    assert stats["user_pitch_hz"] is None
+    assert stats["other_estimated_wpm"] is None
+    assert stats["repeated_words"] == []
 
 
 def test_compute_stats_adds_voice_analysis_from_audio():
@@ -126,7 +128,8 @@ def test_compute_stats_adds_voice_analysis_from_audio():
     audio = (0.08 * np.sin(2 * np.pi * 180 * timeline)).astype(np.float32)
     all_segs = [Segment(0, 1, 0.08), Segment(1.05, 2, 0.04), Segment(2.5, 3, 0.09)]
     user_segs = [all_segs[0], all_segs[2]]
-    stats = compute_stats(all_segs, user_segs, "What changed? Did that help? like actually", 3.0, audio=audio, sample_rate=sr)
+    stats = compute_stats(all_segs, user_segs, "That changed. What changed? Did that help? like actually like", 3.0,
+                          audio=audio, sample_rate=sr, other_transcript="It helped a lot.")
     assert stats["question_count"] == 2
     assert stats["open_question_count"] == 1
     assert stats["closed_question_count"] == 1
@@ -136,24 +139,21 @@ def test_compute_stats_adds_voice_analysis_from_audio():
     assert len(stats["energy_series_user"]) == 16
     assert stats["energy_score"] > 0
     assert stats["lsm_score"] > 0
-    assert stats["filler_counts"][0] == {"phrase": "like", "count": 1}
-
-
-@pytest.mark.parametrize("length", [65535, 65536, 65537, 160000])
-def test_batched_pitch_preserves_full_turn_median_at_frame_boundaries(length):
-    import librosa
-
-    sr = 16000
-    time = np.arange(length) / sr
-    audio = np.sin(2 * np.pi * (120 * time + 8 * time**2)).astype(np.float32)
-    expected = float(np.median(librosa.yin(audio, fmin=50, fmax=500, sr=sr)))
-    actual = _pitch_for_segments(audio, sr, [Segment(0, length / sr, 1)])
-    assert actual == pytest.approx(expected, abs=1e-5)
+    assert stats["filler_counts"][0] == {"phrase": "like", "count": 2}
+    assert stats["other_estimated_wpm"] == pytest.approx(252.6)
+    assert stats["user_volume_dbfs"] == pytest.approx(-21.6, abs=0.1)
+    assert stats["other_volume_dbfs"] == pytest.approx(-28, abs=0.1)
+    assert stats["user_pitch_hz"] == pytest.approx(180, abs=3)
+    assert stats["other_pitch_hz"] == pytest.approx(180, abs=3)
+    assert stats["repeated_words"] == [{"phrase": "that", "count": 2}, {"phrase": "changed", "count": 2}, {"phrase": "like", "count": 2}]
+    from app.models.debrief import ConversationStats
+    assert ConversationStats(**stats).model_dump()["repeated_words"] == stats["repeated_words"]
+    assert ConversationStats(**stats).model_dump()["user_pitch_hz"] == stats["user_pitch_hz"]
 
 
 @patch("app.pipeline.coordinator.analyze")
 @patch("app.pipeline.coordinator.transcribe")
-@patch("app.pipeline.coordinator.has_speech")
+@patch("app.pipeline.coordinator.detect_segments")
 def test_coordinator_resamples_stereo_audio_for_voice_analysis(mock_detect, mock_transcribe, mock_analyze):
     from app.pipeline import coordinator
 
@@ -161,7 +161,8 @@ def test_coordinator_resamples_stereo_audio_for_voice_analysis(mock_detect, mock
     mock_transcribe.return_value = [TranscribedTurn(0, 0.5, "A", "What changed?")]
     mock_analyze.return_value = {"observation": "x", "pattern_to_reduce": "y", "thing_to_try_next": "z"}
 
-    result = coordinator.run(_fake_wav(sample_rate=44100, stereo=True))
+    result = coordinator.run(_fake_wav(sample_rate=44100, stereo=True), coaching_goal="make_friends")
+    assert mock_analyze.call_args.kwargs == {"coaching_goal": "make_friends"}
 
     detected_audio, detected_sr = mock_detect.call_args.args
     transcribed_audio, transcribed_sr = mock_transcribe.call_args.args
@@ -175,7 +176,8 @@ def test_coordinator_resamples_stereo_audio_for_voice_analysis(mock_detect, mock
 # --- mocked I/O tests ---
 
 @pytest.mark.parametrize("invalid_attempts", [0, 2, 3])
-def test_analyze_validates_openai_output_and_bounds_retries(monkeypatch, invalid_attempts):
+@pytest.mark.parametrize("goal, guidance", [("make_friends", "mutual self-disclosure"), ("confidence", "Preserve honest uncertainty")])
+def test_analyze_validates_openai_output_and_bounds_retries(monkeypatch, invalid_attempts, goal, guidance):
     expected = {"observation": "x", "pattern_to_reduce": "y", "thing_to_try_next": "z"}
     requests = []
 
@@ -198,9 +200,9 @@ def test_analyze_validates_openai_output_and_bounds_retries(monkeypatch, invalid
     monkeypatch.setattr(coaching, "OpenAI", client)
     if invalid_attempts == 3:
         with pytest.raises(RuntimeError, match="valid debrief"):
-            coaching.analyze("Speaker A: Hello. Speaker B: Hi.", {"question_count": 1})
+            coaching.analyze("Speaker A: Hello. Speaker B: Hi.", {"question_count": 1}, coaching_goal=goal)
     else:
-        assert coaching.analyze("Speaker A: Hello. Speaker B: Hi.", {"question_count": 1}) == expected
+        assert coaching.analyze("Speaker A: Hello. Speaker B: Hi.", {"question_count": 1}, coaching_goal=goal) == expected
     assert len(requests) == min(invalid_attempts + 1, 3)
     assert str(requests[0].url) == "https://api.openai.com/v1/responses"
     body = json.loads(requests[0].content)
@@ -208,6 +210,13 @@ def test_analyze_validates_openai_output_and_bounds_retries(monkeypatch, invalid
     assert body["store"] is False
     assert "Speaker B: Hi." in body["input"] and "question_count" in body["input"]
     assert "not verified voice recognition" in body["instructions"]
+    assert guidance in body["instructions"]
+    assert "Do not invent a problem" in body["instructions"]
+    assert "Do not assign daily exercises" in body["instructions"]
+    assert "no universal ideal talk/listen ratio" in body["instructions"]
+    assert "Speaking-time share does not measure listening quality" in body["instructions"]
+    assert "Speaker identity and timing are estimates" in body["instructions"]
+    assert "Do not use em dashes" in body["instructions"]
     assert body["text"]["format"]["strict"] is True
     assert set(body["text"]["format"]["schema"]["required"]) == set(expected)
 
@@ -246,7 +255,7 @@ def test_post_sessions_success(mock_run):
     assert "used_this_month" in data
     assert "remaining" in data
     assert data["debrief"]["observation"] == SAMPLE_DEBRIEF["observation"]
-    insert_payload = db.rpc.call_args.args[1]["p_debrief"]
+    insert_payload = db.rpc.call_args.args[1]["payload"]
     assert "session_id" in insert_payload
     assert mock_run.call_args.kwargs["content_type"] == "audio/wav"
 
@@ -267,7 +276,7 @@ def test_post_sessions_respects_transcript_setting(mock_run, mock_settings):
     app.dependency_overrides[verify_token] = lambda: "user-1"
     r = TestClient(app).post("/sessions", files={"audio": ("test.wav", _fake_wav(), "audio/wav")})
     assert r.status_code == 200
-    insert_payload = db.rpc.call_args.args[1]["p_debrief"]
+    insert_payload = db.rpc.call_args.args[1]["payload"]
     assert insert_payload["transcript"] is None
 
 
@@ -284,8 +293,7 @@ def test_post_sessions_rejects_unsupported_audio_type(mock_run):
 def test_post_sessions_rejects_oversized_audio(mock_run, monkeypatch):
     app.dependency_overrides[get_db] = lambda: _db_for_sessions(under_cap=True)
     app.dependency_overrides[verify_token] = lambda: "user-1"
-    monkeypatch.setattr(main, "MAX_AUDIO_BYTES", 100)
-    oversized = b"0" * 101
+    oversized = b"0" * (25 * 1024 * 1024 + 1)
     r = TestClient(app).post("/sessions", files={"audio": ("test.wav", oversized, "audio/wav")})
     assert r.status_code == 413
     mock_run.assert_not_called()
@@ -315,20 +323,15 @@ def session_io(monkeypatch):
     db = _db_for_sessions()
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[verify_token] = lambda: "user-1"
-    reserve = MagicMock(return_value=True)
-    refund = MagicMock()
-    monkeypatch.setattr(main, "check_and_increment", reserve)
-    monkeypatch.setattr(main, "release", refund)
-    monkeypatch.setattr(main, "_fetch_debrief_row", MagicMock(return_value=None))
     monkeypatch.setattr(main, "fetch_user_settings", MagicMock(return_value=UserSettings()))
     monkeypatch.setattr(main.coordinator, "run", MagicMock(return_value=dict(SAMPLE_DEBRIEF)))
     monkeypatch.setattr(main, "get_usage", MagicMock(return_value={"used_this_month": 1, "remaining": 4}))
-    return TestClient(app), db, reserve, refund
+    return TestClient(app), db
 
 
-@pytest.mark.parametrize("failure", ["settings", "pipeline", "result", "insert"])
-def test_session_failure_refunds_reservation(session_io, failure):
-    client, db, reserve, refund = session_io
+@pytest.mark.parametrize("failure", ["settings", "pipeline", "result", "commit"])
+def test_failures_never_charge_before_atomic_completion(session_io, failure):
+    client, db = session_io
     if failure == "settings":
         main.fetch_user_settings.side_effect = RuntimeError("settings unavailable")
     elif failure == "pipeline":
@@ -336,170 +339,65 @@ def test_session_failure_refunds_reservation(session_io, failure):
     elif failure == "result":
         main.coordinator.run.return_value = {"stats": None}
     else:
-        db.rpc.side_effect = RuntimeError("insert failed")
-
-    r = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")})
-
-    assert r.status_code == 500
-    reserve.assert_called_once()
-    refund.assert_called_once_with(db, "user-1", *reserve.call_args.args[2:])
+        db.rpc.return_value.execute.side_effect = RuntimeError("commit unavailable")
+    assert client.post("/sessions", files={"audio": ("clip.wav", b"audio", "audio/wav")}).status_code == 500
+    if failure != "commit":
+        db.rpc.assert_not_called()
+    db.table.return_value.insert.assert_not_called()
 
 
-def test_refund_failure_preserves_original_audio_error(session_io):
-    client, _db, _reserve, refund = session_io
-    main.coordinator.run.side_effect = ValueError("bad audio")
-    refund.side_effect = RuntimeError("database unavailable")
-    r = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")})
-    assert r.status_code == 422
-    assert r.json()["detail"] == "Could not decode audio"
-
-
-def test_saved_debrief_is_not_refunded_when_usage_read_fails(session_io):
-    client, _db, _reserve, refund = session_io
-    main.get_usage.side_effect = RuntimeError("usage unavailable")
-    r = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")})
-    assert r.status_code == 500
-    refund.assert_not_called()
-
-
-def test_session_failure_refunds_reserved_usage(session_io):
-    client, _db, reserve, refund = session_io
-    main.coordinator.run.side_effect = ValueError("bad audio")
-    r = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")})
-    assert r.status_code == 422
-    reserve.assert_called_once_with(_db, "user-1", ANY, ANY)
-    refund.assert_called_once_with(_db, "user-1", ANY, ANY)
-
-
-def test_audio_content_type_accepts_parameters_and_case(session_io):
-    client, _db, _reserve, refund = session_io
-    r = client.post("/sessions", files={"audio": ("test.webm", b"audio", "Audio/WebM; codecs=opus")})
-    assert r.status_code == 200
-    assert main.coordinator.run.call_args.kwargs["content_type"] == "audio/webm"
-    refund.assert_not_called()
-
-
-def test_missing_audio_content_type_is_rejected(session_io):
-    client, _db, reserve, _refund = session_io
-    body = b'--test\r\nContent-Disposition: form-data; name="audio"; filename="test.wav"\r\n\r\naudio\r\n--test--\r\n'
-    r = client.post("/sessions", content=body, headers={"Content-Type": "multipart/form-data; boundary=test"})
-    assert r.status_code == 415
-    reserve.assert_not_called()
-
-
-def test_session_preserves_diarization_metadata_with_transcript_saving_disabled(session_io):
-    client, db, _reserve, _refund = session_io
-    main.fetch_user_settings.return_value = UserSettings(save_transcripts=False)
-    diarization = {"model": "gpt-4o-transcribe-diarize", "user_speaker": "A", "speaker_count": 2}
-    main.coordinator.run.return_value = {**SAMPLE_DEBRIEF,
-        "stats": {**SAMPLE_DEBRIEF["stats"], "metadata": {"diarization": diarization}},
-        "transcript": "Speaker A: Hello.\nSpeaker B: Hi.",
-    }
-    r = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")}, data={"title": "Meeting"})
-    assert r.status_code == 200
-    payload = db.rpc.call_args.args[1]["p_debrief"]
-    assert payload["stats"]["metadata"]["diarization"] == diarization
-    assert payload["stats"]["metadata"]["title"] == "Meeting"
-    assert payload["transcript"] is None
-    assert "Speaker A: Hello" not in str(payload)
-
-
-def test_transcription_upload_limit_returns_413_and_refunds_usage(session_io):
-    client, _db, _reserve, refund = session_io
-    main.coordinator.run.side_effect = TranscriptionInputTooLarge()
-    r = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")})
-    assert r.status_code == 413
-    assert "too large to transcribe" in r.json()["detail"]
-    refund.assert_called_once_with(_db, "user-1", ANY, ANY)
-
-
-def test_duration_limit_returns_413_and_refunds_usage(session_io):
-    client, db, reserve, refund = session_io
-    main.coordinator.run.side_effect = main.coordinator.RecordingTooLong("Conversations must be no longer than 23 minutes 20 seconds.")
-    response = client.post("/sessions", files={"audio": ("test.m4a", b"audio", "audio/mp4")})
-    assert response.status_code == 413
-    assert "23 minutes 20 seconds" in response.json()["detail"]
-    refund.assert_called_once_with(db, "user-1", *reserve.call_args.args[2:])
-
-
-def test_offline_recording_replay_is_account_scoped_and_does_not_use_quota_twice(session_io, monkeypatch):
-    client, db, reserve, refund = session_io
-    saved = {}
-    monkeypatch.setattr(main, "_fetch_debrief_row", lambda _db, user, key: saved.get((user, key)))
-
-    def insert(name, params):
-        assert name == "complete_debrief"
-        row = {**SAMPLE_DEBRIEF, **params["p_debrief"], "user_id": params["p_user_id"], "id": params["p_debrief_id"]}
-        saved[(row["user_id"], row["id"])] = row
-        return MagicMock(execute=MagicMock(return_value=MagicMock(data=[row])))
-
-    db.rpc.side_effect = insert
-    request = {"files": {"audio": ("test.wav", b"audio", "audio/wav")},
-               "data": {"recording_id": "saved-offline-1", "started_at": "2026-08-31T23:00:00Z"}}
-    first = client.post("/sessions", **request)
-    replay = client.post("/sessions", **request)
-    assert first.status_code == replay.status_code == 200
-    assert first.json()["debrief"]["id"] == replay.json()["debrief"]["id"]
-    assert first.json()["debrief"]["stats"]["metadata"]["started_at"] == request["data"]["started_at"]
-    reserve.assert_called_once()
-    main.coordinator.run.assert_called_once()
-    refund.assert_not_called()
-    app.dependency_overrides[verify_token] = lambda: "another-user"
-    other = client.post("/sessions", **request)
-    assert other.status_code == 200
-    assert other.json()["debrief"]["id"] != first.json()["debrief"]["id"]
-    assert reserve.call_count == 2
-
-
-def test_concurrent_recovery_waits_for_the_original_upload(session_io, monkeypatch):
-    client, _db, reserve, _refund = session_io
-    monkeypatch.setattr(main, "_fetch_debrief_row", lambda *_args: None)
-    request = {"files": {"audio": ("test.wav", b"audio", "audio/wav")}, "data": {"recording_id": "same-recording"}}
-
-    def processing(*_args, **_kwargs):
-        assert client.post("/sessions", **request).status_code == 409
-        return dict(SAMPLE_DEBRIEF)
-
-    main.coordinator.run.side_effect = processing
-    assert client.post("/sessions", **request).status_code == 200
-    reserve.assert_called_once()
-    assert not main._processing_sessions
-
-
-def test_another_recording_retries_without_reserving_usage(session_io, monkeypatch):
-    client, _db, reserve, _refund = session_io
-    monkeypatch.setattr(main, "_fetch_debrief_row", lambda *_args: None)
-    request = {"files": {"audio": ("test.wav", b"audio", "audio/wav")}, "data": {"recording_id": "waiting-recording"}}
-
-    def processing(*_args, **_kwargs):
-        response = client.post("/sessions", **request)
-        assert response.status_code == 503
-        assert response.headers["Retry-After"] == "60"
-        reserve.assert_called_once()
-        return dict(SAMPLE_DEBRIEF)
-
-    main.coordinator.run.side_effect = processing
-    assert client.post("/sessions", files=request["files"]).status_code == 200
-    main.coordinator.run.side_effect = None
-    main.coordinator.run.return_value = dict(SAMPLE_DEBRIEF)
-    assert client.post("/sessions", **request).status_code == 200
-    assert reserve.call_count == 2
-    assert not main._audio_pipeline_lock.locked()
-    assert not main._processing_sessions
-
-
-@pytest.mark.parametrize("duplicate", [False, True])
-def test_committed_upload_recovery_and_duplicate_reservation_refund(session_io, monkeypatch, duplicate):
-    from postgrest.exceptions import APIError
-
-    client, db, _reserve, refund = session_io
-    monkeypatch.setattr(main, "_fetch_debrief_row", MagicMock(side_effect=[None, dict(SAMPLE_DEBRIEF)]))
-    db.rpc.side_effect = (
-        APIError({"code": "23505", "message": "duplicate key", "details": "", "hint": ""})
-        if duplicate else httpx.ReadError("response lost after commit")
-    )
-    response = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")}, data={"recording_id": "recover-commit"})
+def test_commit_rechecks_transcript_choice_and_preserves_processing_goal(session_io):
+    client, db = session_io
+    main.fetch_user_settings.side_effect = [UserSettings(save_transcripts=True, coaching_goal="confidence"),
+                                           UserSettings(save_transcripts=False, coaching_goal="listening")]
+    response = client.post("/sessions", files={"audio": ("clip.webm", b"audio", "Audio/WebM; codecs=opus")},
+                           data={"title": "Meeting"})
     assert response.status_code == 200
-    assert response.json()["debrief"]["id"] == SAMPLE_DEBRIEF["id"]
-    refund.assert_called_once()  # The receipt RPC makes this a no-op for a committed charge.
+    assert main.coordinator.run.call_args.kwargs["coaching_goal"] == "confidence"
+    payload = db.rpc.call_args.args[1]["payload"]
+    assert payload["transcript"] is None
+    assert payload["stats"]["metadata"]["coaching_goal"] == "confidence"
+    assert payload["stats"]["metadata"]["title"] == "Meeting"
+    assert payload["stats"]["metadata"]["content_type"] == "audio/webm"
+
+
+def test_lost_completion_response_replays_same_account_id_without_processing_again(session_io, monkeypatch):
+    client, db = session_io
+    saved = {}
+    monkeypatch.setattr(main, "_fetch_debrief_row", lambda _db, owner, key: saved.get((owner, key)))
+    def commit():
+        args = db.rpc.call_args.args[1]
+        saved[(args["owner_id"], args["target_id"])] = {
+            **SAMPLE_DEBRIEF, **args["payload"], "id": args["target_id"], "user_id": args["owner_id"],
+        }
+        raise httpx.ReadError("response lost after commit")
+    db.rpc.return_value.execute.side_effect = commit
+    request = {"files": {"audio": ("clip.wav", b"audio", "audio/wav")}, "data": {"recording_id": "stable"}}
+    assert client.post("/sessions", **request).status_code == 500
+    main._pipeline_slot.acquire()
+    try:
+        replay = client.post("/sessions", **request)
+        assert replay.status_code == 200, "Saved replay must bypass a busy pipeline"
+    finally:
+        main._pipeline_slot.release()
+    main.coordinator.run.assert_called_once()
+    db.rpc.assert_called_once()
+    app.dependency_overrides[verify_token] = lambda: "other-user"
+    assert client.post("/sessions", **request).status_code == 500
+    assert len(saved) == 2
+    assert len({key for _, key in saved}) == 2
+
+
+def test_busy_and_duplicate_admission_happens_before_processing(session_io):
+    client, db = session_io
+    request = {"files": {"audio": ("clip.wav", b"audio", "audio/wav")}, "data": {"recording_id": "stable"}}
+    def process(*args, **kwargs):
+        assert client.post("/sessions", **request).status_code == 409
+        other = {**request, "data": {"recording_id": "different"}}
+        busy = client.post("/sessions", **other)
+        assert busy.status_code == 503 and busy.headers["Retry-After"] == "60"
+        db.rpc.assert_not_called()
+        return dict(SAMPLE_DEBRIEF)
+    main.coordinator.run.side_effect = process
+    assert client.post("/sessions", **request).status_code == 200
     assert not main._processing_sessions

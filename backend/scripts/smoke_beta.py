@@ -1,4 +1,4 @@
-"""Live beta check using synthetic audio and a temporary account; prints no content or tokens.
+"""Legacy /sessions check (25 MiB maximum) using synthetic audio and a temporary account; prints no content or tokens.
 
 From backend/: python -m scripts.smoke_beta --url https://HOST --audio /path/to/synthetic.m4a
 Uses backend/.env only to clean up the account created by this run.
@@ -26,7 +26,7 @@ def main():
     args = parser.parse_args()
     audio = args.audio.read_bytes()
     assert args.audio.suffix.lower() == ".m4a", "Use synthetic M4A audio to exercise the iOS codec"
-    assert 0 < len(audio) <= 100 * 1024 * 1024
+    assert 0 < len(audio) <= 25 * 1024 * 1024
     username, password = f"beta_{uuid4().hex[:16]}", secrets.token_urlsafe(24)
     user_id = None
     with httpx.Client(base_url=args.url.rstrip("/"), timeout=2100) as client:
@@ -60,7 +60,7 @@ def main():
 
             if args.reject_audio:
                 rejected_audio = args.reject_audio.read_bytes()
-                assert args.reject_audio.suffix.lower() == ".m4a" and 0 < len(rejected_audio) <= 100 * 1024 * 1024
+                assert args.reject_audio.suffix.lower() == ".m4a" and 0 < len(rejected_audio) <= 25 * 1024 * 1024
                 response = client.post("/sessions", data={"recording_id": str(uuid4())},
                                        files={"audio": ("overlong.m4a", rejected_audio, "audio/mp4")})
                 assert response.status_code == 413, f"Expected rejection, got {response.status_code}"
