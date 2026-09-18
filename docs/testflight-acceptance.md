@@ -2,11 +2,34 @@
 
 Updated: 2026-09-18 UTC. Starting commit: `f628b73`.
 
-**Parallel issue work is authorized in separate tasks/worktrees.** See
-[beta-workstreams.md](beta-workstreams.md) for ownership and integration. The user
-limited capture/import to one transcription request. See
-[beta-pause.md](beta-pause.md) for the prior checkpoint and remaining issues.
-The updated candidate is not deployed or release-approved.
+**Current direction: adopt newer main and reassess the earlier beta work.**
+On 2026-09-18 the user selected `origin/main` at `64db03b`, including resumable
+uploads and disk-backed, chunked processing for recordings up to 24 hours/2 GiB.
+This supersedes the earlier single-request/23m20s product limit. Parallel tasks
+are reconciling only still-needed fixes and validating rollout requirements; see
+[beta-workstreams.md](beta-workstreams.md). The new combined candidate is not yet
+reviewed, deployed, or installed. Historical device results below apply to the
+earlier `a4b3c14` build, not automatically to this changed implementation.
+
+## Current release acceptance
+
+| ID | Required evidence on the new combined candidate | Status |
+| --- | --- | --- |
+| TF-1 | Reviewed production build, App Store Connect processing, TestFlight install and standalone cold launch. | OPEN |
+| TF-2 | Public HTTPS sign-in, correct restored account, authenticated reads and cellular access. | OPEN; earlier build passed and must be rechecked |
+| TF-3 | Actual iPhone recording uploads, produces a nonempty saved debrief, reopens in history, and receives a model Reflect reply. | OPEN |
+| TF-4 | Existing clips survive the app update; resumable/offline uploads, process restart and cancellation preserve originals and prevent duplicate debriefs/charges or cross-account access. | OPEN; compatibility fixes and new transaction validation in progress |
+| TF-5 | Microphone denial, Settings recovery, recording/Stop/save without a stuck recorder. | OPEN; earlier build passed and must be rechecked |
+| TF-6 | At least five minutes continuously locked, intact before/during/after audio, then successful debrief delivery. | OPEN; earlier local capture/audio passed only |
+| TF-7 | New 24-hour/2 GiB boundaries for capture/import, safe auto-stop/save, chunked transcription with timeline/speaker handling, clear over-limit errors, and eventual safe recovery under competing uploads. | OPEN; earlier 1400s checks do not establish this |
+
+Also required for rollout: the actual new migration/RPC contracts, persistent
+audio storage and a truthful backup/retention policy, measured capacity for the
+canonical pipeline, and updated Render build/start/readiness configuration.
+The old 512 MiB failure and 2 GB test suggestion are historical measurements of a
+different implementation. Keep them as evidence, not new-architecture sizing.
+
+## Earlier beta scope and evidence
 
 The user agreed to the original gates on 2026-09-15. On 2026-09-17 they first
 selected one hour, then reduced the maximum to **23 minutes 20 seconds (1400
@@ -205,7 +228,7 @@ The existing 100 MiB input cap is retained.
   compression quality, concurrent upload recovery, and physical native auto-stop.
   The shorter limit does not resolve the confirmed 512 MB memory failure.
 
-## Acceptance ledger
+## Historical acceptance ledger for the 23m20s candidate
 
 | ID | Acceptance criterion | Status | Evidence / next check |
 | --- | --- | --- | --- |
