@@ -18,9 +18,68 @@ import time
 from unittest.mock import patch
 import wave
 
+import httpx
+
+
+class StreamingTranscriptionTransport(httpx.BaseTransport):
+    """Discard multipart bytes as a real transport would, without caching bodies."""
+
+    def __init__(self):
+        self.calls = 0
+        self.multipart_peak = 0
+
+    def handle_request(self, request):
+        assert request.url.path == "/v1/audio/transcriptions"
+        size, known_speakers, tail = 0, False, b""
+        marker = b"known_speaker_names"
+        for chunk in request.stream:
+            size += len(chunk)
+            assert size < 25_000_000
+            window = tail + chunk
+            known_speakers |= marker in window
+            tail = window[-(len(marker) - 1):]
+        self.multipart_peak = max(self.multipart_peak, size)
+        self.calls += 1
+        names = ("part1_A", "part1_B") if known_speakers else ("A", "B")
+        # Thirty alternating turns per chunk, about 135 words/minute.
+        text = "We talked about plans for the weekend and listened to each other. " * 3
+        return httpx.Response(200, json={"text": text, "segments": [
+            {"start": i * 20, "end": (i + 1) * 20, "speaker": names[i % 2], "text": text}
+            for i in range(30)]})
+
+
+def check_transport():
+    def reject_buffering(*_):
+        raise AssertionError("Buffered request")
+
+    class Parts(httpx.SyncByteStream):
+        def __init__(self, body):
+            self.body = body
+
+        def __iter__(self):
+            # Split the marker across many chunks to check the rolling search.
+            return (bytes([value]) for value in self.body)
+
+    transport = StreamingTranscriptionTransport()
+    with httpx.Client(transport=transport) as client, \
+            patch.object(httpx.Request, "read", side_effect=reject_buffering), \
+            patch.object(httpx.Request, "content", property(reject_buffering)):
+        for body, speaker in ((b"audio", "A"), (b"--known_speaker_names--", "part1_A")):
+            request = httpx.Request("POST", "https://offline.test/v1/audio/transcriptions",
+                                    stream=Parts(body))
+            response = client.send(request)
+            assert response.json()["segments"][0]["speaker"] == speaker
+            assert "_content" not in vars(request)
+    assert transport.calls == 2 and transport.multipart_peak == 23
+    print("Streaming transport check passed", flush=True)
+
 
 def report(event, **values):
     memory = {"process_peak_mib": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)}
+    path = Path("/proc/self/status")
+    if path.exists():
+        fields = dict(line.split(":", 1) for line in path.read_text().splitlines())
+        memory["process_rss_mib"] = round(int(fields["VmRSS"].split()[0]) / 1024, 1)
     for name in ("current", "peak"):
         path = Path(f"/sys/fs/cgroup/memory.{name}")
         if path.exists():
@@ -35,17 +94,19 @@ def report(event, **values):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("speech", "day", "upload"))
+    parser.add_argument("mode", choices=("speech", "day", "upload", "transport-check"))
     parser.add_argument("--audio", type=Path, help="Synthetic speech fixture of exactly 600 seconds")
     parser.add_argument("--runs", type=int, default=3)
     args = parser.parse_args()
+    if args.mode == "transport-check":
+        check_transport()
+        return
     if platform.system() != "Linux" or args.runs < 1 or (args.mode == "speech" and not args.audio):
         parser.error("Requires Linux, positive runs and --audio in speech mode")
     os.environ.update(SUPABASE_URL="https://test.supabase.co", ENVIRONMENT="development",
                       SUPABASE_SERVICE_ROLE_KEY="offline-probe", OPENAI_API_KEY="offline-probe",
                       CORS_ORIGINS="*")
     report("start", python=platform.python_version(), mode=args.mode, runs=args.runs)
-    import httpx
     from openai import OpenAI
     import app.main  # Include service imports without starting any worker or DB connection.
     from app.pipeline import coordinator, transcription
@@ -75,31 +136,17 @@ def main():
             report("upload_pass", uploaded_bytes=MAX_AUDIO_BYTES, chunks=MAX_AUDIO_BYTES // len(chunk))
         report("pass", ai="not called", decoder="not called")
         return
-    calls = 0
-    multipart_peak = 0
-    # Thirty alternating turns per chunk, about 135 words/minute. Retain a full
-    # day's synthetic transcript/turns through the real final metrics calculation.
-    text = "We talked about plans for the weekend and listened to each other. " * 3
-
-    def respond(request):
-        nonlocal calls, multipart_peak
-        assert request.url.path == "/v1/audio/transcriptions"
-        body = request.content
-        multipart_peak = max(multipart_peak, len(body))
-        assert len(body) < 25_000_000
-        names = ("part1_A", "part1_B") if b"known_speaker_names" in body else ("A", "B")
-        calls += 1
-        return httpx.Response(200, json={"text": text, "segments": [
-            {"start": i * 20, "end": (i + 1) * 20, "speaker": names[i % 2], "text": text}
-            for i in range(30)]})
+    transport = StreamingTranscriptionTransport()
 
     def client(**kwargs):
-        return OpenAI(**kwargs, http_client=httpx.Client(transport=httpx.MockTransport(respond)))
+        report("transcription_client", next_call=transport.calls + 1)
+        return OpenAI(**kwargs, http_client=httpx.Client(transport=transport))
 
     decode = coordinator._decode_audio
 
     @contextmanager
     def checked_decode(source, content_type=None):
+        report("decoding")
         with decode(source, content_type) as (audio, sr):
             seconds = 86400 if args.mode == "day" else 600
             assert len(audio) == seconds * sr
@@ -127,26 +174,26 @@ def main():
             "thing_to_try_next": "Offline probe"}))
         for run in range(args.runs):
             started = time.monotonic()
-            before = calls
+            before = transport.calls
             reported = set()
 
             def progress(value):
                 bucket = value // 10
                 if bucket not in reported:
                     reported.add(bucket)
-                    report("progress", run=run + 1, percent=value, transcriptions=calls - before)
+                    report("progress", run=run + 1, percent=value, transcriptions=transport.calls - before)
 
             result = coordinator.run(source, "audio/wav" if source.suffix == ".wav" else "audio/mp4",
                                      progress=progress)
             expected_chunks = 144 if args.mode == "day" else 1
-            assert calls - before == expected_chunks, "Speech fixture failed VAD or chunk coverage changed"
+            assert transport.calls - before == expected_chunks, "Speech fixture failed VAD or chunk coverage changed"
             assert result["stats"]["metadata"]["diarization"]["chunk_count"] == expected_chunks
             assert result["stats"]["session_duration_minutes"] == expected_chunks * 10
             assert len(result["transcript"].splitlines()) == expected_chunks * 30
             assert not list(source.parent.glob("analysis-*")), "Temporary PCM was retained"
             report("run_complete", run=run + 1, seconds=round(time.monotonic() - started, 3),
                    chunks=expected_chunks, turns=expected_chunks * 30,
-                   transcript_bytes=len(result["transcript"].encode()), multipart_peak=multipart_peak)
+                   transcript_bytes=len(result["transcript"].encode()), multipart_peak=transport.multipart_peak)
             del result
     report("pass", ai="mocked", real_vad=args.mode == "speech")
 
