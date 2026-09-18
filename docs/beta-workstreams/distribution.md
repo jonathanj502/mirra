@@ -13,9 +13,10 @@ performed in this task.
   to assigned baseline `773d35f3e554f8c8353f17c81b7bd847cc9078a1`.
 - Distribution code: `13ae5d8` (native Release environment guard, regression
   check, free personal-device instructions).
-- Build includes shared duration helper `b5bb77b` as `404838c` and capture
+- Initial build included shared duration helper `b5bb77b` as `404838c` and capture
   `b406afe` as `b32546e`. Integrate the originals only once; these are identical
-  cherry-picks. Later import/offline/UI candidates are not in this artifact.
+  cherry-picks. That initial artifact lacked the later import/offline/UI changes;
+  the integrated rebuild below supersedes it.
 - Only distribution files and this evidence file are authored here; capture
   changes belong to the device task.
 
@@ -53,7 +54,7 @@ performed in this task.
   committed. This production service still runs the older deployed candidate;
   pointing a new app at it does not deploy the 1400-second server changes.
 
-## Local validation
+## Initial local validation
 
 - **PASS:** 32 app tests and `npm run typecheck` after including the helper and
   capture commits above.
@@ -71,7 +72,7 @@ performed in this task.
   linking, production configuration validation and bundling (1,883 JS modules).
   Log: `/private/tmp/mirra-distribution-device-build.log`.
   Result: `/private/tmp/mirra-distribution-device-ready.xcresult`.
-- Artifact: `/private/tmp/mirra-distribution-device/Build/Products/Release-iphoneos/Mirra.app`.
+- Preserved artifact: `/private/tmp/mirra-distribution-artifacts/b32546e/Mirra.app`.
   Built source `b32546e`, version **1.0.0 (1)**, bundle ID `com.mirra.app`,
   arm64 iPhone executable, SDK `iphoneos26.5`, minimum iOS **16.4**.
   Native bundle retains background `audio` and the microphone purpose string.
@@ -83,6 +84,42 @@ performed in this task.
 - Preserved the native build cache at `/private/tmp/mirra-distribution-device`.
   The Mac has 8 GiB RAM; use `-jobs 2` for subsequent Xcode builds to reduce
   compile-time resource pressure. No unrelated process was stopped.
+
+## Integrated candidate rebuild
+
+- Confirmed the private worktree was clean and fast-forwarded it to exact source
+  **`a4b3c14dfaa8fa5950026aae173b901439ad02f1`**. This includes the combined
+  capture, import, queue, native Release guard, and backend candidates.
+  The primary checkout was not changed.
+- **PASS:** local iPhone **Release** rebuild with `-jobs 2`, existing
+  `/private/tmp/mirra-distribution-device` cache, and `CODE_SIGNING_ALLOWED=NO`.
+  Xcode exited **0**, `BUILD SUCCEEDED`; production environment validation and
+  bundling of **1,883 modules** passed. Native dependency versions are unchanged.
+  Regenerated machine-path checksum and privacy ordering are excluded from Git.
+- Stable artifact copy:
+  `/private/tmp/mirra-distribution-artifacts/a4b3c14/Mirra.app`.
+  Identity JSON: `/private/tmp/mirra-distribution-artifacts/a4b3c14/build-identity.json`.
+  Build log: `/private/tmp/mirra-distribution-integrated-a4b3c14-build.log`.
+  Result: `/private/tmp/mirra-distribution-integrated-a4b3c14.xcresult`.
+- Verified **arm64**, `com.mirra.app`, **1.0.0 (1)**, SDK `iphoneos26.5`,
+  minimum iOS **16.4**, background `audio`, and microphone purpose text.
+  Both local artifacts have the same app version, so distinguish them by source
+  commit and the hashes below, not version number alone.
+- Embedded `main.jsbundle`: **4,871,092 bytes**, intended public Render URL
+  confirmed; SHA-256
+  `cdd96c87f3505c49c04b321290dbe6ea43da441282b55a8ffcfabffc78c43809`.
+  Executable SHA-256:
+  `29a13225dd6e6d13c2f6eb3d82b6850e775dad3672d18ca53b6d77d610c3325e`.
+- `codesign -d` confirms **unsigned**, and no provisioning profile is embedded.
+  Fresh device/signing inventory again found **no devices / 0 valid identities**.
+  TF-1 and every physical-device gate remain open.
+- The integration task separately reported **44 app tests + TypeScript**,
+  **187 backend tests**, and **7 real local PostgreSQL tests** passing for this
+  candidate. This task performed the actual native rebuild and artifact checks;
+  those other checks were not rerun here.
+- The app points at the existing production Render endpoint. Its free 512 MB
+  backend still runs the old deployed code; no migration or deployment occurred.
+  Building the integrated app does not establish integrated end-to-end behavior.
 
 ## Free own-device install and remaining user steps
 
