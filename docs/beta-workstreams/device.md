@@ -218,12 +218,28 @@ in playback (**"all heard"**). Recorded at **2026-09-18 03:08 UTC**:
 Delivery of those markers to a debrief remains untested, so the full end-to-end
 criterion is still OPEN. No assistant-timed interval is claimed.
 
-Next native capture check: remain offline, note the saved count, record until
-automatic stop at 23m20s with beginning/middle/end phrases, and confirm the queue
-increases by exactly one. Do not manually Stop. Then inspect the completed audio
-and verify all markers, stable queue count after relaunch, and actual duration.
-Keep all queued clips offline until candidate deployment and a usage baseline
-are ready. No provider/backend upload is authorized by local inspection.
+### Native maximum test — user report 2026-09-18 03:41 UTC
+
+After instructions to remain offline, record with beginning/middle/end phrases,
+leave the phone locked, and let native capture stop without tapping Stop, the
+user reported **"it stopped exactly at 23:20 minutes"**. The user then explicitly
+confirmed **"Yes, 5 recordings remain saved"** after waiting for saving to finish
+and force-closing/reopening offline. The prior four clips plus this new capture
+therefore have a user-observed count of five after relaunch. Actual native
+file duration, new manifest identity/count, and audible markers remain unverified.
+
+Distribution's narrow file query failed before returning files with CoreDevice
+error 1011 (unable to locate the requested device). Fresh inventory retained
+the paired iPhone but reported an unavailable tunnel and no wired transport.
+**No new manifest/audio was read or copied.** This task asked the user to unlock
+and unplug/replug the USB cable, keep Airplane Mode on/Wi-Fi off, and leave Mirra
+closed after save. Existing local-inspection approval remains valid; no new
+permission is required. Distribution will retry after connection readiness.
+
+TF-7 remains OPEN. After copying, verify measured duration, one additional
+completed manifest, and beginning/middle/end audio. Keep all queued clips offline
+until candidate deployment and an observed usage baseline are ready. No provider/
+backend upload is authorized by local inspection.
 
 Production remains `https://mirra-backend-wp2b.onrender.com`, deployed commit
 `f8cf5d7196654aff3ff578bb5503668aa3ff15cd`, Free 512 MB, not this candidate.
@@ -238,7 +254,7 @@ separate evidence; complete microphone, local-save/restart, and lock checks offl
 | TF-4 | Two offline stopped clips survive restart; reconnect yields two debriefs and exactly +2 usage; expired token/account switch/consent recovery | OPEN — two clips survived offline restart (user-observed 2026-09-18 01:38 UTC); reconnect/usage/duplicate/token/account/consent checks pending |
 | TF-5 | Deny mic, responsive error/Settings action, grant in Settings, return and record/Stop/save without stuck state | PASS — user confirmed Settings recovery and one stopped clip saved offline on a4b3c14; recorded 2026-09-18 01:36 UTC |
 | TF-6 | At least 5 minutes locked with beginning/during/after-lock audio intact | Local capture/audio PASS — 424.784399s full decode, user confirms >=5min continuously locked and all 3 markers audible (2026-09-18 03:08 UTC); debrief delivery OPEN |
-| TF-7 | Native 1400s auto-stop, one saved clip, beginning/middle/end audio, one debrief/history/Reflect result; equivalent at-limit import and over-limit rejection | OPEN — imports/provider checks coordinated separately |
+| TF-7 | Native 1400s auto-stop, one saved clip, beginning/middle/end audio, one debrief/history/Reflect result; equivalent at-limit import and over-limit rejection | OPEN — user reports auto-stop at 23:20 and 5 saved clips after offline relaunch; native file/markers await USB copy; imports/provider/end-to-end checks pending |
 
 Additional native check: Expo resumes interrupted iOS recorders with
 `startRecording()` → `AVAudioRecorder.record()` without reapplying `forDuration`.
