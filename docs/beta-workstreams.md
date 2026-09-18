@@ -70,9 +70,9 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
 | Shared duration reader (imports) | `b5bb77b6bf7a76d2a1f52301c919bd4d72d3930f` | Validated `getAudioDuration` helper; device has identical cherry-pick `34148ad3d889c0c46e35d00fb530be92c37121a8`. | Integrated once in the resulting source; original branch histories retained. |
 | Memory | `0f7adec` | Two bounded-allocation changes, tests and reproducible offline benchmarks. 512 MiB still fails; 2 GB is the next production-test candidate. | Merged as `f7a88f8`; [evidence](beta-workstreams/memory.md). |
 | Imports and queue dependencies | `4264627`, `5a3ee41`; equivalents of `ea2c446` and `cbeb382` | Durable imports, input boundaries, consent/account/MIME checks, known metadata quirks and terminal-error retention. | Merged as `f18f6c8`; [evidence](beta-workstreams/imports.md). |
-| Device/capture | `b406afe`, docs through `3f46d82` | Fresh native files, actual saved duration with fallback, microphone Settings recovery and interruption UI. TF-2/TF-5 pass by user observation on Personal Team; TF-4 offline restart subcheck passes. Remaining physical checks stay open. | Code merged as `c9eadd0`; later [device evidence](beta-workstreams/device.md) integrated. |
+| Device/capture | `b406afe`, docs through `d0734da` | Fresh native files, actual saved duration with fallback, microphone Settings recovery and interruption UI. TF-2/TF-5 pass by user observation on Personal Team; TF-4 offline restart subcheck passes. Remaining physical checks stay open. | Code merged as `c9eadd0`; later [device evidence](beta-workstreams/device.md) integrated. |
 | Transcription | `a907631` | Real 1400s local provider flow passed: 336.94s transcription / 351.5s complete session, history/Reflect/replay/refund checks. | Merged as `6dead13`; [evidence](beta-workstreams/transcription.md). |
-| Build/distribution | `13ae5d8`; evidence through `9dd9a92` | Native Release source `a4b3c14` signed, installed and launch verified with the approved free Personal Team ID. TestFlight and complete recording-flow checks remain open; device auth/recovery results are above. | Guard merged as `62c5f61`; [build evidence](beta-workstreams/distribution.md) integrated. |
+| Build/distribution | `13ae5d8`; evidence through `f025770` | Native Release source `a4b3c14` signed, installed and launch verified with the approved free Personal Team ID. TestFlight and complete recording-flow checks remain open; device auth/recovery results are above. | Guard merged as `62c5f61`; [build evidence](beta-workstreams/distribution.md) integrated. |
 | Reliability/quota | `ecb3413`, `108e07c` (app dependencies above) | Durable quota receipts, SQL concurrency/crash checks and rollout instructions. Migration is local only. | Merged as `3fa5593`; [evidence](beta-workstreams/reliability.md). |
 
 ## Combined validation — 2026-09-18 UTC
@@ -100,11 +100,11 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
   Settings recovery with a stopped clip saved offline. Two stopped clips also
   survived offline restart (partial TF-4). These checks used the current old
   production backend; candidate audio processing is not validated. Repeat the
-  release checks on TestFlight. TF-6 remains open: explicitly approved read-only
-  USB inspection measured three saved clips at 11.654966s, 10.493968s and
-  106.996100s. The newest/longest clip was copied locally and fully decoded; its
-  1m47s duration is below the required five minutes. This does not establish a
-  recorder bug. Device owns the longer check; markers and debrief are unverified.
+  release checks on TestFlight. TF-6 remains open: the first inspected clip was
+  106.996100s; the repeat started 2026-09-18 02:50:36 UTC and independently
+  measures **424.784399s (7m04.8s)**, with complete local decode passing.
+  Total duration meets five minutes. The actual locked interval, spoken markers
+  and debrief remain unverified; device owns those confirmations.
   Originals remain queued and unchanged; no backend/provider upload occurred.
 - No production migration, deployment, push or purchase. Independent pre-push
   review, actual Supabase/PostgREST validation, integrated real-provider memory,
