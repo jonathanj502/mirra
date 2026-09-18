@@ -204,6 +204,38 @@ auto-stop at 1400 seconds (including interruptions), imports, auth restoration,
 and offline queue checks remain with their respective workstreams. A Personal
 Team install supplies physical-device evidence but cannot close TF-1.
 
+## Approved local recording inspection — 2026-09-18 UTC
+
+The user explicitly approved inspecting queued-recording metadata and copying
+only the newest/longest saved test clip into a private temporary folder on the
+Mac. The approved read-only inspection and copy are complete for the installed
+`a4b3c14` Personal Team candidate on the iPhone above.
+
+- Three completed saved-recording manifests report **11.654966**, **10.493968**,
+  and **106.996100 seconds**, respectively. Only the newest/longest audio was
+  copied; the two shorter clips were not copied or decoded.
+- Selected recording: `1789695530139-6wzy0iedzvs`, started at
+  **2026-09-18 01:38:50.139 UTC**, **1,436,648 bytes**. The copied size matches
+  the device file listing.
+- **PASS (local file check):** macOS `afinfo` independently reports
+  **106.996100 seconds**, AAC, stereo, 44.1 kHz. A complete local FFmpeg decode
+  exited **0** with no errors. This verifies decodability, not audible content
+  or the presence of before/during/after-lock markers.
+- Local audio:
+  `/private/tmp/mirra-distribution-capture-review/recording-1789695530139-6wzy0iedzvs.m4a`.
+  Sanitized summary: `selected-summary.json` in the same directory. Directory
+  permissions are **0700** and the audio file is **0600**. SHA-256:
+  `69e9e5d4438cdd05cfb6c12a09b184433d87999f96434590c6a0fdceaf680cd7`.
+- Access was limited to the pending-recordings listing, its three manifests,
+  and the selected audio. The app was not launched; no phone files or queue
+  entries were changed. No backend/provider request or upload was made.
+  Audio, raw manifests, account identifiers, and transcripts are not in Git.
+- **TF-6 remains open:** the longest saved clip is approximately **1m47s**, below
+  the required **300 seconds**. The cause of the shorter capture has not been
+  established. Marker listening is unconfirmed. The device/capture task owns
+  the longer locked-screen test and playback confirmation; queued clips remain
+  offline pending integration's backend-deployment and usage-baseline checks.
+
 ## TestFlight work still required
 
 1. User chooses when to enroll in the paid Apple Developer Program and completes
