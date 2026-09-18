@@ -11,8 +11,9 @@ removed and must not be deployed.
 
 - Reconciled validation: 50 app checks, TypeScript, 170 backend tests, four real
   PostgreSQL transaction tests, all-platform Expo prebuild/export, website build
-  and five website checks pass. The buffer-cleanup follow-up passes 182 backend tests. Native compilation and final combined CI remain open.
-- Two issue worktrees are active for reconciliation and rollout. Root owns review,
+  and five website checks pass. The follow-up passes 182 backend tests and an unsigned arm64 iPhone Release
+  build from reviewed code `b0d5933`. Final cloud CI/signing remain open.
+- Two completed issue worktrees are retained for reconciliation and rollout. Root owns review,
   integration and shared ledgers. No production changes or purchases were made.
 - Production and the installed phone are still older revisions. Preserve all six
   queued phone clips and their owner IDs during an overlay upgrade. Observe usage

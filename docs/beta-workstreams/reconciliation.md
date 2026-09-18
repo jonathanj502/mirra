@@ -59,3 +59,44 @@ Inspected installed, lockfile-selected `expo-audio` 57.0.5 native source:
 The deployment-readiness task observed no live `debrief_receipts` or `debrief_deletions` table, no `coaching_goal` column and no receipt/completion/readiness/deletion RPCs through the service-role API. Direct migration history was unavailable. This agrees with the coordinator's record that the candidate receipt experiment was tested only in disposable local PostgreSQL, and means the canonical September 14/15/16 schema still needs operator-controlled rollout.
 
 Open: authoritative deployment and readiness; persistent private volume/backups and memory/storage sizing; synthetic multi-chunk provider coverage and timing; a rebuilt app's overlay update with existing queued audio; actual lock/interruption, 24-hour boundary/auto-stop/save, foreground resume and cancellation behavior; current signing/distribution gates. Prior 1400-second passes remain historical. No real audio upload, production mutation, purchase or physical-phone operation was performed.
+
+## Integrated follow-up verification
+
+Reviewed code source: `b0d59330e0747e9dda664e3f1dabb8fbd0f5ac51`.
+Review fixes restore main's MIME-extension fallback and show the actual 24-hour/
+2-GB limits on Home. Transcription now closes each upload buffer, including error
+and fallback paths. Fresh locked dependencies, 50 app checks, TypeScript and 182
+backend tests pass. The four optional PostgreSQL tests were skipped in that run;
+the earlier separate four-test transaction run remains applicable to unchanged SQL.
+Independent code-critic found no remaining actionable bugs through this source.
+
+The exact Python 3.11 deployment image and bounded memory/storage probes also
+pass; [rollout.md](rollout.md) contains the measurements and limits.
+
+### Unsigned iPhone Release build
+
+An isolated `git archive` of this source at `/private/tmp/mirra-native-b0d5933`
+passed fresh Expo iOS prebuild, CocoaPods (110 pods), Release compilation, linking,
+the production configuration guard and Hermes bundling. All 189 tracked regular
+files remained byte-identical to the archive after the build.
+
+- Xcode 26.6 (17F113), iPhoneOS 26.5 SDK, Node 26.5.1, CocoaPods 1.17.0.
+- Generic iOS device / arm64, minimum iOS 16.4; code signing disabled.
+- `xcodebuild -workspace Mirra.xcworkspace -scheme Mirra -configuration Release
+  -sdk iphoneos -destination 'generic/platform=iOS' -jobs 2
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build`.
+- Public placeholder endpoints/key match CI. `CI=1`, `EXPO_NO_DOTENV=1`,
+  `MIRRA_RELEASE_BUILD=1` and `EXTRA_PACKAGER_ARGS='--max-workers 2'` were set.
+- Exit 0, **BUILD SUCCEEDED**, 717.519 seconds; 0 errors and 614 native dependency,
+  generated-output and build-script warnings. Full diagnostics are retained.
+- Artifact: `/private/tmp/mirra-native-b0d5933/DerivedData/Build/Products/Release-iphoneos/Mirra.app`
+  (48 MiB, no code signature). Identifier `com.mirra.app`, version 1.0.0, build 1,
+  background audio enabled.
+- Executable SHA256: `7476dfe1d97a8ce12cc53411cdee3d95a4cc4134025265b1052f1d7a211b1676`.
+- Hermes bundle SHA256: `a3a9c14452e65ab4295da0398842c51a1366ce92bee4808cc27a22a005b3d24e`.
+- Logs, exact environment/commands and `Release.xcresult` are retained beside
+  `native-verification.md` in that temporary directory.
+
+This closes local unsigned Release compilation only. It does not validate live
+endpoints, signing, launch, distribution or phone behavior. No phone install,
+production change or change to the old signed `a4b3c14` artifact occurred.

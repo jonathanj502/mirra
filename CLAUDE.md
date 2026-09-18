@@ -15,7 +15,8 @@ receipt migrations and whole-file optimizations are superseded; see
 
 - Reconciled checks pass: 50 app checks, TypeScript, 170 backend tests, four
   PostgreSQL transaction tests, all-platform prebuild/export and five website tests.
-  The buffer-cleanup follow-up passes 182 backend tests. Final combined review/CI and native compilation remain pending.
+  The follow-up passes 182 backend tests and an unsigned arm64 iPhone Release
+  build from reviewed code `b0d5933`. Final cloud CI, signing and live checks remain open.
 - Installed phone source `a4b3c14` is older. Preserve its six offline clips during
   an overlay update; never uninstall or clear its data. All six share one owner;
   establish usage and a reconnect plan around the five-debrief monthly cap.

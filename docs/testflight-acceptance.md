@@ -40,7 +40,10 @@ all-platform prebuild/export and website checks (5) passed at that snapshot.
 A subsequent focused transcription cleanup closes upload buffers on every exit;
 34 diarization checks and the combined 182-test backend suite pass. Review also
 corrected stale Home limit copy and restored main's MIME-extension fallback;
-50 app checks and TypeScript pass. Final review and combined CI are pending.
+50 app checks and TypeScript pass. Independent review through `b0d5933` found
+no remaining actionable bugs. That exact code also compiled as unsigned arm64
+iPhone Release with zero errors, using public build placeholders. Signing,
+launch/service behavior and final cloud CI remain open.
 
 Infrastructure evidence is in [the rollout assessment](beta-workstreams/rollout.md).
 Production schema and Render settings remain unchanged. The exact Python 3.11.16 deployment image builds and passes non-root volume

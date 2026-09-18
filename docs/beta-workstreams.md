@@ -22,20 +22,31 @@ The old 23m20s device evidence does not validate the newer architecture.
 
 | Task | ID | Branch / worktree | Ownership |
 | --- | --- | --- | --- |
-| Mirra release — reconcile upstream and beta fixes | `01a0b2d7-775c-7313-9832-b21542e7baa7` | `codex/beta-reconciliation`, `6258/mirra` | Source/config merge, minimal confirmed fixes and combined verification; `reconciliation.md` evidence |
+| Mirra release — reconcile upstream and beta fixes | `01a0b2d7-775c-7313-9832-b21542e7baa7` | `codex/beta-native-validation` at reviewed `b0d5933`, `6258/mirra`; original `codex/beta-reconciliation` retained | Source/config merge, minimal confirmed fixes and combined verification; `reconciliation.md` evidence |
 | Mirra release — hosting and database rollout | `01a0b2d7-816c-72b1-830a-6553b704ae2d` | `codex/beta-deployment-readiness`, `ebf0/mirra` | Read-only infrastructure/migration discovery, capacity and rollout plan; `rollout.md` evidence |
 
 Root owns shared ledgers, integration, independent pre-push review and GitHub
 updates. Worktrees are under `/Users/jonathanj/.codex/worktrees/`. Reconciliation `dbb25dea` was merged as `4459454`; its disposition and passing
 checks are in [reconciliation.md](beta-workstreams/reconciliation.md). The critic
 confirmed queue compatibility, recorder identity and stale-import fixes remain
-necessary. Obsolete receipt and whole-request work was removed. A final exact-head
-review is required before pushing. Draft PR #12 is still open on
+necessary. Obsolete receipt and whole-request work was removed. Independent review through `b0d5933` found no remaining actionable bugs after
+the Home limit copy and MIME fallback fixes. Later evidence-only commits still
+receive a final review before pushing. Draft PR #12 is still open on
 `codex/testflight-beta` at `5131485`. No production mutation or purchase has
 been made in this resumed phase. Keep phone clips offline pending a coordinated
 backend and usage-baseline check.
 
-## Shared base and integration
+Automatic approval review blocked the push to the existing GitHub repository and
+`codex/testflight-beta` branch because explicit code-transfer consent is required.
+The user was asked in Codex and through the requested iMessage channel; no push
+or PR update has occurred. Local Python 3.11 image build, non-root volume access,
+day/upload and three real-VAD speech probes pass. An isolated unsigned arm64 iOS
+Release build from `b0d5933` also passed, with zero errors; artifacts/evidence are
+under `/private/tmp/mirra-native-b0d5933`. It used public build placeholders and
+did not change the installed phone. Both issue tasks are idle; their source and
+evidence are integrated in the root checkout.
+
+## Historical implementation base
 
 - Implementation base: `773d35f3e554f8c8353f17c81b7bd847cc9078a1`.
 - Preserved checkpoint: `codex/beta-pause-2026-09-17`.
@@ -49,7 +60,7 @@ backend and usage-baseline check.
   `docs/beta-workstreams/`. Only the integration task edits the shared acceptance
   ledger, this index, `CLAUDE.md`, and `docs/beta-pause.md`.
 
-## Responsibilities
+## Earlier workstream responsibilities
 
 | Issue/task | Owned code or responsibility | Evidence file |
 | --- | --- | --- |
