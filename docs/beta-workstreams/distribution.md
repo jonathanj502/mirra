@@ -1,7 +1,10 @@
 # Native build and distribution readiness
 
-Updated 2026-09-17. TF-1 remains **OPEN**. No signed iPhone installation or
-TestFlight delivery has been verified. No store submission, EAS build purchase,
+Updated 2026-09-17 (local time). TF-1 remains **OPEN**. Free Personal Team signing,
+installation and connected-device launch on the user's iPhone are verified;
+the user confirmed **“Mirra opens.”** TestFlight delivery, disconnected cold
+launch, authentication restoration and recording checks remain unverified.
+No store submission, EAS build purchase,
 Apple enrollment/payment, production deployment, or agreement acceptance was
 performed in this task.
 
@@ -129,8 +132,71 @@ agreements, connect/unlock/trust the phone, and enable Developer Mode. Then sele
 Personal Team with automatic signing, use the **Release** run configuration,
 and install. No paid enrollment is required for this route. Apple's Personal
 Team provisioning expires after seven days; renew by rebuilding/reinstalling.
-The prepared workspace is open in Xcode. Final observed device inventory still
-contained no iPhone and no valid local signing identity.
+The prepared workspace is open in Xcode. Before the connection handoff below,
+the device inventory contained no iPhone and no valid local signing identity.
+
+### Connected phone — free Personal Team installation
+
+The user subsequently confirmed the phone was connected. `devicectl` verified
+an **iPhone 13 (iPhone14,5), iOS 26.6.2 (23G90)**, paired over USB with an active
+tunnel. **Developer Mode was disabled**, so DDI services were unavailable.
+The user was asked to enable Developer Mode, restart, unlock and confirm it.
+There were still **0 valid signing identities**.
+
+The prepared Xcode command targeted this phone and the existing free Personal
+Team, using automatic signing, `-allowProvisioningUpdates` and
+`-allowProvisioningDeviceRegistration`. Automatic approval review rejected it
+before execution because exact account/device registration and provisioning
+access needed explicit user approval; it also noted disabled Developer Mode.
+The user was asked to approve free device registration, development certificate,
+provisioning profile, signing and installation; that blocked attempt did not run.
+
+The user explicitly approved free signing/install. Xcode created a valid Apple
+Development certificate, but Apple rejected `com.mirra.app` as unavailable to
+this Personal Team. The user then explicitly approved registering
+**`com.mirra.personal.dm85xzns55`** for the same local test candidate. Automatic
+review accepted the retry. This is a command-line build override; the shared
+project and production bundle ID remain unchanged. Before a future store build,
+confirm an available app identifier with the intended distribution team.
+
+- Phone readiness: **Developer Mode enabled**, DDI services available, paired
+  iPhone 13 running iOS 26.6.2. No further Developer Mode approval is pending.
+- **PASS:** signed iPhone Release build with automatic free Personal Team
+  provisioning and `-jobs 2`, app source exactly `a4b3c14` (checkout `1be0a0d`
+  differs only in documentation). Build log:
+  `/private/tmp/mirra-distribution-personal-unique-a4b3c14-build.log`;
+  result `/private/tmp/mirra-distribution-personal-unique-a4b3c14.xcresult`.
+- Signed artifact:
+  `/private/tmp/mirra-distribution-artifacts/a4b3c14-personal/Mirra.app`;
+  sanitized identity JSON beside it. Bundle ID
+  `com.mirra.personal.dm85xzns55`, version **1.0.0 (1)**, minimum iOS **16.4**.
+- **PASS:** `codesign --verify --deep --strict`; embedded development profile
+  includes this exact iPhone and matches the app identifier. Profile expires
+  **2026-09-25 01:09:36 UTC**; rebuild/reinstall to renew free provisioning.
+  No private key or full provisioning profile was printed or committed.
+- Production JS is unchanged from the integrated unsigned artifact:
+  **4,871,092 bytes**, SHA-256
+  `cdd96c87f3505c49c04b321290dbe6ea43da441282b55a8ffcfabffc78c43809`.
+  Signed executable SHA-256:
+  `f7c8461ea5e46b6406d67b5e969e139e6e82189ccdef59e964c0d63b62de0b68`.
+- **PASS:** `devicectl device install app` exited 0 and confirmed the installed
+  local bundle ID at **2026-09-18 01:11 UTC**. Log/JSON:
+  `/private/tmp/mirra-distribution-install-a4b3c14.{log,json}`.
+- Initial launch attempt was denied by iOS with a security message covering
+  signature, entitlements, or an untrusted profile. Local signature/profile
+  checks passed. The user was directed to **Settings → General → VPN & Device
+  Management → Developer App → their Apple Account → Trust/Verify App**, then
+  to open Mirra. Launch log:
+  `/private/tmp/mirra-distribution-launch-a4b3c14.log`.
+- **PASS (connected launch):** retry launched the installed app successfully at
+  **2026-09-18 01:15:51 UTC**, PID **849**. A filtered process check at
+  **01:16:36 UTC** confirmed Mirra was still running. The user then explicitly
+  confirmed **“Mirra opens.”** This resolves the developer-trust launch blocker.
+  Logs/JSON: `/private/tmp/mirra-distribution-launch-a4b3c14-recheck.{log,json}`
+  and `/private/tmp/mirra-distribution-running-a4b3c14.{log,json}`.
+  The device task received the exact installed build identity and owns the next
+  TF-2 disconnected cold-launch/auth-restoration check. This connected launch
+  does not close TF-1, TF-2, recording, or any other physical acceptance gate.
 
 Until an installed app is cold-launched with the Mac disconnected, this does
 not prove standalone launch. Capture, permission recovery, screen-lock behavior,
