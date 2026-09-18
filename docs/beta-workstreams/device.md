@@ -75,11 +75,17 @@ Phone previously reported: iPhone 13 / iOS 26.6.2. Reconfirmation and availabili
 were requested directly in this task; no reply was received before this checkpoint.
 No iMessage coordination was used.
 
-Distribution task `01a0b1d5-ee26-7bb3-a253-c4c421279434` reports Xcode 26.6
-installed and first-launch iOS components being prepared. No valid signing
-identity or installed Personal Team build has been supplied yet. Distribution
-will include the capture changes before its device build. Free signing can
-support own-device checks; it does not pass the TestFlight installation gate.
+Distribution task `01a0b1d5-ee26-7bb3-a253-c4c421279434` reports that capture
+commit `b406afe7668809537efad4369ded7e037b915c4c` and helper `b5bb77b` are now
+included in its build worktree (equivalent candidate HEAD `b32546e`), with local
+Release guard commit `13ae5d8`. Xcode 26.6 is installed; the first build attempt
+stopped before compilation because the required iOS platform is still downloading.
+Xcode has no Apple Account, and no iPhone is attached. Distribution has asked
+the user to sign in themselves through Xcode Settings → Apple Accounts. No valid
+signing identity, completed artifact, or installed Personal Team build has been
+supplied yet. Free signing can support own-device checks; it does not pass the
+TestFlight installation gate. Build identity and installation readiness remain
+with distribution before this task starts the TF-2 device check.
 
 Production remains `https://mirra-backend-wp2b.onrender.com`, deployed commit
 `f8cf5d7196654aff3ff578bb5503668aa3ff15cd`, Free 512 MB, not this candidate.
