@@ -101,7 +101,7 @@ def transcribe(
     if buf.getbuffer().nbytes > MAX_TRANSCRIPTION_BYTES:
         raise TranscriptionInputTooLarge("Recording exceeds the transcription upload limit")
     buf.seek(0)
-    with OpenAI(api_key=settings.openai_api_key, timeout=180.0, max_retries=1) as client:
+    with OpenAI(api_key=settings.openai_api_key, timeout=600.0, max_retries=1) as client:
         response = client.audio.transcriptions.create(
             model=TRANSCRIPTION_MODEL, file=buf, response_format="diarized_json",
             chunking_strategy="auto",

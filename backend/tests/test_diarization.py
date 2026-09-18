@@ -2,7 +2,9 @@ import io
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import httpx
 import numpy as np
+from openai import APITimeoutError, OpenAI
 import pytest
 import soundfile as sf
 import soxr
@@ -46,6 +48,33 @@ def test_transcribes_the_complete_timeline_with_speakers(transcription_client):
 def test_empty_audio_does_not_call_openai(transcription_client):
     assert transcription.transcribe(np.array([], dtype=np.float32), 16000) == []
     transcription_client.assert_not_called()
+
+
+@pytest.mark.parametrize("recovers", [False, True])
+def test_transcription_timeout_retries_once_then_recovers_or_fails(monkeypatch, recovers):
+    attempts = []
+
+    def respond(request):
+        attempts.append(request)
+        assert request.extensions["timeout"]["read"] == 600
+        if len(attempts) == 1 or not recovers:
+            raise httpx.ReadTimeout("synthetic provider timeout", request=request)
+        return httpx.Response(200, json={"text": "Hello", "segments": [
+            {"start": 0, "end": 1, "speaker": "A", "text": "Hello"},
+        ]})
+
+    def client(**kwargs):
+        return OpenAI(**kwargs, http_client=httpx.Client(transport=httpx.MockTransport(respond)))
+
+    monkeypatch.setattr(transcription, "OpenAI", client)
+    if recovers:
+        assert transcription.transcribe(np.zeros(16000, dtype=np.float32), 16000) == [
+            TranscribedTurn(0, 1, "A", "Hello"),
+        ]
+    else:
+        with pytest.raises(APITimeoutError):
+            transcription.transcribe(np.zeros(16000, dtype=np.float32), 16000)
+    assert len(attempts) == 2
 
 
 def test_compressed_source_is_used_when_decoded_wav_exceeds_limit(monkeypatch, transcription_client):

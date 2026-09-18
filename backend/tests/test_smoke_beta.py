@@ -7,6 +7,27 @@ import pytest
 from scripts import smoke_beta
 
 
+@pytest.mark.parametrize("change", [None, "duration", "speaker", "model", "marker"])
+def test_full_length_smoke_checks_duration_model_speakers_and_content(change):
+    debrief = {"transcript": "Speaker A: Copper lantern. Speaker B: Purple lighthouse.", "stats": {
+        "session_duration_minutes": 23.333,
+        "metadata": {"diarization": {"model": "gpt-4o-transcribe-diarize", "speaker_count": 2}},
+    }}
+    if change == "duration":
+        debrief["stats"]["session_duration_minutes"] = 20
+    elif change == "speaker":
+        debrief["stats"]["metadata"]["diarization"]["speaker_count"] = 1
+    elif change == "model":
+        debrief["stats"]["metadata"]["diarization"]["model"] = "other"
+    elif change == "marker":
+        debrief["transcript"] = "Copper lantern."
+    if change:
+        with pytest.raises(AssertionError):
+            smoke_beta.check_transcription(debrief, 1400, ["copper lantern", "purple lighthouse"], 2)
+    else:
+        smoke_beta.check_transcription(debrief, 1400, ["COPPER  lantern", "purple lighthouse"], 2)
+
+
 @pytest.mark.parametrize("own_account,valid_id,lookup_status", [
     (False, True, 200), (True, True, 200), (True, False, 200), (True, True, 503),
 ])
