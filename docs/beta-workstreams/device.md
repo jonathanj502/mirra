@@ -153,6 +153,17 @@ must still be checked for all three markers before TF-6 can pass. Reconnect and
 candidate-backend validation are being coordinated with integration; no upload
 or usage result has been observed from these physical clips yet.
 
+The user subsequently replied "yes" after the reminder to keep clips offline.
+This could acknowledge that reminder rather than confirm the completed lock
+test. The task asked for the newest clip's exact displayed duration and whether
+the phone was locked for five full minutes; **both the lock/save subcheck and
+full TF-6 remain PENDING** until clarified. The initial interpretation of that
+reply as a completed capture was corrected with integration and distribution.
+Read-only USB copying of only the newest queued test clip is authorized for
+local marker verification once connected, with Airplane Mode on/Wi-Fi off.
+Preserve the queued original; no provider/backend upload is authorized by this
+local inspection step.
+
 Production remains `https://mirra-backend-wp2b.onrender.com`, deployed commit
 `f8cf5d7196654aff3ff578bb5503668aa3ff15cd`, Free 512 MB, not this candidate.
 The prior capacity failure and deployed limits can block full debrief/provider
