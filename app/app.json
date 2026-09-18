@@ -97,6 +97,12 @@
         }
       ]
     ],
-    "icon": "./assets/icon.png"
+    "icon": "./assets/icon.png",
+    "extra": {
+      "eas": {
+        "projectId": "20253166-6402-4548-bb4a-5084bcc0dc03"
+      }
+    },
+    "owner": "jjiang25"
   }
 }

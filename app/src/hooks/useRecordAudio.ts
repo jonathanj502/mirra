@@ -5,6 +5,8 @@ import { friendlyErrorMessage } from '@/api/http';
 import { useAuth } from '@/auth/AuthContext';
 import { PendingRecording, recordingId } from '@/storage/pendingRecordings';
 import { requestAIConsent } from '@/privacy/aiConsent';
+import { MAX_RECORDING_SECONDS } from '@/config/recording';
+import { getAudioDuration } from '@/utils/audioDuration';
 import { usePendingRecordings } from './usePendingRecordings';
 
 let askedForRecordingNotification = false;
@@ -39,6 +41,7 @@ function useRecorderState() {
   const [recording, setRecording] = useState(false);
   const [saving, setSaving] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [needsMicrophoneSettings, setNeedsMicrophoneSettings] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Keep the original if device storage is full; another capture must not overwrite it.
   const unsaved = useRef<PendingRecording | null>(null);
@@ -53,7 +56,7 @@ function useRecorderState() {
     if (!status.isFinished || !active || stoppingManually.current
       || (status.url && active.audio.uri && status.url !== active.audio.uri)) return;
     setRecording(false);
-    const uri = status.url || recorder.uri;
+    const uri = status.url || active.audio.uri || recorder.uri;
     if (uri) {
       activeRecording.current = null;
       const seconds = recorder.getStatus().durationMillis / 1000 || active.seconds;
@@ -70,7 +73,7 @@ function useRecorderState() {
     if (activeRecording.current && recorderState.durationMillis > 0) {
       activeRecording.current.seconds = recorderState.durationMillis / 1000;
     }
-    // Expo handles interruption pause/resume natively; do not compete for the microphone.
+    // Expo pauses iOS recording on interruption; keep Stop available to save the partial clip.
   }, [recorderState]);
 
   async function startRecording() {
@@ -86,8 +89,11 @@ function useRecorderState() {
     try {
       if (!await requestAIConsent(user.id, Platform.OS !== 'web')) return;
       const permission = await AudioModule.requestRecordingPermissionsAsync();
+      setNeedsMicrophoneSettings(!permission.granted && permission.canAskAgain === false);
       if (!permission.granted) {
-        setError('Allow microphone access to record a conversation.');
+        setError(permission.canAskAgain === false
+          ? 'Allow microphone access in Settings, then tap Record again.'
+          : 'Allow microphone access to record a conversation.');
         return;
       }
       await offerRecordingNotification();
@@ -98,12 +104,13 @@ function useRecorderState() {
         interruptionMode: 'doNotMix',
         shouldRouteThroughEarpiece: false,
       });
-      await recorder.prepareToRecordAsync();
+      // Explicit options create a fresh iOS file, so late finish events cannot match the next clip.
+      await recorder.prepareToRecordAsync(RECORDING_OPTIONS);
       activeRecording.current = {
         id: recordingId(), userId: user.id, startedAt: new Date().toISOString(), seconds: 0,
         audio: { uri: Platform.OS === 'web' ? '' : recorder.uri ?? '', name: recordingName(), type: recordingMimeType() },
       };
-      recorder.record();
+      recorder.record({ forDuration: MAX_RECORDING_SECONDS });
       setRecording(!!activeRecording.current);
     } catch (err) {
       activeRecording.current = null;
@@ -139,8 +146,11 @@ function useRecorderState() {
         setRecording(false);
       }
       if (!unsaved.current) return true;
-      await queue.enqueue(unsaved.current);
-      if (Platform.OS === 'web') URL.revokeObjectURL(unsaved.current.audio.uri);
+      const clip = unsaved.current;
+      // Native finish resets its timer; locked-screen polls can also miss the final duration.
+      if (Platform.OS !== 'web') clip.seconds = await getAudioDuration(clip.audio.uri).catch(() => clip.seconds);
+      await queue.enqueue(clip);
+      if (Platform.OS === 'web') URL.revokeObjectURL(clip.audio.uri);
       unsaved.current = null;
       return true;
     } catch (err) {
@@ -166,6 +176,8 @@ function useRecorderState() {
 
   return {
     isRecording: recording,
+    isRecordingPaused: recording && recorderState.canRecord && !recorderState.isRecording,
+    needsMicrophoneSettings,
     ...queue,
     isSavingRecording: saving,
     isStartingRecording: starting,

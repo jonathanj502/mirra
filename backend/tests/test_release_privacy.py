@@ -58,11 +58,13 @@ def test_release_guards_enforce_config_readiness_and_request_budget(monkeypatch)
 
 def test_busy_pipeline_rejects_without_reserving_usage():
     from app.main import _pipeline_slot
-    app.dependency_overrides[get_db] = lambda: MagicMock()
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = None
+    app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[verify_token] = lambda: 'owner'
     _pipeline_slot.acquire()
     try:
-        with patch('app.main.check_and_increment') as reserve:
+        with patch('app.main.complete_recording') as reserve:
             response = TestClient(app).post('/sessions', files={'audio': ('test.wav', b'audio', 'audio/wav')})
         assert response.status_code == 503
         reserve.assert_not_called()
@@ -77,7 +79,7 @@ def test_deleted_recording_replay_never_reserves_usage_or_calls_ai():
     db.table.return_value.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {'debrief_id': deleted_id}
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[verify_token] = lambda: 'owner'
-    with patch('app.main.check_and_increment') as reserve, patch('app.main.coordinator.run') as process:
+    with patch('app.main.complete_recording') as reserve, patch('app.main.coordinator.run') as process:
         response = TestClient(app).post('/sessions', data={'recording_id': 'old-recording'}, files={'audio': ('test.wav', b'audio', 'audio/wav')})
     assert response.status_code == 410
     reserve.assert_not_called()

@@ -48,8 +48,9 @@ jobs:
         working-directory: app
         env:
           EXPO_PUBLIC_SUPABASE_URL: https://example.supabase.co
-          EXPO_PUBLIC_SUPABASE_ANON_KEY: public-build-placeholder
-          EXPO_PUBLIC_MIRRA_BACKEND_URL: https://example.invalid
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_build_placeholder
+          EXPO_PUBLIC_MIRRA_BACKEND_URL: https://api.mirra.app
+          EXPO_PUBLIC_WEBSITE_URL: https://mirra.app
       - run: npx expo prebuild --no-install
         working-directory: app
       - uses: actions/upload-artifact@v4
@@ -68,7 +69,14 @@ jobs:
           python-version: '3.11'
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg libsndfile1
       - run: pip install torch==2.12.1 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cpu
-      - run: pip install -e '.[dev]' && pytest -q
+      - run: |
+          pip install uv==0.11.3
+          uv export --frozen --extra dev --no-emit-project --no-hashes --no-emit-package torch --no-emit-package torchaudio \
+            | sed '/^nvidia-/d; /^triton==/d' > /tmp/requirements-ci.txt
+          pip install -r /tmp/requirements-ci.txt
+          pip install --no-deps -e .
+          pytest -q
+        shell: bash
         working-directory: backend
         env:
           SUPABASE_URL: https://example.supabase.co
@@ -76,10 +84,42 @@ jobs:
           OPENAI_API_KEY: test-key
   container:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t mirra:check backend
+      - name: Probe full-day processing and maximum upload in the deployment image
+        timeout-minutes: 15
+        run: |
+          mkdir -p capacity-logs
+          failed=0
+          for mode in day upload; do
+            volume="mirra-capacity-$mode"
+            docker volume create "$volume" >/dev/null
+            if docker run --name "$volume" --network none --memory 2g --memory-swap 2g --cpus 1 \
+              -e PYTHONPATH=/srv/mirra -e TMPDIR=/srv/mirra/.recordings \
+              -e NUMBA_CACHE_DIR=/srv/mirra/.recordings/numba \
+              --mount "type=volume,source=$volume,target=/srv/mirra/.recordings" \
+              --mount "type=bind,source=$GITHUB_WORKSPACE/backend/scripts/benchmark_rollout.py,target=/tmp/benchmark_rollout.py,readonly" \
+              --entrypoint python mirra:check -u /tmp/benchmark_rollout.py "$mode" --runs 1 \
+              >"capacity-logs/$mode.log" 2>&1; then
+              echo "$mode probe passed"
+            else
+              failed=1
+              tail -80 "capacity-logs/$mode.log"
+            fi
+            docker inspect --format '{"exit":{{.State.ExitCode}},"oom_killed":{{.State.OOMKilled}}}' "$volume" \
+              >"capacity-logs/$mode-state.json"
+            docker rm "$volume" >/dev/null
+            docker volume rm "$volume" >/dev/null
+          done
+          exit "$failed"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: capacity-logs
+          path: capacity-logs/
+          retention-days: 7
   android:
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -120,8 +160,9 @@ jobs:
         working-directory: app/ios
         env:
           EXPO_PUBLIC_SUPABASE_URL: https://example.supabase.co
-          EXPO_PUBLIC_SUPABASE_ANON_KEY: public-build-placeholder
-          EXPO_PUBLIC_MIRRA_BACKEND_URL: https://example.invalid
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_build_placeholder
+          EXPO_PUBLIC_MIRRA_BACKEND_URL: https://api.mirra.app
+          EXPO_PUBLIC_WEBSITE_URL: https://mirra.app
       - name: Launch the app in iOS Simulator
         timeout-minutes: 12
         working-directory: app

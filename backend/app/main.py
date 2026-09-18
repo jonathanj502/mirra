@@ -27,7 +27,7 @@ from app.rate_limit import check_reflect_limit
 from app.pipeline import coordinator
 from app.pipeline.transcription import TranscriptionInputTooLarge
 from app.recording_jobs import RecordingJobs, RecordingUpload, recording_key, UPLOAD_CHUNK_BYTES, SUPPORTED_AUDIO_TYPES
-from app.usage import check_and_increment, get_usage, release
+from app.usage import complete_recording, get_usage
 from app.user_settings import fetch_user_settings, save_user_settings
 
 recording_jobs = RecordingJobs(settings.recording_storage_dir)
@@ -316,7 +316,7 @@ def create_session(
     db: Client = Depends(get_db),
 ):
     # Account-scoped deterministic IDs use the existing primary key for durable duplicate protection.
-    debrief_id = str(uuid5(NAMESPACE_URL, f"mirra:{user_id}:{recording_id}")) if recording_id else None
+    debrief_id = str(uuid5(NAMESPACE_URL, f"mirra:{user_id}:{recording_id}")) if recording_id else str(uuid4())
     if debrief_id:
         # ponytail: this suppresses duplicate model work within one process. Across workers the DB
         # primary key still prevents duplicate debriefs; add a DB job lease if scaling workers.
@@ -325,6 +325,9 @@ def create_session(
                 raise HTTPException(status_code=409, detail="This recording is already being processed.")
             _processing_sessions.add(debrief_id)
     try:
+        existing = _recording_result(db, user_id, debrief_id)
+        if existing:
+            return existing
         if not _pipeline_slot.acquire(blocking=False):
             raise HTTPException(status_code=503, detail='Mirra is processing another recording. Your saved recording will upload automatically.', headers={'Retry-After': '60'})
         try:
@@ -357,69 +360,32 @@ def _process_session(audio, started_at, client_duration_seconds, title, user_id,
     audio.file.seek(0, 2)
     if audio.file.tell() > 25 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Audio file is too large")
+    if audio.file.tell() == 0:
+        raise HTTPException(422, "The audio file is empty. Choose a nonempty audio file.")
     audio.file.seek(0)
 
-    reservation_month = check_and_increment(db, user_id)
-    inserting = False
+    if get_usage(db, user_id)['remaining'] <= 0:
+        raise HTTPException(402, 'Monthly debrief limit reached')
+    user_settings = fetch_user_settings(db, user_id)
     try:
-        user_settings = fetch_user_settings(db, user_id)
-        try:
-            result = coordinator.run(audio.file, content_type=content_type, coaching_goal=user_settings.coaching_goal)
-        except TranscriptionInputTooLarge as exc:
-            raise HTTPException(status_code=413, detail="Recording is too large to transcribe. Use a shorter recording or upload M4A, MP3, or WebM.") from exc
-        except coordinator.AudioDurationTooLong as exc:
-            raise HTTPException(status_code=413, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail="Could not decode audio") from exc
-        session_id = str(uuid4())
-        metadata = {
-            "started_at": started_at,
-            "client_duration_seconds": client_duration_seconds,
-            "title": title,
-            "original_filename": audio.filename,
-            "content_type": content_type,
-            "coaching_goal": user_settings.coaching_goal,
-        }
-        stats = {**result["stats"], "metadata": {
-            **result["stats"].get("metadata", {}),
-            **{k: v for k, v in metadata.items() if v is not None},
-        }}
-        inserting = True
-        row = (
-            db.table("debriefs")
-            .insert(
-                {
-                    **({"id": debrief_id} if debrief_id else {}),
-                    "user_id": user_id,
-                    "session_id": session_id,
-                    "observation": result["observation"],
-                    "pattern_to_reduce": result["pattern_to_reduce"],
-                    "thing_to_try_next": result["thing_to_try_next"],
-                    "stats": stats,
-                    "transcript": result["transcript"] if user_settings.save_transcripts else None,
-                }
-            )
-            .execute()
-        )
-    except Exception as exc:
-        existing = None
-        if debrief_id and inserting:
-            existing = _fetch_debrief_row(db, user_id, debrief_id)
-            # The insert may have committed even though its HTTP response was lost.
-            if existing and getattr(exc, "code", None) != "23505":
-                return _session_response(db, user_id, existing)
-        if reservation_month is not None:
-            try:
-                release(db, user_id, reservation_month)
-            except Exception as refund_error:
-                logger.error("Could not release debrief reservation for user %s in %s (%s)",
-                             user_id, reservation_month, type(refund_error).__name__)
-        if existing:
-            return _session_response(db, user_id, existing)
-        if getattr(exc, 'code', None) == 'P0001' and 'recording_deleted' in str(exc):
-            raise HTTPException(410, 'This conversation was deleted. Discard its saved audio copy.') from exc
-        raise
-    return _session_response(db, user_id, row.data[0])
+        result = coordinator.run(audio.file, content_type=content_type, coaching_goal=user_settings.coaching_goal)
+    except (TranscriptionInputTooLarge, coordinator.AudioDurationTooLong) as exc:
+        raise HTTPException(413, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, 'Could not decode audio') from exc
+    metadata = {
+        "started_at": started_at, "client_duration_seconds": client_duration_seconds,
+        "original_filename": audio.filename, "content_type": content_type, "title": title,
+        "coaching_goal": user_settings.coaching_goal,
+    }
+    payload = {**result, "session_id": str(uuid4()),
+               "transcript": result["transcript"] if fetch_user_settings(db, user_id).save_transcripts else None,
+               "stats": {**result["stats"], "metadata": {
+                   **result["stats"].get("metadata", {}),
+                   **{k: v for k, v in metadata.items() if v is not None},
+               }}}
+    row = complete_recording(db, user_id, debrief_id, payload)
+    return _session_response(db, user_id, row)
 
 
 @app.get("/debriefs", response_model=list[Debrief])
@@ -540,16 +506,7 @@ def _run_recording_job(job, path, progress):
         payload = {**result, 'session_id': str(uuid4()),
                    'transcript': result['transcript'] if save_transcripts else None,
                    'stats': {**result['stats'], 'metadata': {**result['stats'].get('metadata', {}), **metadata}}}
-        try:
-            # Atomic commit: retries and worker restarts cannot charge a recording twice.
-            db.rpc('complete_recording', {'owner_id': user_id, 'target_id': key,
-                                        'payload': payload, 'monthly_cap': settings.free_tier_cap}).execute()
-        except Exception as exc:
-            if 'monthly_debrief_limit' in str(exc):
-                raise HTTPException(402, 'Monthly debrief limit reached') from exc
-            if 'recording_deleted' in str(exc):
-                raise HTTPException(410, 'This recording was discarded.') from exc
-            raise
+        complete_recording(db, user_id, key, payload)
 
 
 @app.post("/reflect", response_model=ReflectResponse)

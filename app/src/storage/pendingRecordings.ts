@@ -21,7 +21,8 @@ function directory(userId: string, id = '') {
 export async function savePendingRecording(recording: PendingRecording): Promise<PendingRecording> {
   const folder = directory(recording.userId, recording.id);
   await FileSystem.makeDirectoryAsync(folder, { intermediates: true });
-  const uri = `${folder}/${recording.audio.name}`;
+  // Picker filenames are display metadata, not paths or our manifest filenames.
+  const uri = `${folder}/audio`;
   // Copy before publishing the manifest; never move/delete the only original on a failed save.
   if (recording.audio.uri !== uri) await FileSystem.copyAsync({ from: recording.audio.uri, to: uri });
   const saved = { ...recording, audio: { ...recording.audio, uri } };
@@ -45,7 +46,11 @@ export async function listPendingRecordings(userId: string): Promise<PendingReco
     if (!(await FileSystem.getInfoAsync(path)).exists) continue;
     const recording: PendingRecording = JSON.parse(await FileSystem.readAsStringAsync(path));
     if (recording.userId !== userId || recording.id !== id) throw new Error('Could not read saved recordings.');
-    recording.audio.uri = `${root}${id}/${recording.audio.name}`;
+    // Rebase the saved filename when iOS changes the application's container path.
+    // Old queue entries used the original filename; new entries always use "audio".
+    const filename = recording.audio.uri.split('/').pop();
+    if (!filename || filename === '.' || filename === '..') throw new Error('Could not read saved recordings.');
+    recording.audio.uri = `${root}${id}/${filename}`;
     recordings.push(recording);
   }
   return recordings.sort((a, b) => a.startedAt.localeCompare(b.startedAt));

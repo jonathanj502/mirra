@@ -9,7 +9,9 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "eas-build-pre-install": "node scripts/eas-preflight.mjs",
-    "eas-build-post-install": "node scripts/generate-notices.mjs"
+    "eas-build-post-install": "node scripts/generate-notices.mjs",
+    "check:production": "node scripts/check-production-env.cjs",
+    "export:ios:production": "npm run check:production && expo export --platform ios --clear"
   },
   "dependencies": {
     "@expo-google-fonts/instrument-serif": "^0.4.1",

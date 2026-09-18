@@ -48,5 +48,6 @@ skills-lock.json
 *.swo
 *.log
 
-# Codex session state
+# Local agent session state
 .codex-scratchpad.md
+.claude/

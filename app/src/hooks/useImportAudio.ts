@@ -1,17 +1,16 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
-import { createAudioPlayer } from 'expo-audio';
+import { getAudioDuration } from '@/utils/audioDuration';
+import { File } from 'expo-file-system';
 import { friendlyErrorMessage } from '@/api/http';
+import { useAuth } from '@/auth/AuthContext';
 import { useRecordAudio } from '@/hooks/useRecordAudio';
 import { recordingId } from '@/storage/pendingRecordings';
-import { useAuth } from '@/auth/AuthContext';
-import { DebriefCard } from '@/models/debrief';
 import { titleFromFilename } from '@/utils/timeFormat';
-import { requestAIConsent } from '@/privacy/aiConsent';
+import { hasAIConsent, requestAIConsent } from '@/privacy/aiConsent';
+import { MAX_AUDIO_BYTES, MAX_RECORDING_SECONDS } from '@/config/recording';
 
-const MAX_BYTES = 2 * 1024 * 1024 * 1024;
 const AUDIO_TYPES = [
-  'audio/*',
   'audio/mpeg',
   'audio/mp4',
   'audio/wav',
@@ -19,32 +18,12 @@ const AUDIO_TYPES = [
   'audio/x-wav',
   'audio/ogg',
   'audio/aac',
+  'audio/webm',
 ];
 
-async function getAudioDuration(uri: string): Promise<number> {
-  const player = createAudioPlayer({ uri });
-  let subscription: ReturnType<typeof player.addListener> | undefined;
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    if (!player.isLoaded) {
-      await new Promise<void>((resolve, reject) => {
-        timeout = setTimeout(() => reject(new Error('Could not read audio duration.')), 10000);
-        subscription = player.addListener('playbackStatusUpdate', status => {
-          if (status.isLoaded) resolve();
-        });
-        if (player.isLoaded) resolve();
-      });
-    }
-    return Number.isFinite(player.duration) ? player.duration : 0;
-  } finally {
-    clearTimeout(timeout);
-    subscription?.remove();
-    player.remove();
-  }
-}
-
 function mimeTypeFor(name: string, provided?: string | null): string {
-  if (provided && ['audio/mpeg','audio/mp4','audio/x-m4a','audio/wav','audio/x-wav','audio/ogg','audio/aac','audio/webm'].includes(provided)) return provided;
+  const type = provided?.split(';', 1)[0].trim().toLowerCase();
+  if (type && AUDIO_TYPES.includes(type)) return type;
   const ext = name.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase();
   if (ext === 'mp3') return 'audio/mpeg';
   if (ext === 'wav') return 'audio/wav';
@@ -52,63 +31,89 @@ function mimeTypeFor(name: string, provided?: string | null): string {
   if (ext === 'ogg') return 'audio/ogg';
   if (ext === 'aac') return 'audio/aac';
   if (ext === 'webm') return 'audio/webm';
-  throw new Error('Choose an M4A, MP3, WAV, OGG, AAC or WebM audio file.');
+  return '';
 }
 
 export function useImportAudio() {
   const { user } = useAuth();
   const { enqueue } = useRecordAudio();
-  const selecting = useRef(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const currentUserId = useRef(user?.id);
+  currentUserId.current = user?.id;
+  const activeImport = useRef<AbortController | null>(null);
+  useEffect(() => () => { activeImport.current?.abort(); }, [user?.id]);
 
-  const importAudio = useCallback(async (): Promise<DebriefCard | null> => {
-    if (selecting.current) return null;
-    selecting.current = true;
+  const importAudio = useCallback(async (): Promise<void> => {
+    if (activeImport.current) return;
+    const controller = new AbortController();
+    activeImport.current = controller;
+    const userId = user?.id;
+    const isCurrent = () => !controller.signal.aborted && currentUserId.current === userId;
     setImporting(true);
     setError(null);
     try {
-      if (!user) {
+      if (!userId) {
         setError('Please sign in before uploading a conversation.');
-        return null;
+        return;
       }
 
-      if (!await requestAIConsent(user.id)) return null;
+      if (!await requestAIConsent(userId) || !isCurrent()) return;
       const result = await DocumentPicker.getDocumentAsync({
-        type: AUDIO_TYPES,
+        type: ['audio/*', ...AUDIO_TYPES],
         copyToCacheDirectory: true,
         multiple: false,
       });
 
-      if (result.canceled || !result.assets?.length) return null;
+      if (!isCurrent() || result.canceled || !result.assets?.length) return;
 
       const asset = result.assets[0];
-      const size = asset.size ?? 0;
-      if (size > MAX_BYTES) {
-        setError('Please choose an audio file no larger than 2 GB.');
-        return null;
+      const type = mimeTypeFor(asset.name, asset.mimeType);
+      if (!AUDIO_TYPES.includes(type)) {
+        setError('Unsupported audio type. Choose M4A, MP3, WAV, WebM, AAC, or OGG.');
+        return;
+      }
+      const size = asset.size ?? asset.file?.size ?? new File(asset.uri).size;
+      if (!Number.isFinite(size) || size <= 0) {
+        setError('Could not read the audio file size. Choose a nonempty audio file.');
+        return;
+      }
+      if (size > MAX_AUDIO_BYTES) {
+        setError('Please choose an audio file of 2 GiB or smaller.');
+        return;
       }
 
-      // The original file remains with its owner; save a durable copy before any network request.
+      // Native players cannot read every supported format (for example WebM on Apple).
+      // Zero means unknown locally; the server always validates actual decoded duration.
       const durationSeconds = await getAudioDuration(asset.uri).catch(() => 0);
+      if (!isCurrent()) return;
+      // Apple includes encoder padding in MP3 metadata; this does not extend the server limit.
+      if (durationSeconds > MAX_RECORDING_SECONDS + 1) {
+        setError('Please choose a conversation no longer than 24 hours.');
+        return;
+      }
+      if (!await requestAIConsent(userId) || !isCurrent()) return;
+      if (!await hasAIConsent(userId) || !isCurrent()) return;
       const id = recordingId();
-      const type = mimeTypeFor(asset.name, asset.mimeType);
       const extension = type.includes('webm') ? 'webm' : type.includes('wav') ? 'wav' : type.includes('mpeg') ? 'mp3' : type.includes('ogg') ? 'ogg' : type.includes('aac') ? 'aac' : 'm4a';
-      await enqueue({ id, userId: user.id, startedAt: new Date().toISOString(), seconds: durationSeconds,
-        title: titleFromFilename(asset.name).slice(0, 200), audio: { uri: asset.uri, name: `mirra-import-${id}.${extension}`, type } });
-      return null;
+      await enqueue({
+        id, userId, startedAt: new Date().toISOString(), seconds: durationSeconds,
+        audio: { uri: asset.uri, name: `mirra-import-${id}.${extension}`, type }, title: titleFromFilename(asset.name).slice(0, 200),
+      }).catch(() => {
+        throw new Error('Could not save this import on your device. Your original file is unchanged. Please try again.');
+      });
     } catch (err) {
+      if (!isCurrent()) return;
       const message = friendlyErrorMessage(
         err,
         'Could not import that audio file. Check available device storage and try again.'
       );
       setError(message);
-      return null;
     } finally {
-      selecting.current = false;
+      activeImport.current = null;
       setImporting(false);
     }
-  }, [user, enqueue]);
+  }, [enqueue, user?.id]);
 
   return { importAudio, importing, error };
 }

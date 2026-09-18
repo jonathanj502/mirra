@@ -12,6 +12,9 @@ function load(file, dependencies, window, globals = {}) {
   } });
   const module = { exports: {} };
   const require = (name) => {
+    if (name === '@/config/recording') return load('config/recording.ts', {});
+    if (name === '@/utils/audioDuration' && !(name in dependencies)) return durationUnavailable;
+    if (name === 'expo-file-system' && !(name in dependencies)) return {};
     assert.ok(name in dependencies, `Missing test dependency: ${name}`);
     return dependencies[name];
   };
@@ -43,12 +46,14 @@ function hooks() {
   };
 }
 
+const consentGranted = { requestAIConsent: async () => true };
+const durationUnavailable = { async getAudioDuration() { throw new Error('Metadata unavailable'); } };
 const goals = load('data/coachingGoals.ts', {});
 
-const privacy = { requestAIConsent: async () => true, withdrawAIConsent: async () => {} };
+const privacy = { requestAIConsent: async () => true, hasAIConsent: async () => true, withdrawAIConsent: async () => {} };
 const confirmation = { confirmAction: async () => true };
 
-const auth = { useAuth: () => ({ accessToken: 'test-token' }) };
+const auth = { useAuth: () => ({ accessToken: 'test-token', user: { id: 'test-user' } }) };
 const http = load('api/http.ts', { '@/config/env': { env: { backendUrl: 'http://test.invalid' } } });
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
@@ -218,7 +223,7 @@ test('import failures are returned as visible error state on web', async () => {
     '@/privacy/aiConsent': privacy, '@/utils/confirm': confirmation,
     'expo-document-picker': { async getDocumentAsync() { throw new Error('Could not open audio file'); } },
   });
-  assert.equal(await state.render(useImportAudio).importAudio(), null);
+  assert.equal(await state.render(useImportAudio).importAudio(), undefined);
   assert.equal(state.render(useImportAudio).error, 'Could not open audio file');
   assert.equal(state.render(useImportAudio).importing, false);
 });
@@ -232,7 +237,7 @@ test('import saves an account-owned copy to the offline queue and uses upstream 
   const saved = [];
   const { useImportAudio } = load('hooks/useImportAudio.ts', {
     react: state.react, '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' } }) }, '@/api/http': http,
-    '@/privacy/aiConsent': { requestAIConsent: async () => { asked++; return allowed; } },
+    '@/privacy/aiConsent': { requestAIConsent: async () => { asked++; return allowed; }, hasAIConsent: async () => allowed },
     '@/storage/pendingRecordings': { recordingId: () => 'stable-id' },
     '@/hooks/useRecordAudio': { useRecordAudio: () => ({ enqueue: async row => saved.push(row) }) },
     '@/utils/timeFormat': { titleFromFilename: () => 'Imported conversation' },
@@ -255,7 +260,7 @@ test('import saves an account-owned copy to the offline queue and uses upstream 
   size = 2 * 1024 ** 3 + 1;
   await render().importAudio();
   assert.equal(saved.length, 1);
-  assert.match(render().error, /2 GB/);
+  assert.match(render().error, /2 GiB/);
 });
 
 test('large native uploads read bounded ranges, resume lost acknowledgements, refresh tokens and close files', async () => {
@@ -874,4 +879,171 @@ test('Reflect keeps a newer draft through failed replies, retries and removal of
   assert.equal(input().props.value, 'Another draft');
   assert.equal(find(render(), 'Send message').props.disabled, false);
   assert.doesNotMatch(JSON.stringify(render()), /New unsent draft/);
+});
+test('native interruptions retain one original, including after media reset and missing metadata', async () => {
+  const state = hooks();
+  const effects = [];
+  const saved = [];
+  let account = 'test-user';
+  let listener;
+  let starts = 0;
+  let stops = 0;
+  let fileSeconds = 7.5;
+  let status = { durationMillis: 0, isRecording: false, canRecord: false };
+  const recorder = {
+    uri: 'file:///initial.m4a',
+    // iOS reuses the old file unless preparation receives recording options.
+    async prepareToRecordAsync(options) { assert.equal(options.sampleRate, 24000); assert.equal(options.bitRate, 64000); assert.equal(options.numberOfChannels, 1); if (options) this.uri = `file:///clip-${starts + 1}.m4a`; },
+    record(options) {
+      assert.equal(options.forDuration, 86400);
+      starts++; status = { durationMillis: 0, isRecording: true, canRecord: true };
+    },
+    async stop() {
+      stops++;
+      status = { durationMillis: 0, isRecording: false, canRecord: false };
+      listener({ isFinished: true, hasError: false, url: this.uri });
+    },
+    getStatus: () => status,
+  };
+  const { RecordingProvider } = load('hooks/useRecordAudio.ts', {
+    react: { ...state.react, useEffect: effect => effects.push(effect) },
+    'react-native': { Platform: { OS: 'android', Version: 32 } },
+    '@/auth/AuthContext': { useAuth: () => ({ user: { id: account } }) }, '@/api/http': http, '@/privacy/aiConsent': consentGranted,
+    '@/utils/audioDuration': { async getAudioDuration() {
+      if (fileSeconds === null) throw new Error('Metadata unavailable');
+      return fileSeconds;
+    } },
+    '@/storage/pendingRecordings': { recordingId: () => `recording-${starts}` },
+    './usePendingRecordings': { usePendingRecordings: () => ({ async enqueue(clip) { saved.push(clip); } }) },
+    'expo-audio': {
+      AudioModule: { requestRecordingPermissionsAsync: async () => ({ granted: true }) },
+      setAudioModeAsync: async () => {}, RecordingPresets: { HIGH_QUALITY: {} },
+      // SDK 57 retains the first callback for the lifetime of this recorder.
+      useAudioRecorder: (_, callback) => { listener ??= callback; return recorder; },
+      useAudioRecorderState: () => status,
+    },
+  });
+  function render() {
+    const result = state.render(() => RecordingProvider({ children: null })).props.value;
+    effects.splice(0).forEach(effect => effect());
+    return result;
+  }
+  await render().startRecording();
+  status = { durationMillis: 7500, isRecording: false, canRecord: true };
+  render();
+  assert.equal(starts, 1, 'An interruption must not force a microphone resume');
+  assert.equal(render().isRecordingPaused, true);
+  const completed = { isFinished: true, url: recorder.uri };
+  status = { durationMillis: 0, isRecording: false, canRecord: false };
+  listener(completed);
+  listener(completed);
+  await flush();
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].seconds, 7.5, 'Native Stop resets its timer, so probe the file');
+  assert.equal(stops, 0);
+
+  await render().startRecording();
+  assert.notEqual(recorder.uri, completed.url, 'Preparation creates a fresh file');
+  listener(completed);
+  assert.equal(render().isRecording, true, 'A late finish cannot stop the next clip');
+  const interruptedUri = recorder.uri;
+  // Expo recreates its recorder before emitting mediaServicesDidReset with no URL.
+  recorder.uri = 'file:///new-empty-recorder.m4a';
+  status = { durationMillis: 0, isRecording: false, canRecord: false };
+  listener({ isFinished: true, mediaServicesDidReset: true, url: null });
+  await flush();
+  assert.equal(saved.length, 2);
+  assert.equal(saved[1].audio.uri, interruptedUri, 'Keep the partial original, never the new empty file');
+  assert.equal(render().isRecording, false);
+
+  await render().startRecording();
+  status = { durationMillis: 3500, isRecording: true, canRecord: true };
+  fileSeconds = null;
+  await render().stopRecording();
+  assert.equal(saved.length, 3, 'Missing metadata cannot prevent saving the source');
+  assert.equal(saved[2].seconds, 3.5);
+  assert.equal(saved[2].audio.uri, recorder.uri);
+  assert.equal(stops, 1);
+});
+
+test('microphone denial can recover after Settings without recreating the recorder', async () => {
+  const state = hooks();
+  let permission = { granted: false, canAskAgain: false };
+  let prepared = 0;
+  let starts = 0;
+  let requests = 0;
+  const { RecordingProvider } = load('hooks/useRecordAudio.ts', {
+    react: state.react, 'react-native': { Platform: { OS: 'ios' } },
+    '@/auth/AuthContext': auth, '@/api/http': http, '@/privacy/aiConsent': consentGranted,
+    '@/utils/audioDuration': durationUnavailable,
+    '@/storage/pendingRecordings': { recordingId: () => 'recording' },
+    './usePendingRecordings': { usePendingRecordings: () => ({}) },
+    'expo-audio': {
+      AudioModule: { async requestRecordingPermissionsAsync() { requests++; return permission; } },
+      setAudioModeAsync: async () => {}, RecordingPresets: { HIGH_QUALITY: {} },
+      useAudioRecorderState: () => ({ durationMillis: 0, canRecord: false, isRecording: false }),
+      useAudioRecorder: () => ({
+        async prepareToRecordAsync() { prepared++; }, record() { starts++; }, uri: 'file:///clip.m4a',
+      }),
+    },
+  });
+  const render = () => state.render(() => RecordingProvider({ children: null })).props.value;
+  await render().startRecording();
+  assert.equal(prepared, 0);
+  assert.equal(starts, 0);
+  assert.equal(render().isStartingRecording, false);
+  assert.equal(render().isRecording, false);
+  assert.equal(render().needsMicrophoneSettings, true);
+  assert.match(render().error, /Settings/);
+  permission = { granted: true, canAskAgain: true }; // User grants access in device Settings.
+  await render().startRecording();
+  assert.equal(requests, 2);
+  assert.equal(prepared, 1);
+  assert.equal(starts, 1);
+  assert.equal(render().needsMicrophoneSettings, false);
+  assert.equal(render().error, null);
+  assert.equal(render().isRecording, true);
+});
+
+
+test('Record screen exposes Settings recovery and explains an interrupted microphone', async () => {
+  const state = hooks();
+  let opened = 0;
+  let fail = false;
+  const dialogs = [];
+  let recording = { needsMicrophoneSettings: true, pendingRecordings: [] };
+  const { HomeScreen } = load('screens/HomeScreen.tsx', {
+    react: state.react,
+    'react-native': { Platform: { OS: 'ios' }, StyleSheet: { create: styles => styles },
+      Pressable: 'Pressable', View: 'View', Linking: { async openSettings() {
+        opened++; if (fail) throw new Error('Unavailable');
+      } }, Alert: { alert: (...args) => dialogs.push(args) } },
+    'expo-router': { useRouter: () => ({}) }, 'react-native-svg': {},
+    '@/components/Screen': { Screen: 'Screen' }, '@/components/Typography': { Body: 'Body', Serif: 'Serif', Eyebrow: 'Eyebrow' },
+    '@/components/Icon': { Icon: {} }, '@/theme/tokens': { colors: {}, fonts: {} },
+    '@/auth/AuthContext': auth, '@/hooks/useDebriefs': { useDebriefs: () => ({ listItems: [] }) },
+    '@/hooks/useUserSettings': { useUserSettings: () => ({ settings: { coachingGoal: 'general' } }) },
+    '@/data/coachingGoals': goals, '@/utils/timeFormat': { formatDuration: () => '1m' },
+    '@/hooks/useImportAudio': { useImportAudio: () => ({}) },
+    '@/hooks/useRecordAudio': { useRecordAudio: () => recording },
+  });
+  function settingsButton(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'Pressable' && node.props?.children?.props?.children === 'Open microphone settings') return node;
+    for (const child of React.Children.toArray(node.props?.children)) {
+      const found = settingsButton(child);
+      if (found) return found;
+    }
+  }
+  const render = () => state.render(HomeScreen);
+  settingsButton(render()).props.onPress();
+  await flush();
+  assert.equal(opened, 1);
+  fail = true;
+  settingsButton(render()).props.onPress();
+  await flush();
+  assert.match(dialogs[0][1], /allow microphone access/);
+  recording = { ...recording, needsMicrophoneSettings: false, isRecording: true, isRecordingPaused: true };
+  assert.equal(settingsButton(render()), undefined);
+  assert.match(JSON.stringify(render()), /Microphone interrupted · tap to stop and save/);
 });

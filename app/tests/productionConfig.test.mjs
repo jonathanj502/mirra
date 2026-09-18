@@ -1,0 +1,64 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { test } from 'node:test';
+
+const valid = {
+  EXPO_NO_DOTENV: '1',
+  EXPO_PUBLIC_MIRRA_BACKEND_URL: 'https://mirra.onrender.com',
+  EXPO_PUBLIC_SUPABASE_URL: 'https://project.supabase.co',
+  EXPO_PUBLIC_WEBSITE_URL: 'https://mirra.app',
+  EXPO_PUBLIC_SUPABASE_ANON_KEY: 'sb_publishable_test',
+};
+const check = overrides => spawnSync(process.execPath, ['scripts/check-production-env.cjs'], {
+  cwd: new URL('..', import.meta.url), env: { ...process.env, ...valid, ...overrides }, encoding: 'utf8',
+});
+
+test('production builds reject missing/local endpoints and privileged keys before bundling', () => {
+  assert.equal(check({}).status, 0);
+  for (const name of ['EXPO_PUBLIC_MIRRA_BACKEND_URL', 'EXPO_PUBLIC_SUPABASE_URL', 'EXPO_PUBLIC_WEBSITE_URL']) {
+    for (const value of ['', 'http://mirra.onrender.com', 'https://127.0.0.1', 'https://10.0.0.2',
+      'https://192.168.1.2', 'https://[::1]', 'https://localhost', 'https://host.local',
+      'https://host.local.', 'https://user:password@mirra.onrender.com', 'https://mirra.onrender.com?key=secret']) {
+      const result = check({ [name]: value });
+      assert.notEqual(result.status, 0, `${name}: ${value}`);
+      assert.match(result.stderr, new RegExp(name));
+    }
+  }
+  for (const key of ['', 'sb_secret_private', `header.${Buffer.from('{"role":"service_role"}').toString('base64url')}.signature`]) {
+    const result = check({ EXPO_PUBLIC_SUPABASE_ANON_KEY: key });
+    assert.notEqual(result.status, 0);
+    if (key) assert.ok(!result.stderr.includes(key), 'Do not print credentials in build errors');
+  }
+  const anon = `header.${Buffer.from('{"role":"anon"}').toString('base64url')}.signature`;
+  assert.equal(check({ EXPO_PUBLIC_SUPABASE_ANON_KEY: anon }).status, 0);
+});
+
+test('Xcode release bundling rejects development endpoints even when skipping was requested', () => {
+  const source = readFileSync(new URL('../plugins/withRecordingService.js', import.meta.url), 'utf8');
+  const phase = { name: '"Bundle React Native code and images"', shellScript: JSON.stringify(
+    'export PROJECT_ROOT="$PROJECT_DIR"/..\n`"$NODE_BINARY" --print "\"true\""`\n') };
+  const module = { exports: {} };
+  new Function('require', 'module', source)(() => ({
+    withAppDelegate: config => config, withAndroidManifest: config => config,
+    withXcodeProject: (config, callback) => callback({ modResults: { hash: { project: { objects: { PBXShellScriptBuildPhase: { phase } } } } } }),
+  }), module);
+  module.exports({});
+  const script = JSON.parse(phase.shellScript);
+  module.exports({});
+  assert.equal(JSON.parse(phase.shellScript), script, 'Prebuild plugin must be idempotent');
+  for (const configuration of ['Release', 'Debug']) {
+    const result = spawnSync('/bin/bash', ['-c', script], {
+      cwd: new URL('..', import.meta.url), encoding: 'utf8',
+      env: { ...process.env, ...valid,
+        EXPO_PUBLIC_MIRRA_BACKEND_URL: 'http://localhost:8000',
+        CONFIGURATION: configuration, NODE_BINARY: process.execPath,
+        PROJECT_DIR: new URL('../scripts', import.meta.url).pathname,
+        PODS_ROOT: '/nonexistent', ENTRY_FILE: 'unused', CLI_PATH: 'unused',
+        SKIP_BUNDLING: '1', NODE_ENV: 'development', PLATFORM_NAME: 'iphonesimulator',
+      },
+    });
+    assert.equal(result.status, configuration === 'Release' ? 1 : 0, result.stderr);
+    if (configuration === 'Release') assert.match(result.stderr, /EXPO_PUBLIC_MIRRA_BACKEND_URL/);
+  }
+});
