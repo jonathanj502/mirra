@@ -48,9 +48,11 @@ No push, deployment, production migration or hosting purchase has occurred.
   `20260918010000_durable_debrief_receipts.sql` before deployment and drained old
   writers. Receipts and reserve/refund/complete RPCs protect retries after crashes;
   abandoned pending receipts and old orphan charges remain recovery limitations.
-- **Distribution:** Xcode/Personal Team setup progressed and an unsigned iPhone
-  Release build passed from `b32546e` (build guard plus capture/helper). The
-  distribution task will rebuild with the combined source.
+- **Distribution:** Xcode/Personal Team setup progressed and the integrated
+  unsigned iPhone Release build passed from exact source `a4b3c14` (Xcode exit 0).
+  Artifact `/private/tmp/mirra-distribution-artifacts/a4b3c14/Mirra.app` retains
+  the intended backend URL, background audio and microphone purpose text.
+  Source, hashes and build logs are in the [distribution evidence](beta-workstreams/distribution.md).
   No signed device/TestFlight install or paid membership has been verified.
 
 All acceptance gates below remain **OPEN**. A longer upload timeout does not fix
@@ -196,7 +198,7 @@ The existing 100 MiB input cap is retained.
 
 | ID | Acceptance criterion | Status | Evidence / next check |
 | --- | --- | --- | --- |
-| TF-1 | Signed production build processes in App Store Connect, installs through TestFlight, and cold-launches without a development server. | OPEN | EAS Simulator native build succeeded; production Hermes export passes (1,881 modules). Production store build stopped because distribution credentials are not configured. No TestFlight build yet. |
+| TF-1 | Signed production build processes in App Store Connect, installs through TestFlight, and cold-launches without a development server. | OPEN | Integrated unsigned iPhone Release build passed at `a4b3c14` with production config and 1,883 bundled modules; prior EAS Simulator build passed. Personal Team is visible, but no signing identity, connected-device install or TestFlight build is verified. |
 | TF-2 | Installed build connects over public HTTPS to the intended backend; sign-up/sign-in, restored session, and authenticated reads work. | OPEN | Live Render health, sign-up/sign-in, JWT verification, history, and usage reads passed. Public URL and Supabase values saved to EAS production. Installed-device connection/session restoration remain untested. |
 | TF-3 | A real iPhone recording produces a saved, nonempty debrief; it reopens from history after relaunch and Reflect returns a model reply about it. | OPEN | Render processed synthetic M4A → saved debrief → history → real Reflect reply in the live test. The service then exceeded its 512 MB memory limit and restarted; final usage read returned 502. Hosting capacity and physical recording checks remain open. |
 | TF-4 | Offline stopped clips survive force-quit/relaunch; reconnect uploads each exactly once without losing audio, duplicating debriefs, or charging usage twice. | OPEN | Combined app checks and local SQL crash/retry/accounting tests pass, including imported clips. New receipt migration needs Supabase/PostgREST rollout validation; physical device, token refresh, and account-switch checks remain. |

@@ -72,7 +72,7 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
 | Imports and queue dependencies | `4264627`, `5a3ee41`; equivalents of `ea2c446` and `cbeb382` | Durable imports, input boundaries, consent/account/MIME checks, known metadata quirks and terminal-error retention. | Merged as `f18f6c8`; [evidence](beta-workstreams/imports.md). |
 | Device/capture | `b406afe`, docs through `7b83aae` | Fresh native files, actual saved duration with fallback, microphone Settings recovery and interruption UI. Physical TF-2–7 remain OPEN. | Merged as `c9eadd0`; [evidence](beta-workstreams/device.md). |
 | Transcription | `a907631` | Real 1400s local provider flow passed: 336.94s transcription / 351.5s complete session, history/Reflect/replay/refund checks. | Merged as `6dead13`; [evidence](beta-workstreams/transcription.md). |
-| Build guard | `13ae5d8` | Native Release production-configuration guard and check. Unsigned iPhone Release build passed at source `b32546e`; integrated rebuild pending. | Merged as `62c5f61`; distribution evidence follows in `123699d`. |
+| Build/distribution | `13ae5d8`, `123699d`, `014eb8b` | Native Release production guard and unsigned integrated iPhone Release build passed at source `a4b3c14`. Signing/install remain open. | Guard merged as `62c5f61`; [build evidence](beta-workstreams/distribution.md) integrated through `014eb8b`. |
 | Reliability/quota | `ecb3413`, `108e07c` (app dependencies above) | Durable quota receipts, SQL concurrency/crash checks and rollout instructions. Migration is local only. | Merged as `3fa5593`; [evidence](beta-workstreams/reliability.md). |
 
 ## Combined validation — 2026-09-18 UTC
@@ -86,6 +86,11 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
 - Separate integrated PostgreSQL 14.23 transaction run: **7 passed**, clean exit 0.
   Used disposable Unix-socket cluster `/private/tmp/mirra-integration-pg-20260917`,
   port 55449, no TCP listener. Its test database was removed and server stopped.
+- Integrated unsigned iPhone Release build: **PASS**, exact source `a4b3c14`,
+  Xcode exit 0. Preserved at
+  `/private/tmp/mirra-distribution-artifacts/a4b3c14/Mirra.app`; identity and hashes
+  are recorded in the distribution evidence. Signing, install and device checks
+  remain open. Subsequent integration edits only record evidence.
 - No production migration, deployment, push or purchase. Independent pre-push
   review, actual Supabase/PostgREST validation, integrated real-provider memory,
   sustained load, signed native build and physical checks remain open.

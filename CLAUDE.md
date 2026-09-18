@@ -16,6 +16,9 @@ The transcription branch passed a real 1400-second local API flow in 351.5 secon
 integrated production, migration/PostgREST, and physical-device checks remain open.
 Production and billing are unchanged. The new backend requires the durable-receipt
 migration before deployment; see the reliability workstream's rollout instructions.
+The integrated unsigned iPhone Release build passed from source `a4b3c14`;
+artifact identity is in `docs/beta-workstreams/distribution.md`. Signing,
+installation and real iPhone behavior remain unverified.
 
 ## Project Overview
 
