@@ -26,9 +26,11 @@ The old 23m20s device evidence does not validate the newer architecture.
 | Mirra release — hosting and database rollout | `01a0b2d7-816c-72b1-830a-6553b704ae2d` | `codex/beta-deployment-readiness`, `ebf0/mirra` | Read-only infrastructure/migration discovery, capacity and rollout plan; `rollout.md` evidence |
 
 Root owns shared ledgers, integration, independent pre-push review and GitHub
-updates. Worktrees are under `/Users/jonathanj/.codex/worktrees/`. The first
-critic pass reviews fixed snapshot `002e2ea`; the final reconciled candidate
-requires a subsequent review before pushing. Draft PR #12 is still open on
+updates. Worktrees are under `/Users/jonathanj/.codex/worktrees/`. Reconciliation `dbb25dea` was merged as `4459454`; its disposition and passing
+checks are in [reconciliation.md](beta-workstreams/reconciliation.md). The critic
+confirmed queue compatibility, recorder identity and stale-import fixes remain
+necessary. Obsolete receipt and whole-request work was removed. A final exact-head
+review is required before pushing. Draft PR #12 is still open on
 `codex/testflight-beta` at `5131485`. No production mutation or purchase has
 been made in this resumed phase. Keep phone clips offline pending a coordinated
 backend and usage-baseline check.

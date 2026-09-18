@@ -1,6 +1,31 @@
 # Beta handoff — 2026-09-18
 
-## Current session closeout
+## Current resumed work
+
+The user chose newer main `64db03b` and requested reassessing earlier work.
+Reconciliation `dbb25dea` is integrated locally in `codex/beta-integration-2026-09-17`.
+The canonical pipeline supports 24-hour/2-GiB resumable uploads and ten-minute
+transcription chunks. [Disposition of earlier fixes](beta-workstreams/reconciliation.md)
+records retained safeguards and superseded work; the old receipt migration is
+removed and must not be deployed.
+
+- Reconciled validation: 50 app checks, TypeScript, 170 backend tests, four real
+  PostgreSQL transaction tests, all-platform Expo prebuild/export, website build
+  and five website checks pass. Native compilation and final combined CI remain open.
+- Two issue worktrees are active for reconciliation and rollout. Root owns review,
+  integration and shared ledgers. No production changes or purchases were made.
+- Production and the installed phone are still older revisions. Preserve all six
+  queued phone clips and their owner IDs during an overlay upgrade. Observe usage
+  before reconnecting; six clips exceed the five-debrief cap even at zero usage.
+- New schema, Render build configuration, persistent storage/retention and measured
+  capacity must be resolved before deployment. Three ten-minute 2-GiB probes pass;
+  a full-day OOM remains inconclusive for production because of mock/SDK retention.
+  Subsequent diagnostics hit a full local disk and Docker I/O errors.
+- Every final production/device/TestFlight gate remains open in
+  [the current acceptance ledger](testflight-acceptance.md). Historical phone and
+  provider results below do not validate the selected architecture.
+
+## Historical closeout before adopting newer main
 
 The user requested wrapping up the session. All six issue implementations and
 their latest evidence are merged locally into `codex/beta-integration-2026-09-17`.
