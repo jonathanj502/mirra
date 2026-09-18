@@ -191,7 +191,7 @@ export function HomeScreen() {
         <RecordButton size={172} recording={isRecording} loading={isSavingRecording || isStartingRecording}
           disabled={importing} onPress={handleRecord} />
         <Body style={styles.heroHint}>{heroHint}</Body>
-        <Body style={styles.consentHint}>Recording stops at 23 min 20 sec · imports up to 100 MB.</Body>
+        <Body style={styles.consentHint}>Up to 24 hours per conversation · 2 GB per file.</Body>
         <Body style={styles.consentHint}>Get everyone’s consent to recording and AI analysis.</Body>
         {recordingError ? <Body accessibilityRole="alert" style={styles.audioError}>{recordingError}</Body> : null}
         {needsMicrophoneSettings && Platform.OS !== 'web' ? (
