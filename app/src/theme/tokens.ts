@@ -1,6 +1,5 @@
 // Design tokens — Mirra "dawn" palette (soft aesthetic, cozy density).
-// Ported 1:1 from the design's tokens.css. Values that were CSS custom
-// properties (var(--x)) are exposed here as plain constants.
+// Foreground colors meet 4.5:1 contrast on each paper surface.
 
 export const colors = {
   bg: '#ECE2D2',
@@ -9,21 +8,21 @@ export const colors = {
   card2: '#F3E9D5',
   ink: '#2A2520',
   ink2: '#4A4138',
-  muted: '#8A7F70',
+  muted: '#6B6258',
   hairline: 'rgba(42,37,32,0.10)',
   hairline2: 'rgba(42,37,32,0.06)',
 
-  terracotta: '#D08866',
+  terracotta: '#9B5139',
   terracottaSoft: '#E8B79E',
-  sage: '#97A887',
+  sage: '#506343',
   sageSoft: '#C2CDB4',
-  lavender: '#B4A5C9',
+  lavender: '#705582',
   lavenderSoft: '#D7CDE2',
-  coral: '#E29687',
+  coral: '#A04738',
   sand: '#E0CCAA',
 
   // Chart helpers (from charts.jsx MirraColors)
-  inkSoft: 'rgba(42,37,32,0.45)',
+  inkSoft: '#6B6258',
   hair: 'rgba(42,37,32,0.10)',
 } as const;
 

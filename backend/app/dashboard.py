@@ -10,7 +10,6 @@ from app.models.dashboard import ConversationListItem, FillerCount, ProfileSumma
 
 FILLER_PHRASES = ("you know", "i mean", "kind of", "sort of", "like", "honestly", "actually", "right")
 OPEN_QUESTION_STARTS = ("what", "how", "why", "when", "where", "who", "which", "tell", "describe", "walk")
-QUESTION_LEAD_INS = {"honestly", "actually", "like", "so", "okay", "well", "um", "uh"}
 FUNCTION_WORD_GROUPS = {
     "pronouns": {"i", "me", "my", "mine", "you", "your", "yours", "we", "us", "our", "they", "them", "their"},
     "articles": {"a", "an", "the"},
@@ -41,11 +40,11 @@ def _words(text: str) -> list[str]:
 
 
 def _question_breakdown_from_transcript(transcript: str) -> tuple[int, int, int]:
-    questions = [part.strip().lower() for part in re.findall(r"([^?]+)\?", transcript)]
+    questions = re.findall(r"([^.!?\n]+)\?", transcript.lower())
     open_count = 0
     for question in questions:
-        words = _words(question)[:4]
-        if any(word in OPEN_QUESTION_STARTS for word in words if word not in QUESTION_LEAD_INS):
+        words = _words(re.sub(r"^(?:(?:i mean|you know|honestly|actually|like|so|okay|well|um|uh)[,\s]+)+", "", question.strip()))
+        if words and words[0] in OPEN_QUESTION_STARTS:
             open_count += 1
     total = len(questions)
     return total, open_count, max(0, total - open_count)
@@ -71,6 +70,11 @@ def _filler_dicts_from_transcript(transcript: str) -> list[dict[str, int]]:
 def enrich_debrief_row(row: dict) -> dict:
     stats = dict(_stats(row))
     transcript = str(row.get("transcript") or "")
+    if re.search(r"(?m)^Speaker [^:\n]+:", transcript):
+        diarization = _metadata(row).get("diarization")
+        speaker = diarization.get("user_speaker") if isinstance(diarization, dict) else None
+        prefix = f"Speaker {speaker}: "
+        transcript = "\n".join(line[len(prefix):] for line in transcript.splitlines() if speaker and line.startswith(prefix))
     words = _words(transcript)
     question_total, open_questions, closed_questions = _question_breakdown_from_transcript(transcript)
 
@@ -81,10 +85,6 @@ def enrich_debrief_row(row: dict) -> dict:
             stats["closed_question_count"] = closed_questions
         else:
             stats["closed_question_count"] = max(0, int(stats.get("question_count") or 0) - int(stats.get("open_question_count") or 0))
-    if "other_speech_duration_minutes" not in stats:
-        duration = float(stats.get("session_duration_minutes") or 0)
-        user_duration = float(stats.get("user_speech_duration_minutes") or 0)
-        stats["other_speech_duration_minutes"] = round(max(0.0, duration - user_duration), 3)
     if "total_word_count" not in stats:
         stats["total_word_count"] = len(words)
     if "unique_word_count" not in stats:
@@ -161,11 +161,11 @@ def _lsm_score(row: dict) -> float:
 
 
 def _unique_words(row: dict) -> int:
-    return int(_stats(row).get("unique_word_count") or 0)
+    return int(_stats(enrich_debrief_row(row)).get("unique_word_count") or 0)
 
 
 def _total_words(row: dict) -> int:
-    return int(_stats(row).get("total_word_count") or 0)
+    return int(_stats(enrich_debrief_row(row)).get("total_word_count") or 0)
 
 
 def _vocabulary_richness(row: dict) -> float:
@@ -226,9 +226,8 @@ def _week_label(start: datetime) -> str:
 
 def _top_fillers(rows: list[dict]) -> list[FillerCount]:
     counts: Counter[str] = Counter()
-    fallback_rows: list[dict] = []
     for row in rows:
-        raw_counts = _stats(row).get("filler_counts")
+        raw_counts = _stats(enrich_debrief_row(row)).get("filler_counts")
         if isinstance(raw_counts, list):
             for item in raw_counts:
                 if isinstance(item, dict):
@@ -236,52 +235,7 @@ def _top_fillers(rows: list[dict]) -> list[FillerCount]:
                     count = int(item.get("count") or 0)
                     if phrase and count > 0:
                         counts[phrase] += count
-            continue
-        fallback_rows.append(row)
-    transcript = "\n".join(str(row.get("transcript") or "").lower() for row in fallback_rows)
-    for phrase in FILLER_PHRASES:
-        counts[phrase] += len(re.findall(rf"\b{re.escape(phrase)}\b", transcript))
     return [FillerCount(phrase=phrase, count=count) for phrase, count in counts.most_common(5) if count > 0]
-
-
-def _wins(rows: list[dict], talk_percent: int, average_questions: float, interruptions: int, energy_score: int, lsm_average: float) -> list[str]:
-    wins: list[str] = []
-    if 40 <= talk_percent <= 60:
-        wins.append(f"Talk share landed near balance at {talk_percent}%.")
-    if average_questions >= 8:
-        wins.append(f"You averaged {average_questions:.1f} questions per conversation.")
-    if rows and interruptions <= max(1, len(rows)):
-        wins.append("Interruptions stayed comparatively low.")
-    if energy_score >= 70:
-        wins.append(f"Energy mirroring averaged {energy_score}%, a strong in-tune signal.")
-    if lsm_average >= 0.7:
-        wins.append(f"Language style match averaged {lsm_average:.2f}, which is in the high range.")
-    return wins[:3]
-
-
-def _nudges(
-    rows: list[dict],
-    talk_percent: int,
-    average_questions: float,
-    interruptions: int,
-    fillers: list[FillerCount],
-    energy_score: int,
-    vocabulary_richness: float,
-) -> list[str]:
-    nudges: list[str] = []
-    if talk_percent > 65:
-        nudges.append(f"You spoke {talk_percent}% of the time; try leaving a little more room.")
-    if average_questions < 3 and rows:
-        nudges.append("Question count was low; one more open question could invite more detail.")
-    if interruptions >= max(3, len(rows) * 2):
-        nudges.append("Interruptions are clustering enough to watch for the urge to jump in.")
-    if fillers and sum(item.count for item in fillers) >= 10:
-        nudges.append("Filler words showed up often enough to notice without judging.")
-    if rows and energy_score < 45:
-        nudges.append("Energy mirroring looked low this week; matching pace or volume for a beat may help.")
-    if rows and vocabulary_richness < 0.45:
-        nudges.append("Vocabulary variety was low; reaching for a fresher word can open new ground.")
-    return nudges[:3]
 
 
 def build_progress(rows: list[dict], max_weeks: int = 8) -> ProgressResponse:
@@ -309,7 +263,7 @@ def build_progress(rows: list[dict], max_weeks: int = 8) -> ProgressResponse:
             daily_closed_questions[dt.weekday()] += _closed_question_count(row)
             daily_interruptions[dt.weekday()] += _interruption_count(row)
             offset = _average_turn_offset(row)
-            if offset:
+            if _stats(row).get("turn_offset_series"):
                 daily_offsets[dt.weekday()].append(offset)
 
         total_minutes = round(sum(daily), 3)
@@ -321,7 +275,8 @@ def build_progress(rows: list[dict], max_weeks: int = 8) -> ProgressResponse:
         talk_percent = round(sum(talk_listen_percent(row) for row in week_rows) / conv_count) if conv_count else 0
         average_questions = round(total_questions / conv_count, 1) if conv_count else 0.0
         average_wpm = round(sum(_wpm(row) for row in week_rows) / conv_count, 1) if conv_count else 0.0
-        average_turn_offset = round(sum(_average_turn_offset(row) for row in week_rows) / conv_count) if conv_count else 0
+        timed_rows = [row for row in week_rows if _stats(row).get("turn_offset_series")]
+        average_turn_offset = round(sum(_average_turn_offset(row) for row in timed_rows) / len(timed_rows)) if timed_rows else 0
         daily_turn_offsets = [round(sum(values) / len(values)) if values else None for values in daily_offsets]
         energy_score = round(sum(_energy_score(row) for row in week_rows) / conv_count) if conv_count else 0
         energy_axes = [
@@ -331,10 +286,6 @@ def build_progress(rows: list[dict], max_weeks: int = 8) -> ProgressResponse:
         lsm_average = round(sum(_lsm_score(row) for row in week_rows) / conv_count, 3) if conv_count else 0.0
         unique_words = sum(_unique_words(row) for row in week_rows)
         total_words = sum(_total_words(row) for row in week_rows)
-        if total_words == 0:
-            transcript_words = re.findall(r"[a-z']+", "\n".join(str(row.get("transcript") or "").lower() for row in week_rows))
-            unique_words = len(set(transcript_words))
-            total_words = len(transcript_words)
         vocabulary_richness = round(unique_words / total_words, 3) if total_words else 0.0
         fillers = _top_fillers(week_rows)
         weeks.append(
@@ -367,8 +318,8 @@ def build_progress(rows: list[dict], max_weeks: int = 8) -> ProgressResponse:
                 vocabulary_total_words=total_words,
                 vocabulary_richness=vocabulary_richness,
                 top_fillers=fillers,
-                wins=_wins(week_rows, talk_percent, average_questions, interruptions, energy_score, lsm_average),
-                nudges=_nudges(week_rows, talk_percent, average_questions, interruptions, fillers, energy_score, vocabulary_richness),
+                wins=list(dict.fromkeys(row["observation"] for row in week_rows if row.get("observation")))[:3],
+                nudges=list(dict.fromkeys(row["pattern_to_reduce"] for row in week_rows if row.get("pattern_to_reduce")))[:3],
                 conversations=[conversation_item(row) for row in week_rows],
             )
         )

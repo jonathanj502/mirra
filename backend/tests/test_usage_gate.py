@@ -9,7 +9,7 @@ from app import usage
 from app.auth import verify_token
 from app.db import get_db
 from app.main import app
-from app.usage import check_and_increment, get_usage, release
+from app.usage import complete_recording, get_usage
 
 
 def _db(used: int) -> MagicMock:
@@ -38,44 +38,29 @@ def test_get_usage_at_cap():
     assert u["remaining"] == 0
 
 
-@pytest.mark.parametrize("reserved", [True, False])
-def test_reservation_passes_identity_and_cap_to_transaction(monkeypatch, reserved):
-    monkeypatch.setattr(usage, "_month_key", lambda: "2026-09")
+def test_completion_passes_owner_cap_and_payload_to_single_transaction():
     db = MagicMock()
-    db.rpc.return_value.execute.return_value.data = reserved
-    assert check_and_increment(db, "owner", "clip", "attempt") is reserved
-    db.rpc.assert_called_once_with("reserve_debrief", {
-        "p_user_id": "owner", "p_debrief_id": "clip", "p_attempt_id": "attempt",
-        "p_month_key": "2026-09", "p_cap": 5,
+    db.rpc.return_value.execute.return_value.data = {"id": "clip"}
+    assert complete_recording(db, "owner", "clip", {"stats": {}}) == {"id": "clip"}
+    db.rpc.assert_called_once_with("complete_recording", {
+        "owner_id": "owner", "target_id": "clip", "payload": {"stats": {}}, "monthly_cap": 5,
     })
 
 
-def test_release_uses_receipt_identity_not_current_month():
+@pytest.mark.parametrize("message,status", [("monthly_debrief_limit", 402), ("recording_deleted", 410)])
+def test_atomic_completion_errors_preserve_http_status(message, status):
     db = MagicMock()
-    release(db, "owner", "clip", "attempt")
-    db.rpc.assert_called_once_with("release_debrief", {
-        "p_user_id": "owner", "p_debrief_id": "clip", "p_attempt_id": "attempt",
-    })
+    db.rpc.return_value.execute.side_effect = APIError({"code": "P0001", "message": message, "details": "", "hint": ""})
+    with pytest.raises(HTTPException) as error:
+        complete_recording(db, "owner", "clip", {})
+    assert error.value.status_code == status
 
 
-@pytest.mark.parametrize("status", [402, 409, 410])
-def test_receipt_errors_preserve_http_status(status):
+def test_database_failure_never_falls_back_to_nonatomic_accounting():
     db = MagicMock()
-    db.rpc.return_value.execute.side_effect = APIError({
-        "code": f"PT{status}", "message": "Recording unavailable", "details": "", "hint": "",
-    })
-    with pytest.raises(HTTPException) as exc:
-        check_and_increment(db, "owner", "clip", "attempt")
-    assert exc.value.status_code == status
-
-
-def test_database_failure_never_falls_back_to_a_nonatomic_reservation():
-    db = MagicMock()
-    db.rpc.return_value.execute.side_effect = APIError({
-        "code": "PGRST202", "message": "RPC missing", "details": "", "hint": "",
-    })
+    db.rpc.return_value.execute.side_effect = APIError({"code": "PGRST202", "message": "RPC missing", "details": "", "hint": ""})
     with pytest.raises(APIError):
-        check_and_increment(db, "owner", "clip", "attempt")
+        complete_recording(db, "owner", "clip", {})
     db.table.assert_not_called()
 
 

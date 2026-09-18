@@ -15,8 +15,13 @@ class ConversationStats(BaseModel):
     turn_offset_series: list[dict[str, Any]] = Field(default_factory=list)
     session_duration_minutes: float
     user_speech_duration_minutes: float
-    other_speech_duration_minutes: float = 0.0
+    other_speech_duration_minutes: float | None = None
     estimated_wpm: float
+    other_estimated_wpm: float | None = None
+    user_volume_dbfs: float | None = None
+    other_volume_dbfs: float | None = None
+    user_pitch_hz: float | None = None
+    other_pitch_hz: float | None = None
     energy_score: int = 0
     energy_axes: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0])
     energy_series_user: list[float] = Field(default_factory=list)
@@ -26,6 +31,7 @@ class ConversationStats(BaseModel):
     lsm_dimensions_reference: dict[str, float] = Field(default_factory=dict)
     total_word_count: int = 0
     unique_word_count: int = 0
+    repeated_words: list[dict[str, Any]] | None = None
     vocabulary_richness: float = 0.0
     filler_counts: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)

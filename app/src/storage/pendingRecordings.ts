@@ -48,7 +48,9 @@ export async function listPendingRecordings(userId: string): Promise<PendingReco
     if (recording.userId !== userId || recording.id !== id) throw new Error('Could not read saved recordings.');
     // Rebase the saved filename when iOS changes the application's container path.
     // Old queue entries used the original filename; new entries always use "audio".
-    recording.audio.uri = `${root}${id}/${recording.audio.uri.split('/').pop()}`;
+    const filename = recording.audio.uri.split('/').pop();
+    if (!filename || filename === '.' || filename === '..') throw new Error('Could not read saved recordings.');
+    recording.audio.uri = `${root}${id}/${filename}`;
     recordings.push(recording);
   }
   return recordings.sort((a, b) => a.startedAt.localeCompare(b.startedAt));
@@ -63,4 +65,8 @@ export function releasePendingAudio(_audio: PendingRecording['audio']) {}
 
 export async function removePendingRecording(recording: PendingRecording) {
   await FileSystem.deleteAsync(directory(recording.userId, recording.id), { idempotent: true });
+}
+
+export async function clearPendingRecordings(userId: string) {
+  await FileSystem.deleteAsync(directory(userId), { idempotent: true });
 }

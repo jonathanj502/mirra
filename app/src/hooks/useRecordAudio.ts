@@ -1,6 +1,6 @@
 import { createContext, createElement, useContext, useEffect, useRef, useState, ReactNode } from 'react';
-import { Platform } from 'react-native';
-import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
+import { PermissionsAndroid, Platform } from 'react-native';
+import { AudioModule, RecordingPresets, RecordingStatus, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
 import { friendlyErrorMessage } from '@/api/http';
 import { useAuth } from '@/auth/AuthContext';
 import { PendingRecording, recordingId } from '@/storage/pendingRecordings';
@@ -8,6 +8,23 @@ import { requestAIConsent } from '@/privacy/aiConsent';
 import { MAX_RECORDING_SECONDS } from '@/config/recording';
 import { getAudioDuration } from '@/utils/audioDuration';
 import { usePendingRecordings } from './usePendingRecordings';
+
+let askedForRecordingNotification = false;
+async function offerRecordingNotification() {
+  if (Platform.OS !== 'android' || Number(Platform.Version) < 33 || askedForRecordingNotification) return;
+  askedForRecordingNotification = true;
+  await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS, {
+    title: 'Recording notification',
+    message: 'Show when Mirra is recording and tap the notification to return to your recording. No reminders or marketing notifications are sent.',
+    buttonPositive: 'Continue', buttonNegative: 'Not now',
+  }).catch(() => {});
+}
+
+const RECORDING_OPTIONS = {
+  ...RecordingPresets.HIGH_QUALITY,
+  sampleRate: 24000, bitRate: 64000, numberOfChannels: 1,
+  web: { mimeType: 'audio/webm', bitsPerSecond: 64000 },
+};
 
 function recordingName() {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -31,27 +48,32 @@ function useRecorderState() {
   const activeRecording = useRef<PendingRecording | null>(null);
   const operationInProgress = useRef(false);
   const stoppingManually = useRef(false);
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY, (status) => {
+  // Expo retains the listener for the recorder's lifetime; account/queue closures must stay current.
+  const onRecordingStatus = useRef<(status: RecordingStatus) => void>(() => {});
+  const recorder = useAudioRecorder(RECORDING_OPTIONS, status => onRecordingStatus.current(status));
+  onRecordingStatus.current = (status) => {
     const active = activeRecording.current;
     if (!status.isFinished || !active || stoppingManually.current
       || (status.url && active.audio.uri && status.url !== active.audio.uri)) return;
-    activeRecording.current = null;
     setRecording(false);
-    if (status.url) {
-      unsaved.current = { ...active, audio: { ...active.audio, uri: status.url } };
-      // Native duration limits and notification Stop use the same durable save path.
+    const uri = status.url || active.audio.uri || recorder.uri;
+    if (uri) {
+      activeRecording.current = null;
+      const seconds = recorder.getStatus().durationMillis / 1000 || active.seconds;
+      unsaved.current = { ...active, seconds, audio: { ...active.audio, uri } };
+      // A notification Stop saves through the same durable queue as the app Stop button.
       void stopRecording();
     } else {
-      setError(status.error || 'The microphone stopped unexpectedly. Please try recording again.');
+      setError(status.error || 'The microphone stopped. Keep Mirra open and try saving the recording.');
       void setAudioModeAsync({ allowsRecording: false, allowsBackgroundRecording: false }).catch(() => {});
     }
-  });
+  };
   const recorderState = useAudioRecorderState(recorder, 500);
   useEffect(() => {
     if (activeRecording.current && recorderState.durationMillis > 0) {
       activeRecording.current.seconds = recorderState.durationMillis / 1000;
     }
-    // Expo handles interruption pause/resume natively; do not compete for the microphone.
+    // Expo pauses iOS recording on interruption; keep Stop available to save the partial clip.
   }, [recorderState]);
 
   async function startRecording() {
@@ -74,6 +96,7 @@ function useRecorderState() {
           : 'Allow microphone access to record a conversation.');
         return;
       }
+      await offerRecordingNotification();
       await setAudioModeAsync({
         allowsRecording: true,
         playsInSilentMode: true,
@@ -82,7 +105,7 @@ function useRecorderState() {
         shouldRouteThroughEarpiece: false,
       });
       // Explicit options create a fresh iOS file, so late finish events cannot match the next clip.
-      await recorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
+      await recorder.prepareToRecordAsync(RECORDING_OPTIONS);
       activeRecording.current = {
         id: recordingId(), userId: user.id, startedAt: new Date().toISOString(), seconds: 0,
         audio: { uri: Platform.OS === 'web' ? '' : recorder.uri ?? '', name: recordingName(), type: recordingMimeType() },
@@ -100,8 +123,9 @@ function useRecorderState() {
     }
   }
 
-  async function stopRecording() {
-    if (operationInProgress.current || (!activeRecording.current && !unsaved.current)) return;
+  async function stopRecording(): Promise<boolean> {
+    if (operationInProgress.current) return false;
+    if (!activeRecording.current && !unsaved.current) return true;
     operationInProgress.current = true;
     setSaving(true);
     setError(null);
@@ -110,25 +134,30 @@ function useRecorderState() {
       if (!unsaved.current && active) {
         active.seconds = recorder.getStatus().durationMillis / 1000 || active.seconds;
         stoppingManually.current = true;
-        await recorder.stop();
+        try {
+          await recorder.stop();
+        } catch (err) {
+          if (recorder.getStatus().isRecording || !recorder.uri) throw err;
+        }
         const uri = recorder.uri;
         if (!uri) throw new Error('Missing recording URI');
         unsaved.current = { ...active, audio: { ...active.audio, uri } };
         activeRecording.current = null;
         setRecording(false);
       }
-      if (!unsaved.current) return;
+      if (!unsaved.current) return true;
       const clip = unsaved.current;
-      // Native finish resets its timer; screen lock may also delay the last JS status poll.
-      // Metadata failure must never prevent saving the original audio.
+      // Native finish resets its timer; locked-screen polls can also miss the final duration.
       if (Platform.OS !== 'web') clip.seconds = await getAudioDuration(clip.audio.uri).catch(() => clip.seconds);
       await queue.enqueue(clip);
       if (Platform.OS === 'web') URL.revokeObjectURL(clip.audio.uri);
       unsaved.current = null;
+      return true;
     } catch (err) {
       setError(unsaved.current
         ? 'Recording is not saved yet. Keep Mirra open, free some device storage, then save again.'
         : friendlyErrorMessage(err, 'Could not finish recording. Please try stopping it again.'));
+      return false;
     } finally {
       if (!activeRecording.current) {
         await setAudioModeAsync({ allowsRecording: false, allowsBackgroundRecording: false }).catch(() => {});
@@ -139,6 +168,10 @@ function useRecorderState() {
     }
   }
 
+  useEffect(() => {
+    if (activeRecording.current && activeRecording.current.userId !== user?.id) void stopRecording();
+  }, [user?.id, recording]);
+
   const toggleRecording = () => activeRecording.current || unsaved.current ? stopRecording() : startRecording();
 
   return {
@@ -148,7 +181,7 @@ function useRecorderState() {
     ...queue,
     isSavingRecording: saving,
     isStartingRecording: starting,
-    hasUnsavedRecording: !!unsaved.current,
+    hasUnsavedRecording: !!unsaved.current || (!!activeRecording.current && !recording),
     error,
     recordingSeconds: recording ? recorderState.durationMillis / 1000 : 0,
     startRecording,

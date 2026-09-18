@@ -4,13 +4,14 @@
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
+    "eas-build-pre-install": "node scripts/eas-preflight.mjs",
+    "eas-build-post-install": "node scripts/generate-notices.mjs",
     "check:production": "node scripts/check-production-env.cjs",
-    "export:ios:production": "npm run check:production && expo export --platform ios --clear",
-    "eas-build-post-install": "npm run check:production"
+    "export:ios:production": "npm run check:production && expo export --platform ios --clear"
   },
   "dependencies": {
     "@expo-google-fonts/instrument-serif": "^0.4.1",
@@ -19,7 +20,7 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "@supabase/supabase-js": "^2.110.0",
     "babel-preset-expo": "~57.0.0",
-    "expo": "^57.0.0",
+    "expo": "~57.0.23",
     "expo-asset": "~57.0.17",
     "expo-audio": "~57.0.5",
     "expo-auth-session": "~57.0.12",
@@ -31,8 +32,10 @@
     "expo-linear-gradient": "~57.0.2",
     "expo-linking": "~57.0.10",
     "expo-router": "~57.0.21",
+    "expo-sharing": "~57.0.20",
     "expo-splash-screen": "~57.0.9",
     "expo-status-bar": "~57.0.1",
+    "expo-system-ui": "~57.0.4",
     "expo-web-browser": "~57.0.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -48,8 +51,12 @@
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
+    "@types/node": "^22.20.3",
     "@types/react": "~19.2.4",
     "typescript": "~6.0.3"
   },
-  "private": true
+  "private": true,
+  "overrides": {
+    "postcss": "8.5.28"
+  }
 }

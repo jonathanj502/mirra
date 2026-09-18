@@ -79,27 +79,26 @@ export function useImportAudio() {
         return;
       }
       if (size > MAX_AUDIO_BYTES) {
-        setError('Please choose an audio file of 100 MiB or smaller.');
+        setError('Please choose an audio file of 2 GiB or smaller.');
         return;
       }
 
       // Native players cannot read every supported format (for example WebM on Apple).
       // Zero means unknown locally; the server always validates actual decoded duration.
-      const durationSeconds = await getAudioDuration(asset.uri).catch(err => {
-        if (type !== 'audio/webm') throw err;
-        return 0;
-      });
+      const durationSeconds = await getAudioDuration(asset.uri).catch(() => 0);
       if (!isCurrent()) return;
       // Apple includes encoder padding in MP3 metadata; this does not extend the server limit.
       if (durationSeconds > MAX_RECORDING_SECONDS + 1) {
-        setError('Please choose a conversation no longer than 23 minutes 20 seconds.');
+        setError('Please choose a conversation no longer than 24 hours.');
         return;
       }
       if (!await requestAIConsent(userId) || !isCurrent()) return;
       if (!await hasAIConsent(userId) || !isCurrent()) return;
+      const id = recordingId();
+      const extension = type.includes('webm') ? 'webm' : type.includes('wav') ? 'wav' : type.includes('mpeg') ? 'mp3' : type.includes('ogg') ? 'ogg' : type.includes('aac') ? 'aac' : 'm4a';
       await enqueue({
-        id: recordingId(), userId, startedAt: new Date().toISOString(), seconds: durationSeconds,
-        audio: { uri: asset.uri, name: asset.name, type }, title: titleFromFilename(asset.name),
+        id, userId, startedAt: new Date().toISOString(), seconds: durationSeconds,
+        audio: { uri: asset.uri, name: `mirra-import-${id}.${extension}`, type }, title: titleFromFilename(asset.name).slice(0, 200),
       }).catch(() => {
         throw new Error('Could not save this import on your device. Your original file is unchanged. Please try again.');
       });
@@ -107,7 +106,7 @@ export function useImportAudio() {
       if (!isCurrent()) return;
       const message = friendlyErrorMessage(
         err,
-        'Could not analyze that audio file. Try another format or a shorter recording.'
+        'Could not import that audio file. Check available device storage and try again.'
       );
       setError(message);
     } finally {

@@ -1,5 +1,4 @@
-// Layout-based "charts" that were plain divs in the prototype: horizontal
-// filler bars, per-dimension sync dots, and the offset zone legend.
+// Word frequency bars and the turn-timing legend.
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Body, Serif } from './Typography';
@@ -30,41 +29,12 @@ export function FillerBars({
   );
 }
 
-// ── Sync bars — you / them dots per energy dimension ───────────────────────
-export function SyncBars({
-  dims,
-}: {
-  dims: { label: string; you: number; them: number }[];
-}) {
-  return (
-    <View style={{ gap: 14 }}>
-      {dims.map((d, i) => {
-        const match = Math.round((1 - Math.abs(d.you - d.them)) * 100);
-        const matchColor = match >= 80 ? colors.sage : match >= 65 ? colors.lavender : colors.coral;
-        return (
-          <View key={i}>
-            <View style={styles.syncHead}>
-              <Body style={{ fontSize: 12, color: colors.ink }}>{d.label}</Body>
-              <Body style={{ fontSize: 11, fontFamily: fonts.bodySemibold, color: matchColor }}>{match}% mirror</Body>
-            </View>
-            <View style={styles.syncTrack}>
-              <View style={styles.syncMid} />
-              <View style={[styles.dot, styles.dotYou, { left: `${d.you * 100}%` }]} />
-              <View style={[styles.dot, styles.dotThem, { left: `${d.them * 100}%` }]} />
-            </View>
-          </View>
-        );
-      })}
-    </View>
-  );
-}
-
 // ── Offset zone legend ─────────────────────────────────────────────────────
 export function OffsetZoneLegend() {
   const items = [
-    { color: colors.lavender, range: '< 0 ms', label: 'high engagement / interrupting' },
-    { color: colors.sage, range: '~+200 ms', label: 'ideal smooth turn-taking' },
-    { color: colors.sand, range: '+500 ms +', label: 'listener formulating' },
+    { color: colors.lavender, range: '< 0 ms', label: 'speakers overlap' },
+    { color: colors.muted, range: '0 ms', label: 'estimated turn boundary' },
+    { color: colors.sand, range: '> 0 ms', label: 'gap between speakers' },
   ];
   return (
     <View style={{ gap: 6, marginTop: 10 }}>
@@ -86,12 +56,6 @@ const styles = StyleSheet.create({
   fill: { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 999 },
   count: { fontSize: 11.5, fontFamily: fonts.bodySemibold, color: colors.muted, width: 32, textAlign: 'right' },
 
-  syncHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 4 },
-  syncTrack: { height: 10, backgroundColor: 'rgba(42,37,32,0.06)', borderRadius: 999, justifyContent: 'center' },
-  syncMid: { position: 'absolute', left: '50%', top: -1, bottom: -1, width: 1, backgroundColor: 'rgba(42,37,32,0.12)' },
-  dot: { position: 'absolute', top: '50%', width: 14, height: 14, borderRadius: 7, marginLeft: -7, marginTop: -7 },
-  dotYou: { backgroundColor: colors.terracotta },
-  dotThem: { backgroundColor: colors.lavender },
 
   legendRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   legendSquare: { width: 10, height: 10, borderRadius: 2, opacity: 0.65 },

@@ -4,7 +4,7 @@ const { isIP } = require('node:net');
 process.env.NODE_ENV = 'production';
 require('@expo/env').load(process.cwd());
 
-for (const name of ['EXPO_PUBLIC_MIRRA_BACKEND_URL', 'EXPO_PUBLIC_SUPABASE_URL']) {
+for (const name of ['EXPO_PUBLIC_MIRRA_BACKEND_URL', 'EXPO_PUBLIC_SUPABASE_URL', 'EXPO_PUBLIC_WEBSITE_URL']) {
   let url;
   try { url = new URL(process.env[name]); } catch {}
   const host = url?.hostname.replace(/\.$/, '') ?? '';

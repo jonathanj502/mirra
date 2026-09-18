@@ -5,7 +5,7 @@ import React from 'react';
 import ts from 'typescript';
 
 // Run the actual TS hooks with controlled native/network boundaries; no microphone or account is used.
-function load(file, dependencies, window) {
+function load(file, dependencies, window, globals = {}) {
   const source = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');
   const { outputText } = ts.transpileModule(source, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022, esModuleInterop: true,
@@ -13,10 +13,12 @@ function load(file, dependencies, window) {
   const module = { exports: {} };
   const require = (name) => {
     if (name === '@/config/recording') return load('config/recording.ts', {});
+    if (name === '@/utils/audioDuration' && !(name in dependencies)) return durationUnavailable;
+    if (name === 'expo-file-system' && !(name in dependencies)) return {};
     assert.ok(name in dependencies, `Missing test dependency: ${name}`);
     return dependencies[name];
   };
-  new Function('require', 'module', 'exports', 'window', outputText)(require, module, module.exports, window);
+  new Function('require', 'module', 'exports', 'window', ...Object.keys(globals), outputText)(require, module, module.exports, window, ...Object.values(globals));
   return module.exports;
 }
 
@@ -44,108 +46,16 @@ function hooks() {
   };
 }
 
-const auth = { useAuth: () => ({ accessToken: 'test-token', user: { id: 'test-user' } }) };
 const consentGranted = { requestAIConsent: async () => true };
 const durationUnavailable = { async getAudioDuration() { throw new Error('Metadata unavailable'); } };
+const goals = load('data/coachingGoals.ts', {});
+
+const privacy = { requestAIConsent: async () => true, hasAIConsent: async () => true, withdrawAIConsent: async () => {} };
+const confirmation = { confirmAction: async () => true };
+
+const auth = { useAuth: () => ({ accessToken: 'test-token', user: { id: 'test-user' } }) };
 const http = load('api/http.ts', { '@/config/env': { env: { backendUrl: 'http://test.invalid' } } });
 const flush = () => new Promise(resolve => setImmediate(resolve));
-
-test('conversation deletion sends an authenticated DELETE and handles empty success and server errors', async (t) => {
-  let status = 204;
-  t.mock.method(globalThis, 'fetch', async (url, options) => {
-    assert.equal(url, 'http://test.invalid/debriefs/conversation%2Fid');
-    assert.equal(options.method, 'DELETE');
-    assert.equal(options.headers.Authorization, 'Bearer test-token');
-    return new Response(status === 204 ? null : JSON.stringify({ detail: 'Deletion failed' }), { status });
-  });
-  const { deleteDebrief } = load('api/client.ts', { 'expo-file-system': {}, '@/api/http': http });
-  assert.equal(await deleteDebrief('test-token', 'conversation/id'), undefined);
-  status = 500;
-  await assert.rejects(deleteDebrief('test-token', 'conversation/id'), /Deletion failed/);
-});
-
-test('deleting a conversation requires confirmation, targets the selected ID, and preserves it on failure', async () => {
-  const state = hooks();
-  const stats = {
-    talkListenRatio: 1, questionCount: 2, interruptionCount: 0,
-    sessionDurationMinutes: 5, userSpeechDurationMinutes: 2.5, estimatedWpm: 120,
-    openQuestionCount: 1, closedQuestionCount: 1, totalWordCount: 300, uniqueWordCount: 100,
-    fillerCounts: [], turnOffsetSeries: [], energyAxes: [], energyScore: 0,
-    energySeriesUser: [], energySeriesOther: [], lsmScore: 0,
-    lsmDimensionsUser: {}, lsmDimensionsReference: {},
-  };
-  const selected = { id: 'selected', observation: 'Selected conversation', stats };
-  let debriefs = [{ id: 'newest', observation: 'Newest conversation', stats }, selected];
-  let routeId = 'selected';
-  const dialogs = [];
-  const requests = [];
-  const navigation = [];
-  const platform = { OS: 'ios' };
-  let confirmWeb = false;
-  const { AnalyticsScreen } = load('screens/AnalyticsScreen.tsx', {
-    react: state.react,
-    'react-native': { Platform: platform, StyleSheet: { create: styles => styles },
-      Alert: { alert(title, message, buttons, options) { dialogs.push({ title, message, buttons, options }); } },
-    },
-    'expo-router': { useLocalSearchParams: () => ({ id: routeId }), useRouter: () => ({ replace: path => navigation.push(path) }) },
-    '@/components/Screen': {}, '@/components/ui': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
-    '@/components/FloatingTabBar': {}, '@/components/ExpandableMetric': {}, '@/components/ReflectCTA': {},
-    '@/components/charts': {}, '@/components/meters': {}, '@/theme/tokens': { colors: {}, fonts: {} },
-    '@/auth/AuthContext': auth, '@/api/http': http, '@/utils/talkListen': { talkListenPercent: () => 50 },
-    '@/hooks/useDebriefs': {
-      useDebriefs: () => ({ debriefs, loading: false, setDebriefs: update => { debriefs = update(debriefs); } }),
-      toConversationListItem: row => ({ title: row.observation, when: 'Today', duration: '5 min' }),
-    },
-    '@/api/client': { deleteDebrief: (token, id) => new Promise((resolve, reject) => requests.push({ token, id, resolve, reject })) },
-  }, { confirm: () => confirmWeb });
-  function deleteButton(node) {
-    if (!node || typeof node !== 'object') return;
-    if (node.props?.accessibilityLabel === 'Delete conversation') return node;
-    for (const child of React.Children.toArray(node.props?.children)) {
-      const found = deleteButton(child);
-      if (found) return found;
-    }
-  }
-  const render = () => state.render(AnalyticsScreen);
-  let action = deleteButton(render()).props.onPress();
-  dialogs.at(-1).buttons.find(button => button.text === 'Cancel').onPress();
-  await action;
-  assert.equal(requests.length, 0);
-  action = deleteButton(render()).props.onPress();
-  dialogs.at(-1).options.onDismiss();
-  await action;
-  assert.equal(requests.length, 0);
-
-  action = deleteButton(render()).props.onPress();
-  dialogs.at(-1).buttons.find(button => button.text === 'Delete').onPress();
-  await flush();
-  assert.equal(requests[0].token, 'test-token');
-  assert.equal(requests[0].id, 'selected');
-  assert.equal(deleteButton(render()).props.disabled, true);
-  await deleteButton(render()).props.onPress();
-  assert.equal(requests.length, 1);
-  requests[0].reject(new TypeError('Failed to fetch'));
-  await action;
-  assert.equal(debriefs.length, 2);
-  assert.equal(navigation.length, 0);
-  assert.equal(render().props.error, 'Could not reach Mirra. Please try again.');
-
-  // An unresolved/deleted ID must never show a different conversation's Delete action.
-  routeId = 'missing';
-  assert.equal(deleteButton(render()), undefined);
-  routeId = 'selected';
-  platform.OS = 'web';
-  await deleteButton(render()).props.onPress();
-  assert.equal(requests.length, 1);
-  confirmWeb = true;
-  action = deleteButton(render()).props.onPress();
-  await flush();
-  requests[1].resolve();
-  await action;
-  assert.deepEqual(debriefs.map(row => row.id), ['newest']);
-  assert.deepEqual(navigation, ['/insights']);
-  assert.equal(deleteButton(render()), undefined);
-});
 
 test('OAuth callback removes credentials before session setup, preserves unrelated URL state, and cleans failed callbacks', async () => {
   const window = { location: { href: '' }, history: { state: { key: 'router' },
@@ -194,25 +104,31 @@ test('recording saves before upload, allows another offline clip, and retains th
   let starts = 0;
   const saved = [];
   let diskFull = true;
+  let stoppedByOS = false;
+  let createFails = false;
+  const audioModes = [];
   const { RecordingProvider } = load('hooks/useRecordAudio.ts', {
     react: state.react, 'react-native': { Platform: { OS: 'web' }, NativeModules: {} },
     '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' }, accessToken: null }) }, '@/api/http': http,
     '@/storage/pendingRecordings': { recordingId: () => `recording-${starts}` },
+    '@/privacy/aiConsent': privacy, '@/utils/confirm': confirmation,
     './usePendingRecordings': { usePendingRecordings: () => ({ async enqueue(recording) {
       saved.push(recording);
       if (diskFull) throw new Error('Storage full');
     } }) },
-    '@/privacy/aiConsent': consentGranted,
-    '@/utils/audioDuration': durationUnavailable,
     'expo-audio': {
       AudioModule: { requestRecordingPermissionsAsync: async () => ({ granted: true }) },
-      setAudioModeAsync: async () => {}, RecordingPresets: { HIGH_QUALITY: {} },
-      useAudioRecorderState: () => ({ durationMillis: 7500 }),
-      useAudioRecorder: () => ({
-        async prepareToRecordAsync() {}, record(options) { assert.equal(options.forDuration, 1400); starts++; },
-        async stop() { stops++; }, uri: 'blob:test-recording',
-        getStatus: () => ({ durationMillis: 7500 }),
-      }),
+      setAudioModeAsync: async mode => { audioModes.push(mode); }, RecordingPresets: { HIGH_QUALITY: {} },
+      useAudioRecorderState: () => ({ durationMillis: 28_800_000 }),
+      useAudioRecorder(options) {
+        assert.equal(options.bitRate, 64000);
+        assert.equal(options.numberOfChannels, 1);
+        return {
+          async prepareToRecordAsync() { starts++; if (createFails) throw Error('Microphone is unavailable'); }, record() {},
+          async stop() { stops++; if (stoppedByOS) throw Error('Already stopped'); },
+          getStatus: () => ({ isRecording: !stoppedByOS, durationMillis: 28_800_000 }), uri: 'blob:test-recording',
+        };
+      },
     },
   });
   const render = () => state.render(() => RecordingProvider({ children: null })).props.value;
@@ -231,13 +147,189 @@ test('recording saves before upload, allows another offline clip, and retains th
   await hook.toggleRecording();
   assert.equal(stops, 1);
   assert.deepEqual(saved[0], saved[1]);
-  assert.equal(saved[1].seconds, 7.5);
+  assert.equal(saved[1].seconds, 28_800);
   assert.equal(saved[1].userId, 'owner');
   hook = render();
   assert.equal(hook.hasUnsavedRecording, false);
   assert.equal(hook.error, null);
   await hook.startRecording();
   assert.equal(starts, 2);
+  stoppedByOS = true;
+  assert.equal(await render().stopRecording(), true);
+  assert.equal(render().isRecording, false);
+  assert.equal(saved.at(-1).seconds, 28_800);
+  createFails = true;
+  await render().startRecording();
+  assert.equal(render().isRecording, false);
+  assert.equal(render().isStartingRecording, false);
+  assert.equal(audioModes.at(-1).allowsRecording, false, 'A failed start must restore the audio session');
+  assert.equal(render().error, 'Microphone is unavailable');
+});
+
+test('Android offers recording notifications once per launch and denial does not block capture', async () => {
+  const state = hooks();
+  const events = [];
+  const saved = [];
+  let finished;
+  let sequence = 0;
+  let accountUser = null;
+  const { RecordingProvider } = load('hooks/useRecordAudio.ts', {
+    react: state.react, 'react-native': { Platform: { OS: 'android', Version: 33 },
+      PermissionsAndroid: { PERMISSIONS: { POST_NOTIFICATIONS: 'notifications' }, async request(permission) {
+        assert.equal(permission, 'notifications'); events.push('permission'); return 'denied';
+      } } },
+    '@/auth/AuthContext': { useAuth: () => ({ user: accountUser }) }, '@/api/http': http,
+    '@/storage/pendingRecordings': { recordingId: () => 'recording' },
+    '@/privacy/aiConsent': privacy, '@/utils/confirm': confirmation,
+    './usePendingRecordings': { usePendingRecordings() {
+      const ownerId = accountUser?.id;
+      return { async enqueue(row) { assert.equal(row.userId, ownerId, 'Completion must use the current account queue'); saved.push(row); } };
+    } },
+    'expo-audio': {
+      AudioModule: { requestRecordingPermissionsAsync: async () => ({ granted: true }) },
+      setAudioModeAsync: async mode => { if (mode.allowsRecording) assert.equal(mode.allowsBackgroundRecording, true); },
+      RecordingPresets: { HIGH_QUALITY: {} }, useAudioRecorderState: () => ({ durationMillis: 1000 }),
+      useAudioRecorder(_options, callback) {
+        finished ??= callback;
+        return { async prepareToRecordAsync() { sequence++; }, record() { events.push('capture'); },
+          stop: async () => {}, get uri() { return `file:///test-${sequence}.m4a`; }, getStatus: () => ({ durationMillis: 1000 }) };
+      },
+    },
+  });
+  const render = () => state.render(() => RecordingProvider({ children: null })).props.value;
+  render();
+  accountUser = { id: 'owner' };
+  await render().startRecording();
+  assert.deepEqual(events, ['permission', 'capture']);
+  assert.equal(render().isRecording, true);
+  await render().stopRecording();
+  await render().startRecording();
+  assert.deepEqual(events, ['permission', 'capture', 'capture']);
+  finished({ isFinished: true, url: 'file:///test-1.m4a' });
+  assert.equal(render().isRecording, true, 'A stale completion must not stop the next session');
+  finished({ isFinished: true, url: 'file:///test-2.m4a' });
+  await flush();
+  assert.equal(render().isRecording, false);
+  assert.equal(saved.length, 2, 'Stopping from the OS notification saves to the durable queue');
+  assert.equal(saved[1].audio.uri, 'file:///test-2.m4a');
+  assert.equal(saved[1].seconds, 1);
+});
+
+test('import failures are returned as visible error state on web', async () => {
+  const state = hooks();
+  const { useImportAudio } = load('hooks/useImportAudio.ts', {
+    react: state.react, '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' } }) }, '@/api/http': http,
+    '@/hooks/useRecordAudio': { useRecordAudio: () => ({}) }, '@/storage/pendingRecordings': {}, '@/utils/timeFormat': {}, 'expo-audio': {},
+    '@/privacy/aiConsent': privacy, '@/utils/confirm': confirmation,
+    'expo-document-picker': { async getDocumentAsync() { throw new Error('Could not open audio file'); } },
+  });
+  assert.equal(await state.render(useImportAudio).importAudio(), undefined);
+  assert.equal(state.render(useImportAudio).error, 'Could not open audio file');
+  assert.equal(state.render(useImportAudio).importing, false);
+});
+
+test('import saves an account-owned copy to the offline queue and uses upstream AI consent', async () => {
+  const state = hooks();
+  let allowed = false;
+  let asked = 0;
+  let picks = 0;
+  let size = 256 * 1024 * 1024;
+  const saved = [];
+  const { useImportAudio } = load('hooks/useImportAudio.ts', {
+    react: state.react, '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' } }) }, '@/api/http': http,
+    '@/privacy/aiConsent': { requestAIConsent: async () => { asked++; return allowed; }, hasAIConsent: async () => allowed },
+    '@/storage/pendingRecordings': { recordingId: () => 'stable-id' },
+    '@/hooks/useRecordAudio': { useRecordAudio: () => ({ enqueue: async row => saved.push(row) }) },
+    '@/utils/timeFormat': { titleFromFilename: () => 'Imported conversation' },
+    'expo-audio': { createAudioPlayer: () => { throw Error('Browser cannot read duration'); } },
+    'expo-document-picker': { getDocumentAsync: async () => { picks++; return { assets: [{ uri: 'file://original', name: '../unsafe.mp3', size }] }; } },
+  });
+  const render = () => state.render(useImportAudio);
+  await render().importAudio();
+  assert.equal(asked, 1); assert.equal(picks, 0);
+  assert.equal(saved.length, 0);
+  allowed = true;
+  const hook = render();
+  await Promise.all([hook.importAudio(), hook.importAudio()]);
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].id, 'stable-id');
+  assert.equal(saved[0].userId, 'owner');
+  assert.equal(saved[0].audio.name, 'mirra-import-stable-id.mp3');
+  assert.equal(saved[0].audio.uri, 'file://original');
+  assert.equal(render().error, null);
+  size = 2 * 1024 ** 3 + 1;
+  await render().importAudio();
+  assert.equal(saved.length, 1);
+  assert.match(render().error, /2 GiB/);
+});
+
+test('large native uploads read bounded ranges, resume lost acknowledgements, refresh tokens and close files', async () => {
+  const chunk = 4 * 1024 * 1024;
+  const size = 7 * chunk + 17;
+  const reads = [];
+  let closed = 0;
+  const storage = load('storage/audioSource.ts', { 'expo-file-system': { File: class {
+    exists = true;
+    size = size;
+    open() { return { offset: 0, readBytes(length) {
+      assert.ok(length <= chunk);
+      reads.push([this.offset, length]);
+      return new Uint8Array(length);
+    }, close() { closed++; } }; }
+  } } });
+  let offset = 0;
+  let lostAck = true;
+  let polls = 0;
+  let tokens = 0;
+  let requests = 0;
+  const complete = { status: 'completed', used_this_month: 1, remaining: 4,
+    debrief: { id: 'saved', stats: { session_duration_minutes: 480, user_speech_duration_minutes: 240 } } };
+  const client = load('api/client.ts', { '@/api/http': http, '@/storage/audioSource': storage }, undefined, {
+    setTimeout: (fn, ms) => setTimeout(fn, ms === 5000 ? 0 : ms),
+    async fetch(url, init) {
+      requests++;
+      assert.equal(init.headers.Authorization, `Bearer fresh-${requests}`);
+      const state = { status: 'uploading', uploaded_bytes: offset, chunk_bytes: chunk };
+      if (url.includes('/audio?')) {
+        assert.equal(Number(new URL(url).searchParams.get('offset')), offset);
+        offset += init.body.byteLength;
+        state.uploaded_bytes = offset;
+        if (lostAck) { lostAck = false; throw Error('Lost acknowledgement'); }
+      } else if (url.endsWith('/complete')) state.status = 'queued';
+      else if (init.method !== 'POST') {
+        if (++polls > 1) return Response.json(complete);
+        state.status = 'processing'; state.progress = 90;
+      } else if (polls > 1) return Response.json(complete);
+      return Response.json(state);
+    },
+  });
+  const options = { accessToken: async () => `fresh-${++tokens}` };
+  const audio = { uri: 'file://long.m4a', name: 'long.m4a', type: 'audio/mp4' };
+  await assert.rejects(client.uploadSession('expired', audio, { recordingId: 'stable' }, undefined, options), /Lost acknowledgement/);
+  assert.equal(closed, 1);
+  const result = await client.uploadSession('expired', audio, { recordingId: 'stable' }, undefined, options);
+  assert.equal(result.debrief.id, 'saved');
+  assert.equal(result.usedThisMonth, 1);
+  assert.equal(closed, 2);
+  assert.deepEqual(reads.map(([start]) => start), Array.from({ length: 8 }, (_, i) => i * chunk));
+  assert.equal(offset, size);
+  await client.uploadSession('expired', audio, { recordingId: 'stable' }, undefined, options);
+  assert.equal(reads.length, 8, 'An already saved debrief must not reupload or reread the audio');
+  assert.equal(closed, 3);
+});
+
+test('leaving a long-running job aborts polling and closes its file without deleting audio', async () => {
+  const controller = new AbortController();
+  let closed = false;
+  let requests = 0;
+  const client = load('api/client.ts', {
+    '@/api/http': http,
+    '@/storage/audioSource': { openAudioSource: async () => ({ size: 100, close() { closed = true; }, read() { assert.fail('Already uploaded'); } }) },
+  }, undefined, { fetch: async () => { requests++; return Response.json({ status: 'processing', progress: 20 }); } });
+  await assert.rejects(client.uploadSession('token', { uri: 'file://audio' }, { recordingId: 'one' }, controller.signal,
+    { onProgress() { controller.abort(); } }), /paused/);
+  assert.equal(closed, true);
+  assert.equal(requests, 1);
 });
 
 test('focus refresh recovers a failed tab and an older request cannot overwrite newer data', async () => {
@@ -268,17 +360,48 @@ test('focus refresh recovers a failed tab and an older request cannot overwrite 
   assert.deepEqual(render().data, ['latest']);
 });
 
-test('profile loads account data without a plan request', () => {
+test('rapid privacy setting changes save in order and a failure restores actual server state', async () => {
+  const state = hooks();
+  let settings = { saveTranscripts: false, includeTranscriptInReflect: false };
+  const server = { saveTranscripts: true, includeTranscriptInReflect: false };
+  const requests = [];
+  const { useUserSettings } = load('hooks/useUserSettings.ts', {
+    react: state.react, '@/api/http': http,
+    '@/api/client': { updateUserSettings: (token, patch) => new Promise((resolve, reject) => requests.push({ token, patch, resolve, reject })) },
+    './useAuthedFetch': { useAuthedFetch: () => ({ data: settings,
+      setData: value => { settings = typeof value === 'function' ? value(settings) : value; }, refresh: async () => { settings = server; } }) },
+  });
+  const render = () => state.render(() => useUserSettings('owner-token'));
+  const hook = render();
+  const first = hook.updateSettings({ saveTranscripts: true });
+  const second = hook.updateSettings({ includeTranscriptInReflect: true });
+  await flush();
+  assert.equal(requests.length, 1);
+  assert.equal(settings.includeTranscriptInReflect, true);
+  requests[0].resolve(server);
+  await first; await flush();
+  assert.equal(requests.length, 2);
+  assert.equal(settings.includeTranscriptInReflect, true, 'Older response must not erase the newer choice');
+  requests[1].reject(Error('Could not save privacy setting'));
+  await second;
+  assert.deepEqual(settings, server);
+  assert.equal(render().saving, false);
+  assert.match(render().error, /Could not save privacy setting/);
+});
+
+test('profile restores the $8 Pro offer and plan navigation even when account settings are offline', () => {
   const state = hooks();
   let summaryState = { summary: null, error: 'Offline' };
   const { ProfileScreen } = load('screens/ProfileScreen.tsx', {
+    '@/data/coachingGoals': goals,
     react: state.react, 'react-native': { StyleSheet: { create: styles => styles } },
-    'expo-linear-gradient': {}, 'react-native-svg': {}, '@/components/Screen': {},
+    'expo-router': { useRouter: () => ({}), useLocalSearchParams: () => ({}) }, 'expo-linear-gradient': {}, 'react-native-svg': {}, '@/components/Screen': {},
     '@/components/ui': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
     '@/theme/tokens': { colors: {}, fonts: {} }, '@/api/client': {}, '@/auth/AuthContext': auth,
-    '@/privacy/aiConsent': {},
+    '@/utils/exportData': {}, '@/utils/confirm': confirmation, '@/storage/pendingRecordings': {}, '@/config/legal': {},
+    '@/privacy/aiConsent': privacy, '@/hooks/useRecordAudio': { useRecordAudio: () => ({}) },
     '@/hooks/useProfileSummary': { useProfileSummary: () => summaryState },
-    '@/hooks/useUserSettings': { useUserSettings: () => ({ settings: {}, loadError: 'Offline' }) },
+    '@/hooks/useUserSettings': { useUserSettings: () => ({ settings: {}, loading: true, saving: true, loadError: 'Offline', error: 'Offline' }) },
   });
   const tree = state.render(ProfileScreen);
   function text(node) {
@@ -289,261 +412,294 @@ test('profile loads account data without a plan request', () => {
   }
   const rendered = text(tree);
   assert.match(rendered, /—/);
-  assert.doesNotMatch(rendered, /Current plan|Try Pro|Manage plan|Transcripts saved/);
+  assert.match(rendered, /Mirra\s+Pro/);
+  assert.match(rendered, /\$8/);
+  assert.match(rendered, /per month/);
+  assert.doesNotMatch(rendered, /Retry plan|Stripe|Transcripts saved/);
+
+  function find(node, predicate) {
+    if (!node || typeof node !== 'object') return;
+    if (predicate(node)) return node;
+    for (const child of [node.props?.children].flat(Infinity)) { const found = find(child, predicate); if (found) return found; }
+  }
+  const sheet = () => find(state.render(ProfileScreen), node => node.type?.name === 'SettingsSheet');
+  const menu = () => find(state.render(ProfileScreen), node => node.type?.name === 'AccountMenu');
+  find(tree, node => node.props?.accessibilityLabel === 'View Mirra plans').props.onPress();
+  let plan = sheet();
+  assert.equal(plan.props.panel, 'plan');
+  assert.equal(plan.props.loading, false);
+  assert.equal(plan.props.saving, false);
+  assert.equal(plan.props.error, null);
+  const details = text(plan.type(plan.props));
+  assert.match(details, /Mirra Free/);
+  assert.match(details, /5 debriefs per month/);
+  assert.match(details, /\$8 per month/);
+  assert.match(details, /Unlimited conversation debriefs/);
+  assert.match(details, /Full history and weekly patterns/);
+  assert.match(details, /Energy and vocabulary insights/);
+  assert.match(details, /Coaching tailored to your goals/);
+  assert.match(details, /purchases are not available/);
+  plan.props.onClose();
+  assert.equal(sheet().props.panel, null);
+
+  find(state.render(ProfileScreen), node => node.props?.accessibilityLabel === 'Account actions').props.onPress();
+  assert.equal(menu().props.visible, true);
+  const account = menu();
+  find(account.type(account.props), node => node.props?.label === 'Plans').props.onPress();
+  assert.equal(menu().props.visible, false);
+  assert.equal(sheet().props.panel, 'plan');
 
   summaryState = { summary: { totalConversations: 7, usedThisMonth: 2 } };
   const loaded = text(state.render(ProfileScreen));
   assert.match(loaded, /7/);
   assert.match(loaded, /2/);
-  assert.doesNotMatch(loaded, /Current plan|Try Pro|Manage plan/);
+  assert.match(loaded, /\$8/);
 });
 
-test('web imports preserve inferred MIME, filename, and bytes when the source type is generic', async (t) => {
-  const { uploadSession } = load('api/client.ts', { '@/api/http': http, 'expo-file-system': {} });
+test('conversation goals round-trip through the API and profile choices save the selected goal', async (t) => {
+  const api = load('api/client.ts', { '@/api/http': http, '@/storage/audioSource': {} });
+  let stored = {};
+  const requests = [];
   t.mock.method(globalThis, 'fetch', async (url, options) => {
-    if (url === 'blob:imported') return new Response(new Blob(['original bytes'], { type: 'application/octet-stream' }));
-    assert.equal(url, 'http://test.invalid/sessions');
-    assert.equal(options.headers.Authorization, 'Bearer fresh-token');
-    const audio = options.body.get('audio');
-    assert.equal(audio.name, 'clip.webm');
-    assert.equal(audio.type, 'audio/webm');
-    assert.equal(await audio.text(), 'original bytes');
-    return new Response(JSON.stringify({ detail: 'Stop after inspecting request' }), { status: 503 });
+    requests.push({ url, options });
+    if (options.method === 'PATCH') stored = { ...stored, ...JSON.parse(options.body) };
+    return new Response(JSON.stringify(stored));
   });
-  await assert.rejects(uploadSession('fresh-token', { uri: 'blob:imported', name: 'clip.webm', type: 'audio/webm' }, {}), /Stop after inspecting request/);
-});
-
-test('native uploads preserve the supplied filename, MIME and bytes independently of the cache filename', async (t) => {
-  let inferredType;
-  const { uploadSession } = load('api/client.ts', {
-    '@/api/http': http,
-    // Expo's filesystem File implements Blob without extending it. FormData only
-    // honors the third filename argument for real Blobs, so model that distinction.
-    'expo-file-system': { File: class {
-      constructor(uri) {
-        assert.equal(uri, 'file:///cache/cached-uuid');
-        this.name = 'cached-uuid';
-        this.type = inferredType;
-        this.size = 11;
-      }
-      slice(start, end, type) {
-        return new Blob(['audio bytes']).slice(start, end, type);
-      }
-    } },
-  });
-  t.mock.method(globalThis, 'fetch', async (url, options) => {
-    assert.equal(url, 'http://test.invalid/sessions');
-    assert.equal(options.headers.Authorization, 'Bearer test-token');
-    const audio = options.body.get('audio');
-    assert.equal(audio.type, 'audio/mpeg');
-    assert.equal(audio.name, 'provider-audio');
-    assert.equal(await audio.text(), 'audio bytes');
-    return Response.json({ debrief: { id: 'saved', stats: {} }, used_this_month: 1, remaining: 4 });
-  });
-  for (inferredType of ['', 'application/octet-stream', 'audio/mpeg']) {
-    assert.equal((await uploadSession('test-token', {
-      uri: 'file:///cache/cached-uuid', name: 'provider-audio', type: 'audio/mpeg',
-    }, {})).debrief.id, 'saved');
-  }
-});
-
-test('native interruptions do not force resume; notification stop retains one clip and native errors clear recording', async () => {
+  assert.equal((await api.fetchUserSettings('owner')).coachingGoal, 'general');
+  let settings = await api.updateUserSettings('owner', { coachingGoal: 'make_friends' });
+  assert.deepEqual(JSON.parse(requests.at(-1).options.body), { coaching_goal: 'make_friends' });
+  assert.equal(requests.at(-1).options.headers.Authorization, 'Bearer owner');
+  assert.equal((await api.fetchUserSettings('owner')).coachingGoal, 'make_friends');
   const state = hooks();
-  const effects = [];
-  const saved = [];
-  let account = 'test-user';
-  let listener;
-  let starts = 0;
-  let stops = 0;
-  let fileSeconds = 7.5;
-  let status = { durationMillis: 0, isRecording: false, canRecord: false };
-  const recorder = {
-    uri: 'file:///initial.m4a',
-    // iOS reuses the old file unless preparation receives recording options.
-    async prepareToRecordAsync(options) { if (options) this.uri = `file:///clip-${starts + 1}.m4a`; },
-    record(options) {
-      assert.equal(options.forDuration, 1400);
-      starts++; status = { durationMillis: 0, isRecording: true, canRecord: true };
-    },
-    async stop() {
-      stops++;
-      status = { durationMillis: 0, isRecording: false, canRecord: false };
-      listener({ isFinished: true, hasError: false, url: this.uri });
-    },
-    getStatus: () => status,
-  };
-  const { RecordingProvider } = load('hooks/useRecordAudio.ts', {
-    react: { ...state.react, useEffect: effect => effects.push(effect) },
-    'react-native': { Platform: { OS: 'android' } },
-    '@/auth/AuthContext': { useAuth: () => ({ user: { id: account } }) }, '@/api/http': http, '@/privacy/aiConsent': consentGranted,
-    '@/utils/audioDuration': { async getAudioDuration() {
-      if (fileSeconds === null) throw new Error('Metadata unavailable');
-      return fileSeconds;
-    } },
-    '@/storage/pendingRecordings': { recordingId: () => `recording-${starts}` },
-    './usePendingRecordings': { usePendingRecordings: () => ({ async enqueue(clip) { saved.push(clip); } }) },
-    'expo-audio': {
-      AudioModule: { requestRecordingPermissionsAsync: async () => ({ granted: true }) },
-      setAudioModeAsync: async () => {}, RecordingPresets: { HIGH_QUALITY: {} },
-      // SDK 57 retains the first callback for the lifetime of this recorder.
-      useAudioRecorder: (_, callback) => { listener ??= callback; return recorder; },
-      useAudioRecorderState: () => status,
-    },
+  let saving = false;
+  const changes = [];
+  const { ProfileScreen } = load('screens/ProfileScreen.tsx', {
+    react: state.react, 'react-native': { StyleSheet: { create: styles => styles } },
+    'expo-router': { useRouter: () => ({}), useLocalSearchParams: () => ({}) },
+    'expo-linear-gradient': {}, 'react-native-svg': {}, '@/components/Screen': {}, '@/components/ui': {},
+    '@/components/Typography': {}, '@/components/Icon': { Icon: {} }, '@/theme/tokens': { colors: {}, fonts: {} },
+    '@/api/client': api, '@/auth/AuthContext': auth, '@/data/coachingGoals': goals,
+    '@/utils/exportData': {}, '@/utils/confirm': confirmation, '@/storage/pendingRecordings': {}, '@/config/legal': {},
+    '@/privacy/aiConsent': privacy, '@/hooks/useRecordAudio': { useRecordAudio: () => ({}) },
+    '@/hooks/useProfileSummary': { useProfileSummary: () => ({ summary: null }) },
+    '@/hooks/useUserSettings': { useUserSettings: () => ({ settings, saving,
+      updateSettings: async patch => { changes.push(patch); settings = await api.updateUserSettings('owner', patch); } }) },
   });
-  function render() {
-    const result = state.render(() => RecordingProvider({ children: null })).props.value;
-    effects.splice(0).forEach(effect => effect());
-    return result;
-  }
-  await render().startRecording();
-  status = { durationMillis: 7500, isRecording: false, canRecord: true };
-  render(); // A phone call has paused the recorder; Expo owns its eventual resume.
-  assert.equal(starts, 1);
-  assert.equal(render().isRecordingPaused, true);
-  const completed = { isFinished: true, hasError: false, url: recorder.uri };
-  status = { durationMillis: 0, isRecording: false, canRecord: false };
-  account = 'other';
-  render();
-  listener(completed); // Android's notification Stop bypasses the app Stop button.
-  assert.equal(render().isRecording, false);
-  await render().startRecording(); // Cannot start over a clip still being saved.
-  assert.equal(starts, 1);
-  await flush();
-  assert.equal(saved.length, 1);
-  assert.equal(stops, 0);
-  assert.equal(saved[0].audio.uri, completed.url);
-  assert.equal(saved[0].seconds, 7.5);
-  assert.equal(saved[0].userId, 'test-user', 'A switched account never owns the earlier recording');
-  listener(completed);
-  assert.equal(render().hasUnsavedRecording, false);
-
-  await render().startRecording();
-  assert.notEqual(recorder.uri, completed.url, 'Each iOS capture must use a fresh native file');
-  listener(completed); // A late event for the previous file cannot stop the new clip.
-  assert.equal(render().isRecording, true);
-  assert.equal(render().isRecordingPaused, false);
-  listener({ isFinished: true, hasError: true, url: null, error: 'Microphone disconnected' });
-  assert.equal(render().isRecording, false);
-  assert.equal(render().hasUnsavedRecording, false);
-  assert.equal(render().error, 'Microphone disconnected');
-
-  await render().startRecording();
-  status = { durationMillis: 2500, isRecording: true, canRecord: true };
-  fileSeconds = 2.5;
-  await render().stopRecording();
-  listener({ isFinished: true, hasError: false, url: recorder.uri });
-  assert.equal(render().hasUnsavedRecording, false);
-  assert.equal(stops, 1);
-  assert.equal(saved.length, 2);
-  assert.equal(saved[1].seconds, 2.5);
-
-  await render().startRecording();
-  listener({ isFinished: true, hasError: false, mediaServicesDidReset: true, url: null });
-  assert.equal(render().isRecording, false);
-  assert.equal(render().hasUnsavedRecording, false);
-  assert.match(render().error, /microphone stopped unexpectedly/);
-
-  await render().startRecording();
-  status = { durationMillis: 600000, isRecording: true, canRecord: true };
-  render();
-  // No JS polls while locked; iOS resets native duration before delivering finish.
-  status = { durationMillis: 0, isRecording: false, canRecord: false };
-  fileSeconds = 1400;
-  const limitFinished = { isFinished: true, hasError: false, url: recorder.uri };
-  listener(limitFinished);
-  listener(limitFinished);
-  await flush();
-  assert.equal(render().isRecording, false);
-  assert.equal(saved.length, 3);
-  assert.equal(saved[2].seconds, 1400);
-  assert.equal(stops, 1, 'A native auto-stop does not call Stop again');
-
-  await render().startRecording();
-  status = { durationMillis: 3500, isRecording: true, canRecord: true };
-  fileSeconds = null;
-  await render().stopRecording();
-  assert.equal(saved.length, 4, 'A failed metadata read must still save the original clip');
-  assert.equal(saved[3].seconds, 3.5);
-  assert.equal(saved[3].audio.uri, recorder.uri);
-});
-
-test('microphone denial can recover after Settings without recreating the recorder', async () => {
-  const state = hooks();
-  let permission = { granted: false, canAskAgain: false };
-  let prepared = 0;
-  let starts = 0;
-  let requests = 0;
-  const { RecordingProvider } = load('hooks/useRecordAudio.ts', {
-    react: state.react, 'react-native': { Platform: { OS: 'ios' } },
-    '@/auth/AuthContext': auth, '@/api/http': http, '@/privacy/aiConsent': consentGranted,
-    '@/utils/audioDuration': durationUnavailable,
-    '@/storage/pendingRecordings': { recordingId: () => 'recording' },
-    './usePendingRecordings': { usePendingRecordings: () => ({}) },
-    'expo-audio': {
-      AudioModule: { async requestRecordingPermissionsAsync() { requests++; return permission; } },
-      setAudioModeAsync: async () => {}, RecordingPresets: { HIGH_QUALITY: {} },
-      useAudioRecorderState: () => ({ durationMillis: 0, canRecord: false, isRecording: false }),
-      useAudioRecorder: () => ({
-        async prepareToRecordAsync() { prepared++; }, record() { starts++; }, uri: 'file:///clip.m4a',
-      }),
-    },
-  });
-  const render = () => state.render(() => RecordingProvider({ children: null })).props.value;
-  await render().startRecording();
-  assert.equal(prepared, 0);
-  assert.equal(starts, 0);
-  assert.equal(render().isStartingRecording, false);
-  assert.equal(render().isRecording, false);
-  assert.equal(render().needsMicrophoneSettings, true);
-  assert.match(render().error, /Settings/);
-  permission = { granted: true, canAskAgain: true }; // User grants access in device Settings.
-  await render().startRecording();
-  assert.equal(requests, 2);
-  assert.equal(prepared, 1);
-  assert.equal(starts, 1);
-  assert.equal(render().needsMicrophoneSettings, false);
-  assert.equal(render().error, null);
-  assert.equal(render().isRecording, true);
-});
-
-test('Record screen exposes Settings recovery and explains an interrupted microphone', async () => {
-  const state = hooks();
-  let opened = 0;
-  let fail = false;
-  const dialogs = [];
-  let recording = { needsMicrophoneSettings: true, pendingRecordings: [] };
-  const { HomeScreen } = load('screens/HomeScreen.tsx', {
-    react: state.react,
-    'react-native': { Platform: { OS: 'ios' }, StyleSheet: { create: styles => styles },
-      Pressable: 'Pressable', View: 'View', Linking: { async openSettings() {
-        opened++; if (fail) throw new Error('Unavailable');
-      } }, Alert: { alert: (...args) => dialogs.push(args) } },
-    'expo-router': { useRouter: () => ({}) }, 'react-native-svg': {},
-    '@/components/Screen': { Screen: 'Screen' }, '@/components/Typography': { Body: 'Body', Serif: 'Serif', Eyebrow: 'Eyebrow' },
-    '@/components/Icon': { Icon: {} }, '@/theme/tokens': { colors: {}, fonts: {} },
-    '@/auth/AuthContext': auth, '@/hooks/useDebriefs': { useDebriefs: () => ({ listItems: [] }) },
-    '@/hooks/useImportAudio': { useImportAudio: () => ({}) },
-    '@/hooks/useRecordAudio': { useRecordAudio: () => recording },
-  });
-  function settingsButton(node) {
+  function find(node, predicate) {
     if (!node || typeof node !== 'object') return;
-    if (node.type === 'Pressable' && node.props.children?.props.children === 'Open microphone settings') return node;
-    for (const child of React.Children.toArray(node.props?.children)) {
-      const found = settingsButton(child);
+    if (predicate(node)) return node;
+    for (const child of [node.props?.children].flat(Infinity)) { const found = find(child, predicate); if (found) return found; }
+  }
+  find(state.render(ProfileScreen), node => node.props?.label === 'Your conversation goal').props.onPress();
+  const sheet = find(state.render(ProfileScreen), node => node.type?.name === 'SettingsSheet');
+  assert.equal(sheet.props.panel, 'goal');
+  const tree = sheet.type(sheet.props);
+  for (const option of goals.COACHING_GOALS) {
+    const choice = find(tree, node => node.props?.label === option.label);
+    assert.equal(choice.props.selected, option.value === 'make_friends');
+    choice.props.onPress();
+    await flush();
+    assert.equal(settings.coachingGoal, option.value);
+  }
+  assert.deepEqual(changes.map(patch => patch.coachingGoal), goals.COACHING_GOALS.map(goal => goal.value));
+  saving = true;
+  const busy = find(state.render(ProfileScreen), node => node.type?.name === 'SettingsSheet');
+  const busyTree = busy.type(busy.props);
+  assert.equal(find(busyTree, node => node.props?.children?.props?.children === 'Done').props.disabled, true);
+});
+
+test('account actions save audio before sign-out and clear local data only after confirmed server deletion', async () => {
+  const state = hooks();
+  const events = [];
+  let recording = true;
+  let canSave = false;
+  let deleteSucceeds = false;
+  const { ProfileScreen } = load('screens/ProfileScreen.tsx', {
+    '@/data/coachingGoals': goals,
+    react: state.react, 'react-native': { StyleSheet: { create: value => value } },
+    'expo-router': { useRouter: () => ({}), useLocalSearchParams: () => ({}) }, 'expo-linear-gradient': {}, 'react-native-svg': {},
+    '@/components/Screen': {}, '@/components/ui': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
+    '@/theme/tokens': { colors: {}, fonts: {} }, '@/utils/exportData': {}, '@/config/legal': {},
+    '@/auth/AuthContext': { useAuth: () => ({ user: { id: 'owner' }, accessToken: 'owner-token', signOut: async () => events.push('sign-out') }) },
+    '@/api/client': { deleteAccount: async token => { assert.equal(token, 'owner-token'); events.push('server-delete'); if (!deleteSucceeds) throw Error('Server unavailable'); } },
+    '@/utils/confirm': { confirmAction: async () => true },
+    '@/storage/pendingRecordings': { clearPendingRecordings: async user => { assert.equal(user, 'owner'); events.push('clear-local'); } },
+    '@/privacy/aiConsent': { withdrawAIConsent: async () => events.push('clear-consent') },
+    '@/hooks/useRecordAudio': { useRecordAudio: () => ({ isRecording: recording,
+      stopRecording: async () => { events.push('save-recording'); return canSave; },
+      pauseUploads: () => events.push('pause'), unpauseUploads: () => events.push('resume') }) },
+    '@/hooks/useProfileSummary': { useProfileSummary: () => ({ summary: null }) },
+    '@/hooks/useUserSettings': { useUserSettings: () => ({ settings: {} }) },
+  });
+  function findMenu(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.props?.onDelete) return node.props;
+    for (const child of [node.props?.children].flat(Infinity)) { const found = findMenu(child); if (found) return found; }
+  }
+  const menu = () => findMenu(state.render(ProfileScreen));
+  function footerSignOut(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.props?.accessibilityLabel === 'Sign out') return node.props;
+    for (const child of [node.props?.children].flat(Infinity)) { const found = footerSignOut(child); if (found) return found; }
+  }
+  await footerSignOut(state.render(ProfileScreen)).onPress();
+  assert.deepEqual(events, ['save-recording'], 'The secondary sign-out path must preserve unsaved audio too');
+  events.length = 0;
+  await menu().onSignOut();
+  assert.deepEqual(events, ['save-recording']);
+  assert.match(menu().error, /not saved yet/);
+  canSave = true;
+  await menu().onSignOut();
+  assert.deepEqual(events.slice(-2), ['save-recording', 'sign-out']);
+  events.length = 0;
+  await menu().onDelete(); await flush();
+  assert.equal(events.length, 0, 'Active capture blocks account deletion');
+  recording = false;
+  await menu().onDelete(); await flush();
+  assert.deepEqual(events, ['pause', 'server-delete', 'resume']);
+  assert.match(menu().error, /Server unavailable/);
+  events.length = 0; deleteSucceeds = true;
+  await menu().onDelete(); await flush();
+  assert.deepEqual(events, ['pause', 'server-delete', 'clear-local', 'clear-consent', 'sign-out', 'resume']);
+});
+
+test('website statistics reach the conversation screen, without fabricated legacy measurements', () => {
+  const api = load('api/client.ts', { '@/api/http': http, '@/storage/audioSource': {} });
+  const state = hooks();
+  const raw = { id: 'statistics', created_at: '2026-09-16T00:00:00Z', transcript: 'Other speaker words must not inflate yours.',
+    stats: { talk_listen_ratio: 1, question_count: 6, open_question_count: 4, closed_question_count: 2, interruption_count: 2,
+      average_turn_offset_ms: -160, turn_offset_series: [{ t: '0:10', ms: -160 }],
+      session_duration_minutes: 12, user_speech_duration_minutes: 3, other_speech_duration_minutes: 3,
+      estimated_wpm: 140, other_estimated_wpm: 110, user_volume_dbfs: -21.6, other_volume_dbfs: -28,
+      user_pitch_hz: 180, other_pitch_hz: 220, energy_score: 0, energy_series_user: [1, 3, 2], energy_series_other: [2, 1, 4],
+      total_word_count: 420, unique_word_count: 186, repeated_words: [{ phrase: 'week', count: 7 }],
+      filler_counts: [{ phrase: 'like', count: 7 }, { phrase: 'um', count: 3 }], metadata: { coaching_goal: 'make_friends' } } };
+  let debrief = api.toDebrief(raw);
+  const { AnalyticsScreen } = load('screens/AnalyticsScreen.tsx', {
+    react: state.react, 'react-native': { Platform: { OS: 'web' }, StyleSheet: { create: s => s }, useWindowDimensions: () => ({ width: 320 }) },
+    'expo-router': { useLocalSearchParams: () => ({ id: 'statistics' }), useRouter: () => ({}) },
+    '@/auth/AuthContext': auth, '@/api/client': api, '@/api/http': http, '@/data/coachingGoals': goals,
+    '@/hooks/useDebriefs': { useDebriefs: () => ({ debriefs: [debrief] }), toConversationListItem: () => ({ title: 'Conversation' }) },
+    '@/utils/talkListen': { talkListenPercent: () => 50 }, '@/theme/tokens': { colors: {}, fonts: {} },
+    '@/components/Screen': {}, '@/components/ui': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
+    '@/components/FloatingTabBar': {}, '@/components/ExpandableMetric': { ExpandableMetric: 'Metric' },
+    '@/components/ReflectCTA': {}, '@/components/charts': { EnergyWave: 'Wave' }, '@/components/meters': { FillerBars: 'Words' },
+  });
+  function nodes(node) {
+    return node && typeof node === 'object' ? [node, ...[node.props?.children].flat(Infinity).flatMap(nodes)] : [];
+  }
+  const tree = state.render(AnalyticsScreen);
+  const cards = Object.fromEntries(nodes(tree).filter(n => n.type === 'Metric').map(n => [n.props.eyebrow, n.props]));
+  for (const name of ['Speaking share', 'Questions', 'Turn-taking', 'Vocal energy', 'Vocabulary', 'Filler words']) assert.ok(cards[name], name);
+  assert.equal(cards.Questions.value, '6');
+  assert.equal(cards['Turn-taking'].value, '-160');
+  assert.equal(cards['Vocal energy'].value, 140);
+  assert.equal(cards['Filler words'].value, 10);
+  assert.match(cards.Vocabulary.summary, /186 unique across 420 words/);
+  assert.ok(nodes(tree).some(n => n.type === 'Wave'), 'Valid energy data is visible even when a legacy composite score is zero');
+  assert.deepEqual(nodes(tree).find(n => n.type === 'Words').props.items, [{ phrase: 'week', count: 7 }]);
+  assert.match(JSON.stringify(tree), /-21.6 dBFS/);
+  assert.match(JSON.stringify(tree), /220 Hz/);
+  assert.doesNotMatch(JSON.stringify(tree), /Healthy range|ideal smooth|high LSM|Outside the balanced/);
+  for (const n of nodes(tree)) if (n.props.width) assert.ok(n.props.width <= 224, 'Charts fit a 320px screen');
+
+  debrief = api.toDebrief({ ...raw, stats: { talk_listen_ratio: 1, question_count: 0, interruption_count: 1,
+    session_duration_minutes: 12, user_speech_duration_minutes: 0, estimated_wpm: 0 } });
+  assert.equal(debrief.stats.repeatedWords, null);
+  assert.equal(debrief.stats.userVolumeDbfs, null);
+  assert.equal(debrief.stats.averageTurnOffsetMs, 0);
+  assert.equal(debrief.stats.otherSpeechDurationMinutes, null);
+  const legacyTree = state.render(AnalyticsScreen);
+  assert.match(JSON.stringify(legacyTree), /Word frequencies were not saved/);
+  assert.match(JSON.stringify(legacyTree), /No word detail available/);
+  assert.match(JSON.stringify(legacyTree), /No speaking time available/);
+});
+
+test('turn chart includes long gaps and overlaps without an ideal timing target', () => {
+  const { TurnOffsetChart } = load('components/charts.tsx', {
+    react: React, 'react-native': {}, './Typography': {}, '@/theme/tokens': { colors: {}, fonts: {} },
+    'react-native-svg': { __esModule: true, default: 'svg', Circle: 'circle', Line: 'line', Path: 'path', Text: 'text', Rect: 'rect' },
+  });
+  const tree = TurnOffsetChart({ data: [{ t: '0:01', ms: -1200 }, { t: '0:10', ms: 10000 }] });
+  const circles = tree.props.children.flat(Infinity).filter(n => n?.type === 'circle');
+  assert.equal(circles.length, 2);
+  assert.ok(circles.every(n => n.props.cy >= 8 && n.props.cy <= 148));
+  assert.doesNotMatch(JSON.stringify(tree), /target/);
+});
+
+test('conversation deletion confirms on web and native, retains failures, and navigates only after success', async (t) => {
+  const api = load('api/client.ts', { '@/api/http': http, '@/storage/audioSource': {} });
+  const state = hooks();
+  let id = 'saved-conversation';
+  let confirmed = false;
+  const requests = [];
+  const destinations = [];
+  const platform = { OS: 'web' };
+  let buttons;
+  t.mock.method(globalThis, 'fetch', (url, options) => new Promise(resolve => requests.push({ url, options, resolve })));
+  const debrief = api.toDebrief({
+    id, session_id: 'session', created_at: '2026-09-13T00:00:00Z',
+    observation: 'A conversation.', pattern_to_reduce: 'Interruptions', thing_to_try_next: 'Pause',
+    stats: { talk_listen_ratio: 1, question_count: 1, interruption_count: 0,
+      session_duration_minutes: 2, user_speech_duration_minutes: 1, estimated_wpm: 120 },
+  });
+  const { AnalyticsScreen } = load('screens/AnalyticsScreen.tsx', {
+    '@/data/coachingGoals': goals,
+    react: state.react,
+    'react-native': { Platform: platform, Alert: { alert: (_title, _message, actions) => { buttons = actions; } },
+      StyleSheet: { create: styles => styles }, useWindowDimensions: () => ({ width: 393 }) },
+    'expo-router': { useLocalSearchParams: () => ({ id }), useRouter: () => ({ replace: path => destinations.push(path) }) },
+    '@/auth/AuthContext': auth, '@/api/client': api, '@/api/http': http,
+    '@/hooks/useDebriefs': { useDebriefs: () => ({ debriefs: [debrief], loading: false }),
+      toConversationListItem: () => ({ title: 'A conversation', when: 'Today', duration: '2 min' }) },
+    '@/utils/talkListen': { talkListenPercent: () => 50 },
+    '@/theme/tokens': { colors: {}, fonts: {} }, '@/components/Screen': {},
+    '@/components/ui': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
+    '@/components/FloatingTabBar': {}, '@/components/ExpandableMetric': {},
+    '@/components/ReflectCTA': {}, '@/components/charts': {}, '@/components/meters': {},
+  }, { confirm: () => confirmed });
+  const render = () => state.render(AnalyticsScreen);
+  function deleteButton(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.props?.accessibilityLabel === 'Delete conversation') return node;
+    for (const child of [node.props?.children].flat(Infinity)) {
+      const found = deleteButton(child);
       if (found) return found;
     }
   }
-  const render = () => state.render(HomeScreen);
-  settingsButton(render()).props.onPress();
+
+  deleteButton(render()).props.onPress();
+  assert.equal(requests.length, 0);
+  confirmed = true;
+  const button = deleteButton(render());
+  button.props.onPress();
+  button.props.onPress();
+  assert.equal(requests.length, 1);
+  assert.equal(deleteButton(render()).props.disabled, true);
+  assert.equal(requests[0].url, 'http://test.invalid/debriefs/saved-conversation');
+  assert.equal(requests[0].options.method, 'DELETE');
+  assert.equal(requests[0].options.headers.Authorization, 'Bearer test-token');
+  assert.deepEqual(destinations, []);
+  requests[0].resolve(new Response('{"detail":"Could not delete"}', { status: 500 }));
   await flush();
-  assert.equal(opened, 1);
-  fail = true;
-  settingsButton(render()).props.onPress();
+  assert.equal(render().props.error, 'Could not delete');
+  assert.equal(deleteButton(render()).props.disabled, false);
+  assert.deepEqual(destinations, []);
+
+  platform.OS = 'ios';
+  deleteButton(render()).props.onPress();
+  assert.equal(requests.length, 1);
+  assert.equal(buttons[0].style, 'cancel');
+  assert.equal(buttons[1].style, 'destructive');
+  buttons[1].onPress();
+  requests[1].resolve(new Response(null, { status: 204 }));
   await flush();
-  assert.match(dialogs[0][1], /allow microphone access/);
-  recording = { ...recording, needsMicrophoneSettings: false, isRecording: true, isRecordingPaused: true };
-  assert.equal(settingsButton(render()), undefined);
-  assert.match(JSON.stringify(render()), /Microphone interrupted · tap to stop and save/);
+  assert.equal(render().props.error, null);
+  assert.deepEqual(destinations, ['/insights']);
+
+  // A missing/deleted ID must never silently select another conversation to delete.
+  id = 'missing-conversation';
+  assert.equal(deleteButton(render()), undefined);
 });
 
 test('AI consent requires explicit approval, survives restart per account, and can be withdrawn', async () => {
@@ -624,69 +780,6 @@ test('AI consent requires explicit approval, survives restart per account, and c
   assert.equal(await web.requestAIConsent('web-user'), true);
 });
 
-test('declining blocks recording and import; withdrawal still allows the stopped clip to be saved locally', async () => {
-  const state = hooks();
-  let allowed = false;
-  let permissions = 0;
-  let uploads = 0;
-  const saved = [];
-  let picks = 0;
-  const privacy = { async requestAIConsent(userId) {
-    assert.equal(userId, 'test-user');
-    return allowed;
-  } };
-  const { RecordingProvider } = load('hooks/useRecordAudio.ts', {
-    react: state.react, 'react-native': { Platform: { OS: 'ios' } },
-    '@/auth/AuthContext': auth, '@/api/http': http, '@/privacy/aiConsent': privacy,
-    '@/utils/audioDuration': durationUnavailable,
-    '@/storage/pendingRecordings': { recordingId: () => 'recording' },
-    './usePendingRecordings': { usePendingRecordings: () => ({ async enqueue(clip) { saved.push(clip); } }) },
-    'expo-audio': {
-      AudioModule: { async requestRecordingPermissionsAsync() { permissions++; return { granted: true }; } },
-      setAudioModeAsync: async () => {}, RecordingPresets: { HIGH_QUALITY: {} },
-      useAudioRecorderState: () => ({ durationMillis: 5000 }),
-      useAudioRecorder: () => ({
-        async prepareToRecordAsync() {}, record() {}, async stop() {}, uri: 'file:///clip.m4a',
-        getStatus: () => ({ durationMillis: 5000 }),
-      }),
-    },
-  });
-  const render = () => state.render(() => RecordingProvider({ children: null })).props.value;
-  await render().startRecording();
-  assert.equal(permissions, 0);
-  assert.equal(render().isStartingRecording, false);
-  allowed = true;
-  await render().startRecording();
-  allowed = false;
-  await render().stopRecording();
-  assert.equal(uploads, 0);
-  assert.equal(render().isRecording, false);
-  assert.equal(saved.length, 1, 'Consent withdrawal must not discard the locally recorded audio');
-  assert.equal(saved[0].seconds, 5);
-
-  allowed = false;
-  const importState = hooks();
-  const { useImportAudio } = load('hooks/useImportAudio.ts', {
-    react: importState.react, '@/auth/AuthContext': auth, '@/api/http': http,
-    '@/privacy/aiConsent': privacy, '@/utils/timeFormat': { titleFromFilename: () => 'Conversation' },
-    '@/hooks/useRecordAudio': { useRecordAudio: () => ({ async enqueue() { uploads++; } }) },
-    '@/storage/pendingRecordings': { recordingId: () => 'imported' },
-    '@/utils/audioDuration': { async getAudioDuration() { allowed = false; return 5; } },
-    'expo-file-system': {},
-    'expo-document-picker': { async getDocumentAsync() {
-      picks++;
-      return { canceled: false, assets: [{ uri: 'file:///clip.m4a', name: 'clip.m4a', size: 100 }] };
-    } },
-  });
-  assert.equal(await importState.render(useImportAudio).importAudio(), undefined);
-  assert.equal(picks, 0);
-  assert.equal(importState.render(useImportAudio).importing, false);
-  allowed = true;
-  assert.equal(await importState.render(useImportAudio).importAudio(), undefined);
-  assert.equal(picks, 1);
-  assert.equal(uploads, 0); // Consent withdrawn while reading metadata prevents the import upload.
-  assert.equal(importState.render(useImportAudio).error, null);
-});
 
 test('Reflect preserves the draft and sends no message or fallback when consent is declined or unavailable', async () => {
   const state = hooks();
@@ -699,9 +792,10 @@ test('Reflect preserves the draft and sends no message or fallback when consent 
     'expo-router': { useRouter: () => ({}), useLocalSearchParams: () => ({}) },
     'react-native-svg': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
     '@/theme/tokens': { colors: {}, fonts: {} }, '@/auth/AuthContext': auth, '@/hooks/useDebriefs': {},
+    '@/api/http': http,
     '@/data/reflect': { SEED_MESSAGES: [], STARTER_PROMPTS: [], CANNED_REPLIES: ['fallback'] },
     '@/privacy/aiConsent': { async requestAIConsent() { if (choice instanceof Error) throw choice; return choice; } },
-    '@/api/client': { async sendReflection(_, payload) { sent.push(payload); return 'reply'; } },
+    '@/api/client': { async sendReflection(_, payload) { sent.push(payload); return { usedModel: true, reply: 'reply' }; } },
   });
   function findInput(node) {
     if (!node || typeof node !== 'object') return;
@@ -728,4 +822,228 @@ test('Reflect preserves the draft and sends no message or fallback when consent 
   assert.equal(sent[0].prompt, 'Keep this draft');
   assert.deepEqual(sent[0].messages, []);
   assert.equal(findInput(render()).props.value, '');
+});
+
+test('Reflect keeps a newer draft through failed replies, retries and removal of the failed message', async () => {
+  const state = hooks();
+  const requests = [];
+  const { ReflectScreen } = load('screens/ReflectScreen.tsx', {
+    react: state.react,
+    'react-native': { TextInput: 'TextInput', Platform: { OS: 'ios' }, StyleSheet: { create: styles => styles } },
+    'react-native-safe-area-context': { useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) },
+    'expo-router': { useRouter: () => ({}), useLocalSearchParams: () => ({}) },
+    'react-native-svg': {}, '@/components/Typography': {}, '@/components/Icon': { Icon: {} },
+    '@/theme/tokens': { colors: {}, fonts: {} }, '@/auth/AuthContext': auth, '@/hooks/useDebriefs': {},
+    '@/api/http': http, '@/data/reflect': { SEED_MESSAGES: [], STARTER_PROMPTS: [] },
+    '@/privacy/aiConsent': privacy,
+    '@/api/client': { sendReflection(_, payload) {
+      return new Promise((resolve, reject) => requests.push({ payload, resolve, reject }));
+    } },
+  });
+  function find(node, label) {
+    if (!node || typeof node !== 'object') return;
+    if (node.props?.accessibilityLabel === label) return node;
+    for (const child of React.Children.toArray(node.props?.children)) {
+      const result = find(child, label);
+      if (result) return result;
+    }
+  }
+  const render = () => state.render(ReflectScreen);
+  const input = () => find(render(), 'Message to Mirra');
+  input().props.onChangeText('First question');
+  const first = input().props.onSubmitEditing();
+  await flush();
+  input().props.onChangeText('New unsent draft');
+  requests[0].reject(Error('Network unavailable'));
+  await first;
+  assert.equal(input().props.value, 'New unsent draft');
+  assert.match(JSON.stringify(render()), /First question/);
+  await input().props.onSubmitEditing();
+  assert.equal(requests.length, 1, 'Resolve the failed message before sending another');
+
+  const retry = find(render(), 'Retry failed message').props.onPress();
+  await flush();
+  assert.deepEqual(requests[1].payload, requests[0].payload, 'A retry must not duplicate the failed question in history');
+  assert.equal(input().props.value, 'New unsent draft');
+  requests[1].resolve({ usedModel: true, reply: 'A reply' });
+  await retry;
+  assert.equal(find(render(), 'Retry failed message'), undefined);
+  assert.equal(input().props.value, 'New unsent draft');
+
+  const next = input().props.onSubmitEditing();
+  await flush();
+  input().props.onChangeText('Another draft');
+  requests[2].reject(Error('Network unavailable'));
+  await next;
+  find(render(), 'Remove failed message').props.onPress();
+  assert.equal(input().props.value, 'Another draft');
+  assert.equal(find(render(), 'Send message').props.disabled, false);
+  assert.doesNotMatch(JSON.stringify(render()), /New unsent draft/);
+});
+test('native interruptions retain one original, including after media reset and missing metadata', async () => {
+  const state = hooks();
+  const effects = [];
+  const saved = [];
+  let account = 'test-user';
+  let listener;
+  let starts = 0;
+  let stops = 0;
+  let fileSeconds = 7.5;
+  let status = { durationMillis: 0, isRecording: false, canRecord: false };
+  const recorder = {
+    uri: 'file:///initial.m4a',
+    // iOS reuses the old file unless preparation receives recording options.
+    async prepareToRecordAsync(options) { assert.equal(options.sampleRate, 24000); assert.equal(options.bitRate, 64000); assert.equal(options.numberOfChannels, 1); if (options) this.uri = `file:///clip-${starts + 1}.m4a`; },
+    record(options) {
+      assert.equal(options.forDuration, 86400);
+      starts++; status = { durationMillis: 0, isRecording: true, canRecord: true };
+    },
+    async stop() {
+      stops++;
+      status = { durationMillis: 0, isRecording: false, canRecord: false };
+      listener({ isFinished: true, hasError: false, url: this.uri });
+    },
+    getStatus: () => status,
+  };
+  const { RecordingProvider } = load('hooks/useRecordAudio.ts', {
+    react: { ...state.react, useEffect: effect => effects.push(effect) },
+    'react-native': { Platform: { OS: 'android', Version: 32 } },
+    '@/auth/AuthContext': { useAuth: () => ({ user: { id: account } }) }, '@/api/http': http, '@/privacy/aiConsent': consentGranted,
+    '@/utils/audioDuration': { async getAudioDuration() {
+      if (fileSeconds === null) throw new Error('Metadata unavailable');
+      return fileSeconds;
+    } },
+    '@/storage/pendingRecordings': { recordingId: () => `recording-${starts}` },
+    './usePendingRecordings': { usePendingRecordings: () => ({ async enqueue(clip) { saved.push(clip); } }) },
+    'expo-audio': {
+      AudioModule: { requestRecordingPermissionsAsync: async () => ({ granted: true }) },
+      setAudioModeAsync: async () => {}, RecordingPresets: { HIGH_QUALITY: {} },
+      // SDK 57 retains the first callback for the lifetime of this recorder.
+      useAudioRecorder: (_, callback) => { listener ??= callback; return recorder; },
+      useAudioRecorderState: () => status,
+    },
+  });
+  function render() {
+    const result = state.render(() => RecordingProvider({ children: null })).props.value;
+    effects.splice(0).forEach(effect => effect());
+    return result;
+  }
+  await render().startRecording();
+  status = { durationMillis: 7500, isRecording: false, canRecord: true };
+  render();
+  assert.equal(starts, 1, 'An interruption must not force a microphone resume');
+  assert.equal(render().isRecordingPaused, true);
+  const completed = { isFinished: true, url: recorder.uri };
+  status = { durationMillis: 0, isRecording: false, canRecord: false };
+  listener(completed);
+  listener(completed);
+  await flush();
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].seconds, 7.5, 'Native Stop resets its timer, so probe the file');
+  assert.equal(stops, 0);
+
+  await render().startRecording();
+  assert.notEqual(recorder.uri, completed.url, 'Preparation creates a fresh file');
+  listener(completed);
+  assert.equal(render().isRecording, true, 'A late finish cannot stop the next clip');
+  const interruptedUri = recorder.uri;
+  // Expo recreates its recorder before emitting mediaServicesDidReset with no URL.
+  recorder.uri = 'file:///new-empty-recorder.m4a';
+  status = { durationMillis: 0, isRecording: false, canRecord: false };
+  listener({ isFinished: true, mediaServicesDidReset: true, url: null });
+  await flush();
+  assert.equal(saved.length, 2);
+  assert.equal(saved[1].audio.uri, interruptedUri, 'Keep the partial original, never the new empty file');
+  assert.equal(render().isRecording, false);
+
+  await render().startRecording();
+  status = { durationMillis: 3500, isRecording: true, canRecord: true };
+  fileSeconds = null;
+  await render().stopRecording();
+  assert.equal(saved.length, 3, 'Missing metadata cannot prevent saving the source');
+  assert.equal(saved[2].seconds, 3.5);
+  assert.equal(saved[2].audio.uri, recorder.uri);
+  assert.equal(stops, 1);
+});
+
+test('microphone denial can recover after Settings without recreating the recorder', async () => {
+  const state = hooks();
+  let permission = { granted: false, canAskAgain: false };
+  let prepared = 0;
+  let starts = 0;
+  let requests = 0;
+  const { RecordingProvider } = load('hooks/useRecordAudio.ts', {
+    react: state.react, 'react-native': { Platform: { OS: 'ios' } },
+    '@/auth/AuthContext': auth, '@/api/http': http, '@/privacy/aiConsent': consentGranted,
+    '@/utils/audioDuration': durationUnavailable,
+    '@/storage/pendingRecordings': { recordingId: () => 'recording' },
+    './usePendingRecordings': { usePendingRecordings: () => ({}) },
+    'expo-audio': {
+      AudioModule: { async requestRecordingPermissionsAsync() { requests++; return permission; } },
+      setAudioModeAsync: async () => {}, RecordingPresets: { HIGH_QUALITY: {} },
+      useAudioRecorderState: () => ({ durationMillis: 0, canRecord: false, isRecording: false }),
+      useAudioRecorder: () => ({
+        async prepareToRecordAsync() { prepared++; }, record() { starts++; }, uri: 'file:///clip.m4a',
+      }),
+    },
+  });
+  const render = () => state.render(() => RecordingProvider({ children: null })).props.value;
+  await render().startRecording();
+  assert.equal(prepared, 0);
+  assert.equal(starts, 0);
+  assert.equal(render().isStartingRecording, false);
+  assert.equal(render().isRecording, false);
+  assert.equal(render().needsMicrophoneSettings, true);
+  assert.match(render().error, /Settings/);
+  permission = { granted: true, canAskAgain: true }; // User grants access in device Settings.
+  await render().startRecording();
+  assert.equal(requests, 2);
+  assert.equal(prepared, 1);
+  assert.equal(starts, 1);
+  assert.equal(render().needsMicrophoneSettings, false);
+  assert.equal(render().error, null);
+  assert.equal(render().isRecording, true);
+});
+
+
+test('Record screen exposes Settings recovery and explains an interrupted microphone', async () => {
+  const state = hooks();
+  let opened = 0;
+  let fail = false;
+  const dialogs = [];
+  let recording = { needsMicrophoneSettings: true, pendingRecordings: [] };
+  const { HomeScreen } = load('screens/HomeScreen.tsx', {
+    react: state.react,
+    'react-native': { Platform: { OS: 'ios' }, StyleSheet: { create: styles => styles },
+      Pressable: 'Pressable', View: 'View', Linking: { async openSettings() {
+        opened++; if (fail) throw new Error('Unavailable');
+      } }, Alert: { alert: (...args) => dialogs.push(args) } },
+    'expo-router': { useRouter: () => ({}) }, 'react-native-svg': {},
+    '@/components/Screen': { Screen: 'Screen' }, '@/components/Typography': { Body: 'Body', Serif: 'Serif', Eyebrow: 'Eyebrow' },
+    '@/components/Icon': { Icon: {} }, '@/theme/tokens': { colors: {}, fonts: {} },
+    '@/auth/AuthContext': auth, '@/hooks/useDebriefs': { useDebriefs: () => ({ listItems: [] }) },
+    '@/hooks/useUserSettings': { useUserSettings: () => ({ settings: { coachingGoal: 'general' } }) },
+    '@/data/coachingGoals': goals, '@/utils/timeFormat': { formatDuration: () => '1m' },
+    '@/hooks/useImportAudio': { useImportAudio: () => ({}) },
+    '@/hooks/useRecordAudio': { useRecordAudio: () => recording },
+  });
+  function settingsButton(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'Pressable' && node.props?.children?.props?.children === 'Open microphone settings') return node;
+    for (const child of React.Children.toArray(node.props?.children)) {
+      const found = settingsButton(child);
+      if (found) return found;
+    }
+  }
+  const render = () => state.render(HomeScreen);
+  settingsButton(render()).props.onPress();
+  await flush();
+  assert.equal(opened, 1);
+  fail = true;
+  settingsButton(render()).props.onPress();
+  await flush();
+  assert.match(dialogs[0][1], /allow microphone access/);
+  recording = { ...recording, needsMicrophoneSettings: false, isRecording: true, isRecordingPaused: true };
+  assert.equal(settingsButton(render()), undefined);
+  assert.match(JSON.stringify(render()), /Microphone interrupted · tap to stop and save/);
 });

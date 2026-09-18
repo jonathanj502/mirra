@@ -22,8 +22,10 @@ def audio_segments(turns: list[TranscribedTurn], audio: np.ndarray, sample_rate:
     for speaker, spans in by_speaker.items():
         for start, end in spans:
             chunk = audio[int(start * sample_rate):int(end * sample_rate)]
-            # Accumulate in float64 without copying/squaring the entire turn.
-            energy = float(np.sqrt(np.einsum("i,i->", chunk, chunk, dtype=np.float64) / len(chunk))) if len(chunk) else 0.0
+            power = sum(float(np.sum(np.square(np.nan_to_num(chunk[i:i + sample_rate * 30].astype(np.float64),
+                        copy=False, nan=0.0, posinf=0.0, neginf=0.0))))
+                        for i in range(0, len(chunk), sample_rate * 30))
+            energy = math.sqrt(power / len(chunk)) if len(chunk) else 0.0
             segments.append(Segment(start, end, energy, speaker))
     return sorted(segments, key=lambda segment: segment.start)
 

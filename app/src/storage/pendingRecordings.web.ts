@@ -58,3 +58,7 @@ export function releasePendingAudio(audio: PendingRecording['audio']) {
 export async function removePendingRecording(recording: PendingRecording) {
   await transaction('readwrite', store => store.delete(recording.id));
 }
+
+export async function clearPendingRecordings(userId: string) {
+  for (const recording of await listPendingRecordings(userId)) await removePendingRecording(recording);
+}
