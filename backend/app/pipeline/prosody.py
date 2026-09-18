@@ -100,15 +100,20 @@ def _pitch_for_segments(audio: np.ndarray, sample_rate: int, segments: list[Segm
         try:
             # Preserve YIN's centered 2048-sample frames and 512-sample hop,
             # while bounding its temporary FFT arrays for long speaker turns.
-            padded = np.pad(chunk.astype(np.float32, copy=False), (1024, 1024))
-            f0 = np.concatenate([
-                librosa.yin(
-                    padded[offset:offset + 2048 + 127 * 512],
+            batches = []
+            for offset in range(0, len(chunk) + 1, 128 * 512):
+                start = offset - 1024
+                end = min(len(chunk) + 1024, offset + 127 * 512 + 1024)
+                batch = np.pad(
+                    chunk[max(0, start):min(len(chunk), end)].astype(np.float32, copy=False),
+                    (max(0, -start), max(0, end - len(chunk))),
+                )
+                batches.append(librosa.yin(
+                    batch,
                     fmin=50, fmax=500, sr=sample_rate,
                     frame_length=2048, hop_length=512, center=False,
-                )
-                for offset in range(0, len(chunk) + 1, 128 * 512)
-            ])
+                ))
+            f0 = np.concatenate(batches)
         except Exception:
             continue
         voiced = f0[np.isfinite(f0)]

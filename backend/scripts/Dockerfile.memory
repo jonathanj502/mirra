@@ -1,0 +1,12 @@
+# Build from backend/: docker build --platform linux/amd64 -f scripts/Dockerfile.memory -t mirra-memory .
+FROM python:3.14.3-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libsndfile1 && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir uv
+WORKDIR /work
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-install-project --no-dev
+COPY app ./app
+COPY scripts/warm_audio.py scripts/benchmark_memory.py ./scripts/
+ENV NUMBA_CPU_NAME=generic
+RUN .venv/bin/python -m scripts.warm_audio
+ENTRYPOINT ["/work/.venv/bin/python", "-u", "-m", "scripts.benchmark_memory"]
