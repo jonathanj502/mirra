@@ -389,7 +389,7 @@ export async function uploadSession(
   const form = new FormData();
   if (audio.uri.startsWith('blob:') || audio.uri.startsWith('data:')) {
     const blob = await fetch(audio.uri).then((response) => response.blob());
-    form.append('audio', blob, audio.name);
+    form.append('audio', blob.slice(0, blob.size, audio.type), audio.name);
   } else {
     const file = new File(audio.uri);
     form.append('audio', file.slice(0, file.size, audio.type), audio.name);

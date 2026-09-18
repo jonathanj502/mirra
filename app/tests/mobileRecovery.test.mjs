@@ -238,19 +238,6 @@ test('recording saves before upload, allows another offline clip, and retains th
   assert.equal(starts, 2);
 });
 
-test('import failures are returned as visible error state on web', async () => {
-  const state = hooks();
-  const { useImportAudio } = load('hooks/useImportAudio.ts', {
-    react: state.react, '@/auth/AuthContext': auth, '@/api/http': http,
-    '@/api/client': {}, '@/utils/timeFormat': {}, 'expo-audio': {},
-    '@/privacy/aiConsent': consentGranted,
-    'expo-document-picker': { async getDocumentAsync() { throw new Error('Could not open audio file'); } },
-  });
-  assert.equal(await state.render(useImportAudio).importAudio(), null);
-  assert.equal(state.render(useImportAudio).error, 'Could not open audio file');
-  assert.equal(state.render(useImportAudio).importing, false);
-});
-
 test('focus refresh recovers a failed tab and an older request cannot overwrite newer data', async () => {
   const state = hooks();
   const requests = [];
@@ -309,94 +296,19 @@ test('profile loads account data without a plan request', () => {
   assert.doesNotMatch(loaded, /Current plan|Try Pro|Manage plan/);
 });
 
-test('audio import waits for metadata and releases the SDK 57 player without playback', async () => {
-  const state = hooks();
-  let released = 0;
-  let unsubscribed = 0;
-  let metadata;
-  const player = {
-    isLoaded: false, duration: 12.5,
-    addListener(event, listener) {
-      assert.equal(event, 'playbackStatusUpdate');
-      setImmediate(() => listener({ isLoaded: true }));
-      return { remove() { unsubscribed++; } };
-    },
-    remove() { released++; },
-  };
-  const { useImportAudio } = load('hooks/useImportAudio.ts', {
-    react: state.react, '@/auth/AuthContext': auth, '@/api/http': http,
-    '@/api/client': { async uploadSession(_, audio, details) {
-      metadata = details;
-      assert.equal(audio.type, 'audio/mp4');
-      return { debrief: { id: 'imported' } };
-    } },
-    '@/utils/timeFormat': { titleFromFilename: () => 'Conversation' },
-    '@/privacy/aiConsent': consentGranted,
-    'expo-audio': { createAudioPlayer: () => player },
-    'expo-document-picker': { async getDocumentAsync() {
-      return { canceled: false, assets: [{ uri: 'file:///clip.m4a', name: 'clip.m4a', size: 100 }] };
-    } },
+test('web imports preserve inferred MIME, filename, and bytes when the source type is generic', async (t) => {
+  const { uploadSession } = load('api/client.ts', { '@/api/http': http, 'expo-file-system': {} });
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (url === 'blob:imported') return new Response(new Blob(['original bytes'], { type: 'application/octet-stream' }));
+    assert.equal(url, 'http://test.invalid/sessions');
+    assert.equal(options.headers.Authorization, 'Bearer fresh-token');
+    const audio = options.body.get('audio');
+    assert.equal(audio.name, 'clip.webm');
+    assert.equal(audio.type, 'audio/webm');
+    assert.equal(await audio.text(), 'original bytes');
+    return new Response(JSON.stringify({ detail: 'Stop after inspecting request' }), { status: 503 });
   });
-  assert.deepEqual(await state.render(useImportAudio).importAudio(), { id: 'imported' });
-  assert.equal(metadata.clientDurationSeconds, 12.5);
-  assert.equal(released, 1);
-  assert.equal(unsubscribed, 1);
-});
-
-test('audio import handles metadata becoming ready before its listener is attached', async () => {
-  const state = hooks();
-  let released = 0;
-  let unsubscribed = 0;
-  const player = {
-    isLoaded: false, duration: 8,
-    addListener() {
-      this.isLoaded = true; // The native ready event was already emitted.
-      return { remove() { unsubscribed++; } };
-    },
-    remove() { released++; },
-  };
-  const { useImportAudio } = load('hooks/useImportAudio.ts', {
-    react: state.react, '@/auth/AuthContext': auth, '@/api/http': http,
-    '@/privacy/aiConsent': consentGranted,
-    '@/utils/timeFormat': { titleFromFilename: () => 'Conversation' },
-    '@/api/client': { async uploadSession(_, audio, metadata) {
-      assert.equal(metadata.clientDurationSeconds, 8);
-      return { debrief: { id: 'imported' } };
-    } },
-    'expo-audio': { createAudioPlayer: () => player },
-    'expo-document-picker': { async getDocumentAsync() {
-      return { canceled: false, assets: [{ uri: 'file:///clip.m4a', name: 'clip.m4a', size: 100 }] };
-    } },
-  });
-  assert.deepEqual(await state.render(useImportAudio).importAudio(), { id: 'imported' });
-  assert.equal(released, 1);
-  assert.equal(unsubscribed, 1);
-});
-
-test('imports accept 23m20s and reject any longer or oversized file before upload', async () => {
-  const state = hooks();
-  let seconds = 1400;
-  let size = 23_000_000;
-  let uploaded = 0;
-  const { useImportAudio } = load('hooks/useImportAudio.ts', {
-    react: state.react, '@/auth/AuthContext': auth, '@/api/http': http,
-    '@/privacy/aiConsent': consentGranted,
-    '@/utils/timeFormat': { titleFromFilename: () => 'Conversation' },
-    '@/api/client': { async uploadSession() { uploaded++; return { debrief: { id: 'at-limit' } }; } },
-    'expo-audio': { createAudioPlayer: () => ({ isLoaded: true, duration: seconds, remove() {} }) },
-    'expo-document-picker': { async getDocumentAsync() {
-      return { canceled: false, assets: [{ uri: 'file:///at-limit.m4a', name: 'at-limit.m4a', size }] };
-    } },
-  });
-  assert.deepEqual(await state.render(useImportAudio).importAudio(), { id: 'at-limit' });
-  seconds = 1400.001;
-  assert.equal(await state.render(useImportAudio).importAudio(), null);
-  assert.match(state.render(useImportAudio).error, /23 minutes 20 seconds/);
-  seconds = 1400;
-  size = 100 * 1024 * 1024 + 1;
-  assert.equal(await state.render(useImportAudio).importAudio(), null);
-  assert.match(state.render(useImportAudio).error, /100 MB/);
-  assert.equal(uploaded, 1);
+  await assert.rejects(uploadSession('fresh-token', { uri: 'blob:imported', name: 'clip.webm', type: 'audio/webm' }, {}), /Stop after inspecting request/);
 });
 
 test('native uploads preserve the supplied filename, MIME and bytes independently of the cache filename', async (t) => {
@@ -654,18 +566,20 @@ test('declining blocks recording and import; withdrawal still allows the stopped
   const { useImportAudio } = load('hooks/useImportAudio.ts', {
     react: importState.react, '@/auth/AuthContext': auth, '@/api/http': http,
     '@/privacy/aiConsent': privacy, '@/utils/timeFormat': { titleFromFilename: () => 'Conversation' },
-    '@/api/client': { async uploadSession() { uploads++; return { debrief: { id: 'imported' } }; } },
-    'expo-audio': { createAudioPlayer: () => ({ isLoaded: true, duration: 5, remove() { allowed = false; } }) },
+    '@/hooks/useRecordAudio': { useRecordAudio: () => ({ async enqueue() { uploads++; } }) },
+    '@/storage/pendingRecordings': { recordingId: () => 'imported' },
+    '@/utils/audioDuration': { async getAudioDuration() { allowed = false; return 5; } },
+    'expo-file-system': {},
     'expo-document-picker': { async getDocumentAsync() {
       picks++;
       return { canceled: false, assets: [{ uri: 'file:///clip.m4a', name: 'clip.m4a', size: 100 }] };
     } },
   });
-  assert.equal(await importState.render(useImportAudio).importAudio(), null);
+  assert.equal(await importState.render(useImportAudio).importAudio(), undefined);
   assert.equal(picks, 0);
   assert.equal(importState.render(useImportAudio).importing, false);
   allowed = true;
-  assert.equal(await importState.render(useImportAudio).importAudio(), null);
+  assert.equal(await importState.render(useImportAudio).importAudio(), undefined);
   assert.equal(picks, 1);
   assert.equal(uploads, 0); // Consent withdrawn while reading metadata prevents the import upload.
   assert.equal(importState.render(useImportAudio).error, null);

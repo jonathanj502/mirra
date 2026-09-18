@@ -158,8 +158,7 @@ export function HomeScreen() {
     : '';
 
   async function handleImport() {
-    const debrief = await importAudio();
-    if (debrief) setDebriefs((items) => [debrief, ...items.filter((item) => item.id !== debrief.id)]);
+    await importAudio();
   }
 
   async function handleRecord() {
@@ -219,7 +218,7 @@ export function HomeScreen() {
               <View key={recording.id} style={styles.pendingItem}>
                 <Body style={styles.pendingHint}>
                   {new Date(recording.startedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                  {' · '}{Math.ceil(recording.seconds)}s
+                  {' · '}{recording.seconds > 0 ? `${Math.ceil(recording.seconds)}s` : 'Duration checked during analysis'}
                   {'\n'}{uploadingId === recording.id ? 'Uploading and analyzing…' : recording.error || 'Waiting to upload'}
                 </Body>
                 <Pressable accessibilityRole="button" accessibilityLabel="Discard saved recording"

@@ -302,11 +302,13 @@ def _process_session(audio, started_at, client_duration_seconds, title, user_id,
             return _session_response(db, user_id, existing)
     content_type = (audio.content_type or "").split(";", 1)[0].strip().lower()
     if content_type not in SUPPORTED_AUDIO_TYPES:
-        raise HTTPException(status_code=415, detail="Unsupported audio type")
+        raise HTTPException(status_code=415, detail="Unsupported audio type. Choose M4A, MP3, WAV, WebM, AAC, or OGG.")
 
     audio_bytes = audio.file.read(MAX_AUDIO_BYTES + 1)
     if len(audio_bytes) > MAX_AUDIO_BYTES:
-        raise HTTPException(status_code=413, detail="Please choose an audio file under 100 MB.")
+        raise HTTPException(status_code=413, detail="Please choose an audio file of 100 MiB or smaller.")
+    if not audio_bytes:
+        raise HTTPException(status_code=422, detail="The audio file is empty. Choose a nonempty audio file.")
 
     logger.info("Session pipeline: reserving usage")
     reservation_month = check_and_increment(db, user_id)
