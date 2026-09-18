@@ -160,15 +160,39 @@ the phone was locked for five full minutes; **both the lock/save subcheck and
 full TF-6 remain PENDING** until clarified. The initial interpretation of that
 reply as a completed capture was corrected with integration and distribution.
 The user answered the duration/lock-time follow-up with "its good," without a
-numeric duration. Read-only USB copying of only the newest queued test clip is
+numeric duration. Read-only USB copying of only the newest queued test clip was
 planned for local duration/marker verification with Airplane Mode on/Wi-Fi off.
 Distribution confirmed the phone is paired and connected over wired USB, with
 Developer Mode/device services available. Automatic approval review rejected the
 saved-recording metadata query before execution because access to private
 recording metadata/audio needs explicit user permission; delegated instructions
-were not accepted as sufficient. Distribution requested that narrow permission.
-**No recording metadata or audio has been read/copied.** Preserve the queued
-original; no provider/backend upload is authorized by this local inspection step.
+were not accepted as sufficient. The user then explicitly approved the narrow
+local inspection in the distribution task, resolving that blocker.
+
+### Actual stopped-clip inspection — recorded 2026-09-18 02:16 UTC
+
+Distribution's read-only inspection found three completed saved recordings:
+**11.654966s, 10.493968s, and 106.996100s**. Only the newest/longest audio was
+copied, along with the queued manifests needed for identification. Its details:
+
+- Recording ID: `1789695530139-6wzy0iedzvs`.
+- Start time: `2026-09-18T01:38:50.139Z`.
+- Local copy: `/private/tmp/mirra-distribution-capture-review/recording-1789695530139-6wzy0iedzvs.m4a`.
+- Native `afinfo`: **106.996100 seconds**, AAC, stereo, 44.1 kHz.
+- Size: **1,436,648 bytes**.
+- SHA256: `69e9e5d4438cdd05cfb6c12a09b184433d87999f96434590c6a0fdceaf680cd7`.
+- Complete local FFmpeg decode: **PASS**, exit 0, no errors.
+- Private temporary directory mode 0700 and audio mode 0600; raw manifests and
+  audio remain outside the repository. Phone originals/queue were unchanged.
+  No app launch, phone writes, backend/provider requests, or uploads occurred.
+
+This is **1m47s**, so the **TF-6 five-minute duration requirement is NOT MET** by
+the inspected clip. Marker listening is also unconfirmed. The user was told the
+measured result and asked to start a new offline recording, say "before lock,"
+lock the phone, and confirm on the Mac. This task will time five full minutes
+after that confirmation, cue "during lock," then cue unlock/"after lock"/Stop.
+Keep all queued clips offline until candidate deployment and a usage baseline
+are ready. No provider/backend upload is authorized by local inspection.
 
 Production remains `https://mirra-backend-wp2b.onrender.com`, deployed commit
 `f8cf5d7196654aff3ff578bb5503668aa3ff15cd`, Free 512 MB, not this candidate.
@@ -182,7 +206,7 @@ separate evidence; complete microphone, local-save/restart, and lock checks offl
 | TF-3 | Real 30–60s capture, one saved nonempty debrief, history after relaunch, model Reflect reply | OPEN — device and working backend needed |
 | TF-4 | Two offline stopped clips survive restart; reconnect yields two debriefs and exactly +2 usage; expired token/account switch/consent recovery | OPEN — two clips survived offline restart (user-observed 2026-09-18 01:38 UTC); reconnect/usage/duplicate/token/account/consent checks pending |
 | TF-5 | Deny mic, responsive error/Settings action, grant in Settings, return and record/Stop/save without stuck state | PASS — user confirmed Settings recovery and one stopped clip saved offline on a4b3c14; recorded 2026-09-18 01:36 UTC |
-| TF-6 | At least 5 minutes locked with beginning/during/after-lock audio intact | OPEN — actual audio required |
+| TF-6 | At least 5 minutes locked with beginning/during/after-lock audio intact | OPEN — actual newest clip is 106.996100s, below 5 minutes; timed repeat and intact markers required |
 | TF-7 | Native 1400s auto-stop, one saved clip, beginning/middle/end audio, one debrief/history/Reflect result; equivalent at-limit import and over-limit rejection | OPEN — imports/provider checks coordinated separately |
 
 Additional native check: Expo resumes interrupted iOS recorders with
