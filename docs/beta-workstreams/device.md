@@ -70,7 +70,8 @@ All native, permission, network and auth boundaries in these hook tests are mock
 ## Hardware and provider status
 
 **TF-2 and TF-5 installed-device behavior PASS (user-observed on the Personal
-Team build). TF-1, TF-3, TF-4, TF-6, and TF-7 remain OPEN.**
+Team build). TF-6 local locked capture/audio check PASS; its debrief-delivery
+portion remains OPEN. TF-1, TF-3, TF-4, and TF-7 remain OPEN.**
 
 Phone confirmed by distribution's device inventory: **iPhone 13 (`iPhone14,5`),
 iOS 26.6.2 (23G90)**. The user replied "connected" in this task after cable,
@@ -208,13 +209,21 @@ local-inspection approval. It is a different recording from the 106.9961s clip:
 - Only that completed manifest/audio were copied. No app launch, phone writes,
   queue changes, auth-data access, backend/provider requests, or uploads occurred.
 
-The total saved-file duration exceeds five minutes. It does not alone establish
-how long the phone remained locked or whether all three speech markers survived.
-This task is presenting local playback for the user to confirm the before/during/
-after-lock phrases and at least five continuous locked minutes. **TF-6 remains
-OPEN** pending that evidence; delivery of those markers to a debrief is also
-untested. Keep all queued clips offline until candidate deployment and a usage
-baseline are ready. No provider/backend upload is authorized by local inspection.
+The local audio was presented for playback on the computer. The user confirmed
+the phone was continuously locked for at least five minutes (**"yes it was"**),
+then explicitly confirmed all three before/during/after-lock phrases were audible
+in playback (**"all heard"**). Recorded at **2026-09-18 03:08 UTC**:
+**TF-6 local locked capture/audio subcheck PASS**, combining the measured
+424.784399s file/full decode with the user's lock-time and listening observations.
+Delivery of those markers to a debrief remains untested, so the full end-to-end
+criterion is still OPEN. No assistant-timed interval is claimed.
+
+Next native capture check: remain offline, note the saved count, record until
+automatic stop at 23m20s with beginning/middle/end phrases, and confirm the queue
+increases by exactly one. Do not manually Stop. Then inspect the completed audio
+and verify all markers, stable queue count after relaunch, and actual duration.
+Keep all queued clips offline until candidate deployment and a usage baseline
+are ready. No provider/backend upload is authorized by local inspection.
 
 Production remains `https://mirra-backend-wp2b.onrender.com`, deployed commit
 `f8cf5d7196654aff3ff578bb5503668aa3ff15cd`, Free 512 MB, not this candidate.
@@ -228,7 +237,7 @@ separate evidence; complete microphone, local-save/restart, and lock checks offl
 | TF-3 | Real 30–60s capture, one saved nonempty debrief, history after relaunch, model Reflect reply | OPEN — device and working backend needed |
 | TF-4 | Two offline stopped clips survive restart; reconnect yields two debriefs and exactly +2 usage; expired token/account switch/consent recovery | OPEN — two clips survived offline restart (user-observed 2026-09-18 01:38 UTC); reconnect/usage/duplicate/token/account/consent checks pending |
 | TF-5 | Deny mic, responsive error/Settings action, grant in Settings, return and record/Stop/save without stuck state | PASS — user confirmed Settings recovery and one stopped clip saved offline on a4b3c14; recorded 2026-09-18 01:36 UTC |
-| TF-6 | At least 5 minutes locked with beginning/during/after-lock audio intact | OPEN — repeat file is 424.784399s and fully decodes; continuous lock interval, audible markers, and debrief delivery remain unverified |
+| TF-6 | At least 5 minutes locked with beginning/during/after-lock audio intact | Local capture/audio PASS — 424.784399s full decode, user confirms >=5min continuously locked and all 3 markers audible (2026-09-18 03:08 UTC); debrief delivery OPEN |
 | TF-7 | Native 1400s auto-stop, one saved clip, beginning/middle/end audio, one debrief/history/Reflect result; equivalent at-limit import and over-limit rejection | OPEN — imports/provider checks coordinated separately |
 
 Additional native check: Expo resumes interrupted iOS recorders with
