@@ -262,6 +262,40 @@ confirmed one new completed recording in addition to the three above.
   and before/during/after-lock markers still require confirmation. The
   device/capture task has the local clip and owns that verification.
 
+### Maximum-duration recording — same approved inspection scope
+
+The device/capture task relayed the user's observation that recording stopped
+at **23:20**, followed by five saved clips after an offline relaunch. The first
+file-read attempt could not reach the paired phone; after the user reconnected
+USB, inspection succeeded without launching Mirra.
+
+- The device listing actually contains **six unique completed manifests**: all
+  four prior recordings plus the two below. This observed count supersedes the
+  earlier user-reported five for queue accounting; no cause is inferred.
+- Maximum-test recording: `1789701357705-jgorzfemtal`, started at
+  **2026-09-18 03:15:57.705 UTC**; manifest modified at **03:39:18 UTC**.
+  The manifest reports **1399.9528344671203 seconds** and macOS `afinfo`
+  independently reports **1399.952834 seconds (23m19.953s)**, approximately
+  **0.047 seconds below 1400**.
+- **PASS (local file check):** **17,425,982 bytes**, matching the device listing;
+  AAC, stereo, 44.1 kHz. A complete local FFmpeg decode exited **0** with no
+  errors. Local audio:
+  `/private/tmp/mirra-distribution-capture-review/maximum-v2twgbgx/recording-1789701357705-jgorzfemtal.m4a`.
+  Sanitized summary: `selected-summary.json` beside it. Directory permissions
+  are **0700**, audio **0600**. SHA-256:
+  `d436585a196cbc1446379bddd335c37838684df5264f1021fca3c0b78e733ea2`.
+- Chronologically newest is a separate short recording,
+  `1789702768066-g44ul195j8`, started at **03:39:28.066 UTC**, manifest modified
+  at **03:39:30 UTC**. Its manifest reports **2.436643990929705 seconds**;
+  the listed audio size is **84,995 bytes**. Its audio was not copied or decoded.
+- Only the two new manifests needed to identify the maximum run and that one
+  maximum-test audio file were copied. Phone originals and queue entries were
+  untouched; no app launch, auth-data access, backend/provider calls, or uploads
+  occurred. Private audio and manifests remain outside Git.
+- This establishes a saved, decodable file near the requested native maximum.
+  The device/capture task owns marker playback and final acceptance; this local
+  check does not establish uploaded processing or a completed debrief.
+
 ## TestFlight work still required
 
 1. User chooses when to enroll in the paid Apple Developer Program and completes
