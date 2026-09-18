@@ -1,8 +1,14 @@
 # Mirra release record
 
-Updated September 16, 2026. **Prelaunch; not approved for public app distribution.** This record distinguishes implemented controls from external setup and physical-device evidence. A working web preview is not an iOS release test.
+Updated September 18, 2026. **Prelaunch; not approved for public app distribution.** This record distinguishes implemented controls from external setup and physical-device evidence. A working web preview is not an iOS release test.
 
 As of September 16, website copy uses the owner's explicit assumption that both iPhone and Android apps are available (`website/release.json` → `iphoneAvailable` and `androidAvailable`). This is a copy premise, not verified store-release evidence. Store destinations remain unverified, so `appStoreUrl` and `playStoreUrl` stay empty and no download links are invented. Operator/privacy approval, web deletion and backend readiness retain their actual configuration. Apple's September 15 public US lookup for `com.mirra.app` returned an unrelated app, Mirra Support (`id6755451137`); confirm an owned bundle identifier and listing before a native release. Do not link to that unrelated product.
+
+The user selected main `64db03b` for the combined beta. Current integration and
+physical-device gates are tracked in [testflight-acceptance.md](testflight-acceptance.md),
+with earlier-work disposition in [reconciliation.md](beta-workstreams/reconciliation.md)
+and current infrastructure evidence in [rollout.md](beta-workstreams/rollout.md).
+Dated evidence below applies only to its stated source and environment.
 
 ## What is prepared
 
@@ -51,12 +57,12 @@ The native-build and published-website evidence below predates the September 15 
 | Requirement | State and reason |
 |---|---|
 | Release schema migrations | The September 14 tombstone, September 15 goal and September 16 long-recording migrations are prepared but not applied to the hosted project. Available service-role credentials access application data, not SQL administration. No linked database credential or Supabase management session was available. `/ready` fails until the migration is present. |
-| Production API hosting | No authenticated hosting account or production HTTPS endpoint was available. `backend/Dockerfile` is built by CI. The current app development address is a LAN address and cannot be shipped. |
+| Production API hosting | The existing Render HTTPS service still runs old source `f8cf5d7` on Free/512 MB with auto-deploy off. Production public app configuration exists. Main requires updated build/readiness settings, a durable private volume, settled backup retention and measured capacity. See the rollout assessment. |
 | Email delivery and redirects | Supabase public configuration is readable, but production SMTP, delivery, redirect allowlists and recovery need an authenticated project configuration session and an actual inbox round trip. These are not verified. Legacy username-only accounts use non-deliverable local addresses and need a verified real-email migration before they can recover a lost password. |
 | Operator and private support | The legal operator, business contact, release territories, support mailbox, retention schedule and processor agreements are not established by the repository. The website deliberately leaves them unconfirmed. Do not turn `privacyApproved` on based only on these draft texts. |
-| Apple Developer / App Store Connect | No signed-in account, development team, distribution certificate, provisioning profile, App Store app record, review access or paid enrollment was available. Ownership/availability of `com.mirra.app` is unverified. |
-| EAS account | No Expo authentication or project ID was configured. EAS profiles are prepared; no signed build or TestFlight upload exists. |
-| Physical-device testing | No connected iPhone/Android device was available. Background/locked-screen capture, phone-call interruption, Bluetooth, permission denial, and recovery need device evidence. An unsigned simulator build cannot establish these behaviors. |
+| Apple Developer / App Store Connect | A free Personal Team signed and installed earlier source `a4b3c14` using the approved device-only bundle ID. Paid enrollment, App Store Connect distribution and TestFlight remain unverified; `com.mirra.app` was unavailable to that team. Settle an owned release identifier before distribution. |
+| EAS account | Verified project `@jjiang25/mirra` and project ID are retained in the combined configuration. No new combined EAS distribution build or TestFlight upload is verified. |
+| Physical-device testing | Earlier source `a4b3c14` passed sign-in, microphone recovery, offline saved-clip restart, locked capture/audio and the old duration auto-stop on iPhone 13 / iOS 26.6.2. Repeat on the combined build; six queued clips must survive an overlay update. New interruption, resumable upload and end-to-end gates remain open. |
 | Final store assets | The icon and copy are prepared. Screenshots must be captured from the actual release build after a successful authenticated flow. The website's illustrative phone card is not an App Store screenshot. |
 | Dependency review | Compatible fixes removed the critical npm advisory. Remaining transitive advisories include build-tool image parsers and URI/UUID utilities. See the dependency notes below; the audit is not clean. |
 

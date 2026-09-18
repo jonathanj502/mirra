@@ -38,11 +38,14 @@ checks, import validation and production build safeguards. See
 TypeScript, backend tests (170), four real PostgreSQL transaction checks,
 all-platform prebuild/export and website checks (5) passed at that snapshot.
 A subsequent focused transcription cleanup closes upload buffers on every exit;
-34 diarization checks pass. Final independent review and combined CI are pending.
+34 diarization checks and the combined 182-test backend suite pass. Review also
+corrected stale Home limit copy and restored main's MIME-extension fallback;
+50 app checks and TypeScript pass. Final review and combined CI are pending.
 
 Infrastructure evidence is in [the rollout assessment](beta-workstreams/rollout.md).
-Production schema and Render settings remain unchanged. Initial full-day memory
-results need a corrected streaming mock and exact deployment-runtime verification.
+Production schema and Render settings remain unchanged. The corrected streaming-mock full-day probe passes all 144 chunks at 2 GiB
+in a cached Python 3.14 runtime after upload-buffer cleanup. It uses mocked AI/VAD;
+exact deployment-runtime and live sustained-capacity verification remain open.
 
 ## Earlier beta scope and evidence
 

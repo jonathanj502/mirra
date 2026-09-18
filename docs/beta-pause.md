@@ -11,16 +11,18 @@ removed and must not be deployed.
 
 - Reconciled validation: 50 app checks, TypeScript, 170 backend tests, four real
   PostgreSQL transaction tests, all-platform Expo prebuild/export, website build
-  and five website checks pass. Native compilation and final combined CI remain open.
+  and five website checks pass. The buffer-cleanup follow-up passes 182 backend tests. Native compilation and final combined CI remain open.
 - Two issue worktrees are active for reconciliation and rollout. Root owns review,
   integration and shared ledgers. No production changes or purchases were made.
 - Production and the installed phone are still older revisions. Preserve all six
   queued phone clips and their owner IDs during an overlay upgrade. Observe usage
   before reconnecting; six clips exceed the five-debrief cap even at zero usage.
 - New schema, Render build configuration, persistent storage/retention and measured
-  capacity must be resolved before deployment. Three ten-minute 2-GiB probes pass;
-  a full-day OOM remains inconclusive for production because of mock/SDK retention.
-  Subsequent diagnostics hit a full local disk and Docker I/O errors.
+  live capacity must be resolved before deployment. Three ten-minute 2-GiB probes
+  pass. After closing upload buffers and correcting mock retention, one full-day
+  probe passed all 144 chunks at 2 GiB in the cached Python 3.14 runtime.
+  Exact deployment-image and sustained production checks remain open. Disk-full
+  Docker failures were recovered by clearing only task caches/containers.
 - Every final production/device/TestFlight gate remains open in
   [the current acceptance ledger](testflight-acceptance.md). Historical phone and
   provider results below do not validate the selected architecture.
