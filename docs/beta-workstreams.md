@@ -89,8 +89,8 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
 - Integrated unsigned iPhone Release build: **PASS**, exact source `a4b3c14`,
   Xcode exit 0. Preserved at
   `/private/tmp/mirra-distribution-artifacts/a4b3c14/Mirra.app`; identity and hashes
-  are recorded in the distribution evidence. Signing, install and device checks
-  remain open. Subsequent integration edits only record evidence.
+  are recorded in the distribution evidence. The subsequent signed install/launch
+  is recorded below; source code is unchanged.
 - Later physical preparation: signed Personal Team build installed and launched
   on iPhone 13 / iOS 26.6.2; user confirmed “Mirra opens.” Approved device-only
   ID `com.mirra.personal.dm85xzns55`; production ID unchanged. Developer Mode and
@@ -98,7 +98,7 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
   owns the pending disconnected launch/auth checks; no full gate is closed.
 - No production migration, deployment, push or purchase. Independent pre-push
   review, actual Supabase/PostgREST validation, integrated real-provider memory,
-  sustained load, signed native build and physical checks remain open.
+  sustained load, TestFlight distribution and the remaining physical checks stay open.
 - Worktrees and issue branches remain available for the user; none were deleted.
 
 ## Shared resources and boundaries
