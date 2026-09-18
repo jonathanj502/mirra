@@ -69,8 +69,8 @@ All native, permission, network and auth boundaries in these hook tests are mock
 
 ## Hardware and provider status
 
-**Personal Team installation and USB-connected launch passed. Complete TF-1
-through TF-7 gates remain OPEN.**
+**TF-2 and TF-5 installed-device behavior PASS (user-observed on the Personal
+Team build). TF-1, TF-3, TF-4, TF-6, and TF-7 remain OPEN.**
 
 Phone confirmed by distribution's device inventory: **iPhone 13 (`iPhone14,5`),
 iOS 26.6.2 (23G90)**. The user replied "connected" in this task after cable,
@@ -116,12 +116,42 @@ launch PASS** for source `a4b3c14dfaa8fa5950026aae173b901439ad02f1`:
   that the trust blocker was resolved. No further signing approval is needed for
   the already authorized operation.
 
-This task has asked the user to disconnect USB, force-close Mirra, reopen it from
-its icon, and report sign-in/home/error as the first TF-2 subcheck. That reply,
-production sign-in, authenticated reads, cellular access, and session restoration
-remain pending. Connected launch alone does not pass TF-2. Personal Team delivery
-does not pass the TestFlight installation gate. Distribution retains native
-signing/install ownership for any subsequent integrated candidate.
+After this task asked the user to disconnect USB, force-close Mirra, and reopen
+it from its icon, the user reported: **"i see the sign in screen. the signin
+works"**. Independent launch to sign-in and successful sign-in are therefore
+**PASS (user-observed)** on the installed candidate. After the next instruction
+to turn Wi-Fi off, leave cellular on, force-close/reopen, verify the same account
+is restored, and open Profile and conversation history without errors, the user
+reported **"everything is good"**. Recorded at **2026-09-18 01:21 UTC**:
+**TF-2 installed-device behavior PASS (user-observed)**, including independent
+launch, sign-in, same-account restore, and authenticated cellular reads. This
+checks the installed candidate's auth/read path against the current production
+backend; it does not validate candidate audio processing or change deployment.
+Personal Team delivery does not pass the TestFlight installation gate.
+Distribution retains native signing/install ownership for subsequent candidates.
+
+For TF-5, the user followed the offline microphone-denial check and reported
+**"it shows open microphone settings"**. After instructions to tap that action,
+enable Microphone in Settings, return to Mirra, record about ten seconds of
+speech, and Stop with Airplane Mode on/Wi-Fi off, the user confirmed
+**"it does say 1 recording saved on this device"**. Recorded at
+**2026-09-18 01:36 UTC**: **TF-5 PASS (user-observed)** for denial, Settings
+recovery, responsive recording/Stop, and one local saved row. This establishes
+permission recovery/local saving, not the clip's audio completeness or an upload.
+
+After instructions to remain offline, record/Stop a second short clip, verify
+two saved recordings, then force-close/reopen, the user confirmed **"yes both
+are still saved"**. Recorded at **2026-09-18 01:38 UTC**: **TF-4 offline restart
+subcheck PASS (user-observed)**. Reconnect uploads, duplicate prevention, usage
+deltas, account switching, and token-expiry checks remain pending; TF-4 is OPEN.
+
+Next independent TF-6 check requested: remain offline, start a third capture,
+speak "before lock," keep the phone locked for at least five minutes and speak
+"during lock" partway through, then unlock, speak "after lock," and Stop. Ask
+for three saved rows and newest duration of at least 300s. Actual saved audio
+must still be checked for all three markers before TF-6 can pass. Reconnect and
+candidate-backend validation are being coordinated with integration; no upload
+or usage result has been observed from these physical clips yet.
 
 Production remains `https://mirra-backend-wp2b.onrender.com`, deployed commit
 `f8cf5d7196654aff3ff578bb5503668aa3ff15cd`, Free 512 MB, not this candidate.
@@ -131,10 +161,10 @@ separate evidence; complete microphone, local-save/restart, and lock checks offl
 
 | Gate | Required physical evidence | Status |
 | --- | --- | --- |
-| TF-2 | Installed build cold launch, public production auth, restored correct account/history after force-quit, cellular read | OPEN — installed/connected launch passed; independent launch/auth/restore/cellular checks pending |
+| TF-2 | Installed build cold launch, public production auth, restored correct account/history after force-quit, cellular read | PASS — user-observed on installed a4b3c14 Personal Team build, iPhone 13/iOS 26.6.2; recorded 2026-09-18 01:21 UTC |
 | TF-3 | Real 30–60s capture, one saved nonempty debrief, history after relaunch, model Reflect reply | OPEN — device and working backend needed |
-| TF-4 | Two offline stopped clips survive restart; reconnect yields two debriefs and exactly +2 usage; expired token/account switch/consent recovery | OPEN — device and provider evidence needed |
-| TF-5 | Deny mic, responsive error/Settings action, grant in Settings, return and record/Stop/save without stuck state | OPEN — mocked regression only |
+| TF-4 | Two offline stopped clips survive restart; reconnect yields two debriefs and exactly +2 usage; expired token/account switch/consent recovery | OPEN — two clips survived offline restart (user-observed 2026-09-18 01:38 UTC); reconnect/usage/duplicate/token/account/consent checks pending |
+| TF-5 | Deny mic, responsive error/Settings action, grant in Settings, return and record/Stop/save without stuck state | PASS — user confirmed Settings recovery and one stopped clip saved offline on a4b3c14; recorded 2026-09-18 01:36 UTC |
 | TF-6 | At least 5 minutes locked with beginning/during/after-lock audio intact | OPEN — actual audio required |
 | TF-7 | Native 1400s auto-stop, one saved clip, beginning/middle/end audio, one debrief/history/Reflect result; equivalent at-limit import and over-limit rejection | OPEN — imports/provider checks coordinated separately |
 
@@ -155,6 +185,14 @@ decoded audio, so a displayed duration alone cannot prove the native boundary
 or complete audio. Capture preserves the original and falls back if metadata
 cannot be read; imports owns its boundary handling. Temporary fixtures/logs:
 `/private/tmp/mirra-imports-8b65`.
+
+## UI follow-up requested by the user — deferred
+
+- [ ] Simplify the saved-recording section on Record. On reaching **"1 recording
+  saved on this device"**, the user reported that the phone shows too much text
+  and asked to keep a note for a future simplification. Reduce the copy around
+  that state while keeping the saved status and useful actions clear. No UI
+  implementation change was requested for this test session.
 
 ## Device handoff: one check at a time
 
