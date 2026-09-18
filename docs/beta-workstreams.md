@@ -106,10 +106,13 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
   On 2026-09-18 03:08 UTC the user confirmed five continuous minutes locked and
   all three spoken markers audible. **Local locked capture/audio PASS**; lock
   time and listening are user-observed, not assistant-timed. Debrief delivery
-  remains unverified. For the next 23m20s test, the user reports automatic stop
-  exactly at 23:20 and five saved clips after offline force-close/reopen. Actual
-  file duration/decode, manifest count and beginning/middle/end markers are pending;
-  these observations do not close TF-7.
+  remains unverified. The user reports automatic stop exactly at 23:20 and saved
+  clips surviving offline relaunch. Read-only inspection measured the maximum
+  clip at **1399.952834s**, 17,425,982 bytes; full local decode passed. Six completed
+  manifests are present, including a later separate 2.436644s clip; this supersedes
+  the earlier reported count of five. Beginning/middle/end listening remains
+  pending, and TF-7 stays open. Reconnect planning must account for all six clips,
+  observed usage and the five-debrief monthly cap without discarding originals.
   Originals remain queued and unchanged; no backend/provider upload occurred.
 - No production migration, deployment, push or purchase. Independent pre-push
   review, actual Supabase/PostgREST validation, integrated real-provider memory,
