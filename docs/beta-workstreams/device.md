@@ -110,6 +110,16 @@ to integration and distribution; no native dependency patch was made here.
 Also verify auto-stop saves while locked or on return before any force-quit;
 JS callback/queue execution under iOS suspension is not proven by unit tests.
 
+Import workstream reported a local macOS AVPlayer readiness check on synthetic
+1400s fixtures: AAC (44.1 kHz, stereo, 128 kbps) metadata read
+`1399.975328798186s`, WAV `1400.0s`, and a gapless MP3 that the backend decodes
+to 1400s read `1400.076s`; WebM failed to load. This is reported desktop codec
+evidence, not iPhone capture evidence. File metadata can differ slightly from
+decoded audio, so a displayed duration alone cannot prove the native boundary
+or complete audio. Capture preserves the original and falls back if metadata
+cannot be read; imports owns its boundary handling. Temporary fixtures/logs:
+`/private/tmp/mirra-imports-8b65`.
+
 ## Device handoff: one check at a time
 
 First, once distribution supplies the build, use a disposable beta account and
