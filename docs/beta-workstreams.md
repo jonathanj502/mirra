@@ -2,8 +2,36 @@
 
 The user requested one independent Codex task and worktree per remaining issue,
 with eventual integration. This supersedes the earlier implementation pause.
-The product maximum remains **23 minutes 20 seconds for capture and import**;
-longer recordings are deferred. Keep the existing design and use minimal fixes.
+The original beta used a 23m20s maximum. The user subsequently selected the newer
+main-branch implementation, including day-long support, as recorded below.
+Keep the current upstream design and use minimal fixes.
+
+## Release work resumed — 2026-09-18
+
+The user authorized proceeding with review/GitHub backup, backend rollout,
+remaining validation and TestFlight preparation in parallel worktrees, then
+merging completed work. The clean starting candidate is `002e2ea`.
+
+Fresh GitHub inspection found newer `origin/main` at `64db03b`, including
+resumable day-long recording jobs, a disk-backed chunked pipeline, completion
+and cancellation RPCs, and generated Expo native projects. The user explicitly
+selected this newer version and requested reassessing which earlier work remains
+necessary. Use main as canonical, retain only still-needed safeguards, and avoid
+carrying obsolete 1400s limits, whole-request processing or duplicate accounting.
+The old 23m20s device evidence does not validate the newer architecture.
+
+| Task | ID | Branch / worktree | Ownership |
+| --- | --- | --- | --- |
+| Mirra release — reconcile upstream and beta fixes | `01a0b2d7-775c-7313-9832-b21542e7baa7` | `codex/beta-reconciliation`, `6258/mirra` | Source/config merge, minimal confirmed fixes and combined verification; `reconciliation.md` evidence |
+| Mirra release — hosting and database rollout | `01a0b2d7-816c-72b1-830a-6553b704ae2d` | `codex/beta-deployment-readiness`, `ebf0/mirra` | Read-only infrastructure/migration discovery, capacity and rollout plan; `rollout.md` evidence |
+
+Root owns shared ledgers, integration, independent pre-push review and GitHub
+updates. Worktrees are under `/Users/jonathanj/.codex/worktrees/`. The first
+critic pass reviews fixed snapshot `002e2ea`; the final reconciled candidate
+requires a subsequent review before pushing. Draft PR #12 is still open on
+`codex/testflight-beta` at `5131485`. No production mutation or purchase has
+been made in this resumed phase. Keep phone clips offline pending a coordinated
+backend and usage-baseline check.
 
 ## Shared base and integration
 
@@ -34,7 +62,7 @@ Tasks may touch separate sections of an existing shared test/source file. Keep
 diffs narrow, coordinate interface changes, and resolve conflicts during integration
 without dropping either task's tests. Do not independently rewrite shared modules.
 
-## Worktree status
+## Prior worktree cleanup
 
 All six confirmed initialization at the shared `773d35f` implementation base.
 Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
@@ -137,8 +165,8 @@ not changed.
   sustained load, TestFlight distribution and the remaining physical checks stay open.
 - User-requested cleanup removed all six merged issue worktrees. The first four
   local branches were removed; device/distribution branch references remain.
-  Only the main integration checkout remains; all merged commits and evidence
-  are preserved.
+  Only the main integration checkout remained at cleanup; all merged commits and
+  evidence were preserved. The resumed release worktrees are listed above.
 
 ## Shared resources and boundaries
 
