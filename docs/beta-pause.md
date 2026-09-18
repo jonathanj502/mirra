@@ -4,8 +4,9 @@
 
 The user requested wrapping up the session. All six issue implementations and
 their latest evidence are merged locally into `codex/beta-integration-2026-09-17`.
-The integration checkout and retained device/distribution worktrees are clean;
-both remaining tasks are idle. The code matches installed source `a4b3c14`;
+The integration checkout is clean; all six issue worktrees have been removed,
+with device/distribution branch references retained. Both tasks are idle.
+The code matches installed source `a4b3c14`;
 subsequent changes are documentation only. **The TestFlight beta is not ready.**
 
 - **Integrated checks:** 44 app tests, TypeScript, 187 backend tests, and a
@@ -23,10 +24,12 @@ subsequent changes are documentation only. **The TestFlight beta is not ready.**
   the user-confirmed accidental 2.4s capture. All phone originals remain saved
   offline; local inspection copies remain outside Git. Plan reconnect testing
   around observed usage and the five-debrief cap; do not discard clips implicitly.
-- **Cleanup:** four completed implementation worktrees/local branches were
-  removed at the user's request after checking they were merged. Device `3a46`
-  and distribution `7411` remain, along with integration and the historical pause
-  branch. All commits remain in integration history. See the
+- **Cleanup:** all six issue worktrees were removed at the user's request after
+  checking they were clean and merged. The first four local branches were removed;
+  device/distribution, integration and the historical pause branch remain.
+  Local Xcode/Expo settings were preserved in the main checkout's ignored
+  `app/.expo/worktree-cleanup-2026-09-18-distribution/` directory. All commits remain
+  in integration history. See the
   [workstream index](beta-workstreams.md) for exact paths and commits.
 - **External state:** no new push, production deployment, production migration,
   hosting purchase or paid Apple enrollment occurred during this parallel work.
@@ -51,7 +54,7 @@ subsequent changes are documentation only. **The TestFlight beta is not ready.**
    bundle identifier, App Store Connect processing and TestFlight installation
    remain outstanding. Repeat release checks on that build. The current free
    device profile expires **2026-09-25 01:09:36 UTC** and can be renewed by
-   rebuilding/reinstalling through the retained distribution worktree.
+   rebuilding/reinstalling from integration or a recreated distribution worktree.
 
 ## Historical investigation checkpoint — 2026-09-17
 

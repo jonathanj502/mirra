@@ -45,16 +45,23 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
 | Transcription | `01a0b1d5-aa8e-70b3-a3a3-1e613af3f951` | `codex/beta-transcription-1400` | `b07f/mirra` | Worktree and local branch removed after integration |
 | Imports | `01a0b1d5-b7e6-7f72-a84a-7f78482db974` | `codex/beta-imports` | `8b65/mirra` | Worktree and local branch removed after integration |
 | Reliability | `01a0b1d5-c243-7e10-8ce5-8776f5f97780` | `codex/beta-reliability` | `0f48/mirra` | Worktree and local branch removed after integration |
-| Device | `01a0b1d5-d76c-76c0-9ac4-e499b15bdc2a` | `codex/beta-device-capture` | `3a46/mirra` | Retained for remaining device checks |
-| Distribution | `01a0b1d5-ee26-7bb3-a253-c4c421279434` | `codex/beta-distribution-2026-09-17` | `7411/mirra` | Retained for signing/distribution work |
+| Device | `01a0b1d5-d76c-76c0-9ac4-e499b15bdc2a` | `codex/beta-device-capture` | `3a46/mirra` | Worktree removed; branch retained |
+| Distribution | `01a0b1d5-ee26-7bb3-a253-c4c421279434` | `codex/beta-distribution-2026-09-17` | `7411/mirra` | Worktree removed; branch retained |
 
 At the user's request on 2026-09-18, device removed the four completed implementation
 worktrees and their local branches after verifying clean checkouts and that their
 heads (`0f7adec`, `a907631`, `5a3ee41`, `108e07c`) were ancestors of integration
 `39b1538`. Normal `git worktree remove` and `git branch -d` were used without force.
-All commits remain in integration history. The main integration checkout and the
-two worktrees marked retained above remain available; phone recordings and local
-audio/build artifacts were not changed.
+All commits remain in integration history. At the user's subsequent cleanup
+request, the device and distribution worktrees were also removed without force,
+after confirming clean checkouts, idle tasks and both heads merged into `1353d64`.
+Their branch references remain available; only the main integration checkout
+is registered as a worktree. Local Xcode/Expo settings were preserved under
+`app/.expo/worktree-cleanup-2026-09-18-distribution/` (ignored by Git); production
+environment configuration already had an identical copy in the main checkout.
+Generated dependencies/build caches in the removed worktrees were cleaned up.
+Phone recordings and separately preserved temporary audio/build artifacts were
+not changed.
 
 ### Coordinated dependencies
 
@@ -128,9 +135,10 @@ audio/build artifacts were not changed.
 - No production migration, deployment, push or purchase. Independent pre-push
   review, actual Supabase/PostgREST validation, integrated real-provider memory,
   sustained load, TestFlight distribution and the remaining physical checks stay open.
-- User-requested cleanup removed the four merged implementation worktrees and
-  local branches listed above. Integration, device and distribution checkouts
-  remain; all merged commits and recorded evidence are preserved.
+- User-requested cleanup removed all six merged issue worktrees. The first four
+  local branches were removed; device/distribution branch references remain.
+  Only the main integration checkout remains; all merged commits and evidence
+  are preserved.
 
 ## Shared resources and boundaries
 
