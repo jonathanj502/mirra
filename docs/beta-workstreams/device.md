@@ -139,9 +139,19 @@ speech, and Stop with Airplane Mode on/Wi-Fi off, the user confirmed
 recovery, responsive recording/Stop, and one local saved row. This establishes
 permission recovery/local saving, not the clip's audio completeness or an upload.
 
-Next TF-4 subcheck requested: remain offline, record/Stop a second short clip,
-verify two saved recordings, force-close/reopen, and confirm both remain. The
-physical restart/reconnect/usage/account/token-expiry checks remain pending.
+After instructions to remain offline, record/Stop a second short clip, verify
+two saved recordings, then force-close/reopen, the user confirmed **"yes both
+are still saved"**. Recorded at **2026-09-18 01:38 UTC**: **TF-4 offline restart
+subcheck PASS (user-observed)**. Reconnect uploads, duplicate prevention, usage
+deltas, account switching, and token-expiry checks remain pending; TF-4 is OPEN.
+
+Next independent TF-6 check requested: remain offline, start a third capture,
+speak "before lock," keep the phone locked for at least five minutes and speak
+"during lock" partway through, then unlock, speak "after lock," and Stop. Ask
+for three saved rows and newest duration of at least 300s. Actual saved audio
+must still be checked for all three markers before TF-6 can pass. Reconnect and
+candidate-backend validation are being coordinated with integration; no upload
+or usage result has been observed from these physical clips yet.
 
 Production remains `https://mirra-backend-wp2b.onrender.com`, deployed commit
 `f8cf5d7196654aff3ff578bb5503668aa3ff15cd`, Free 512 MB, not this candidate.
@@ -153,7 +163,7 @@ separate evidence; complete microphone, local-save/restart, and lock checks offl
 | --- | --- | --- |
 | TF-2 | Installed build cold launch, public production auth, restored correct account/history after force-quit, cellular read | PASS — user-observed on installed a4b3c14 Personal Team build, iPhone 13/iOS 26.6.2; recorded 2026-09-18 01:21 UTC |
 | TF-3 | Real 30–60s capture, one saved nonempty debrief, history after relaunch, model Reflect reply | OPEN — device and working backend needed |
-| TF-4 | Two offline stopped clips survive restart; reconnect yields two debriefs and exactly +2 usage; expired token/account switch/consent recovery | OPEN — device and provider evidence needed |
+| TF-4 | Two offline stopped clips survive restart; reconnect yields two debriefs and exactly +2 usage; expired token/account switch/consent recovery | OPEN — two clips survived offline restart (user-observed 2026-09-18 01:38 UTC); reconnect/usage/duplicate/token/account/consent checks pending |
 | TF-5 | Deny mic, responsive error/Settings action, grant in Settings, return and record/Stop/save without stuck state | PASS — user confirmed Settings recovery and one stopped clip saved offline on a4b3c14; recorded 2026-09-18 01:36 UTC |
 | TF-6 | At least 5 minutes locked with beginning/during/after-lock audio intact | OPEN — actual audio required |
 | TF-7 | Native 1400s auto-stop, one saved clip, beginning/middle/end audio, one debrief/history/Reflect result; equivalent at-limit import and over-limit rejection | OPEN — imports/provider checks coordinated separately |
