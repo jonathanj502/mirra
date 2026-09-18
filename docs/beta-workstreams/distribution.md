@@ -129,8 +129,25 @@ agreements, connect/unlock/trust the phone, and enable Developer Mode. Then sele
 Personal Team with automatic signing, use the **Release** run configuration,
 and install. No paid enrollment is required for this route. Apple's Personal
 Team provisioning expires after seven days; renew by rebuilding/reinstalling.
-The prepared workspace is open in Xcode. Final observed device inventory still
-contained no iPhone and no valid local signing identity.
+The prepared workspace is open in Xcode. Before the connection handoff below,
+the device inventory contained no iPhone and no valid local signing identity.
+
+### Connected phone — signing pending
+
+The user subsequently confirmed the phone was connected. `devicectl` verified
+an **iPhone 13 (iPhone14,5), iOS 26.6.2 (23G90)**, paired over USB with an active
+tunnel. **Developer Mode was disabled**, so DDI services were unavailable.
+The user was asked to enable Developer Mode, restart, unlock and confirm it.
+There were still **0 valid signing identities**.
+
+The prepared Xcode command targeted this phone and the existing free Personal
+Team, using automatic signing, `-allowProvisioningUpdates` and
+`-allowProvisioningDeviceRegistration`. Automatic approval review rejected it
+before execution because exact account/device registration and provisioning
+access needed explicit user approval; it also noted disabled Developer Mode.
+The user was asked to approve free device registration, development certificate,
+provisioning profile, signing and installation. No signing mutation occurred.
+Installation/launch and all physical/TestFlight gates remain unverified.
 
 Until an installed app is cold-launched with the Mac disconnected, this does
 not prove standalone launch. Capture, permission recovery, screen-lock behavior,
