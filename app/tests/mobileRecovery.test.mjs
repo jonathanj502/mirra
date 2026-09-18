@@ -46,6 +46,7 @@ function hooks() {
 
 const auth = { useAuth: () => ({ accessToken: 'test-token', user: { id: 'test-user' } }) };
 const consentGranted = { requestAIConsent: async () => true };
+const durationUnavailable = { async getAudioDuration() { throw new Error('Metadata unavailable'); } };
 const http = load('api/http.ts', { '@/config/env': { env: { backendUrl: 'http://test.invalid' } } });
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
@@ -202,6 +203,7 @@ test('recording saves before upload, allows another offline clip, and retains th
       if (diskFull) throw new Error('Storage full');
     } }) },
     '@/privacy/aiConsent': consentGranted,
+    '@/utils/audioDuration': durationUnavailable,
     'expo-audio': {
       AudioModule: { requestRecordingPermissionsAsync: async () => ({ granted: true }) },
       setAudioModeAsync: async () => {}, RecordingPresets: { HIGH_QUALITY: {} },
@@ -441,10 +443,12 @@ test('native interruptions do not force resume; notification stop retains one cl
   let listener;
   let starts = 0;
   let stops = 0;
+  let fileSeconds = 7.5;
   let status = { durationMillis: 0, isRecording: false, canRecord: false };
   const recorder = {
-    uri: null,
-    async prepareToRecordAsync() { this.uri = `file:///clip-${starts + 1}.m4a`; },
+    uri: 'file:///initial.m4a',
+    // iOS reuses the old file unless preparation receives recording options.
+    async prepareToRecordAsync(options) { if (options) this.uri = `file:///clip-${starts + 1}.m4a`; },
     record(options) {
       assert.equal(options.forDuration, 1400);
       starts++; status = { durationMillis: 0, isRecording: true, canRecord: true };
@@ -460,6 +464,10 @@ test('native interruptions do not force resume; notification stop retains one cl
     react: { ...state.react, useEffect: effect => effects.push(effect) },
     'react-native': { Platform: { OS: 'android' } },
     '@/auth/AuthContext': { useAuth: () => ({ user: { id: account } }) }, '@/api/http': http, '@/privacy/aiConsent': consentGranted,
+    '@/utils/audioDuration': { async getAudioDuration() {
+      if (fileSeconds === null) throw new Error('Metadata unavailable');
+      return fileSeconds;
+    } },
     '@/storage/pendingRecordings': { recordingId: () => `recording-${starts}` },
     './usePendingRecordings': { usePendingRecordings: () => ({ async enqueue(clip) { saved.push(clip); } }) },
     'expo-audio': {
@@ -479,6 +487,7 @@ test('native interruptions do not force resume; notification stop retains one cl
   status = { durationMillis: 7500, isRecording: false, canRecord: true };
   render(); // A phone call has paused the recorder; Expo owns its eventual resume.
   assert.equal(starts, 1);
+  assert.equal(render().isRecordingPaused, true);
   const completed = { isFinished: true, hasError: false, url: recorder.uri };
   status = { durationMillis: 0, isRecording: false, canRecord: false };
   account = 'other';
@@ -497,8 +506,10 @@ test('native interruptions do not force resume; notification stop retains one cl
   assert.equal(render().hasUnsavedRecording, false);
 
   await render().startRecording();
+  assert.notEqual(recorder.uri, completed.url, 'Each iOS capture must use a fresh native file');
   listener(completed); // A late event for the previous file cannot stop the new clip.
   assert.equal(render().isRecording, true);
+  assert.equal(render().isRecordingPaused, false);
   listener({ isFinished: true, hasError: true, url: null, error: 'Microphone disconnected' });
   assert.equal(render().isRecording, false);
   assert.equal(render().hasUnsavedRecording, false);
@@ -506,6 +517,7 @@ test('native interruptions do not force resume; notification stop retains one cl
 
   await render().startRecording();
   status = { durationMillis: 2500, isRecording: true, canRecord: true };
+  fileSeconds = 2.5;
   await render().stopRecording();
   listener({ isFinished: true, hasError: false, url: recorder.uri });
   assert.equal(render().hasUnsavedRecording, false);
@@ -520,8 +532,11 @@ test('native interruptions do not force resume; notification stop retains one cl
   assert.match(render().error, /microphone stopped unexpectedly/);
 
   await render().startRecording();
-  status = { durationMillis: 1400000, isRecording: true, canRecord: true };
+  status = { durationMillis: 600000, isRecording: true, canRecord: true };
   render();
+  // No JS polls while locked; iOS resets native duration before delivering finish.
+  status = { durationMillis: 0, isRecording: false, canRecord: false };
+  fileSeconds = 1400;
   const limitFinished = { isFinished: true, hasError: false, url: recorder.uri };
   listener(limitFinished);
   listener(limitFinished);
@@ -530,6 +545,93 @@ test('native interruptions do not force resume; notification stop retains one cl
   assert.equal(saved.length, 3);
   assert.equal(saved[2].seconds, 1400);
   assert.equal(stops, 1, 'A native auto-stop does not call Stop again');
+
+  await render().startRecording();
+  status = { durationMillis: 3500, isRecording: true, canRecord: true };
+  fileSeconds = null;
+  await render().stopRecording();
+  assert.equal(saved.length, 4, 'A failed metadata read must still save the original clip');
+  assert.equal(saved[3].seconds, 3.5);
+  assert.equal(saved[3].audio.uri, recorder.uri);
+});
+
+test('microphone denial can recover after Settings without recreating the recorder', async () => {
+  const state = hooks();
+  let permission = { granted: false, canAskAgain: false };
+  let prepared = 0;
+  let starts = 0;
+  let requests = 0;
+  const { RecordingProvider } = load('hooks/useRecordAudio.ts', {
+    react: state.react, 'react-native': { Platform: { OS: 'ios' } },
+    '@/auth/AuthContext': auth, '@/api/http': http, '@/privacy/aiConsent': consentGranted,
+    '@/utils/audioDuration': durationUnavailable,
+    '@/storage/pendingRecordings': { recordingId: () => 'recording' },
+    './usePendingRecordings': { usePendingRecordings: () => ({}) },
+    'expo-audio': {
+      AudioModule: { async requestRecordingPermissionsAsync() { requests++; return permission; } },
+      setAudioModeAsync: async () => {}, RecordingPresets: { HIGH_QUALITY: {} },
+      useAudioRecorderState: () => ({ durationMillis: 0, canRecord: false, isRecording: false }),
+      useAudioRecorder: () => ({
+        async prepareToRecordAsync() { prepared++; }, record() { starts++; }, uri: 'file:///clip.m4a',
+      }),
+    },
+  });
+  const render = () => state.render(() => RecordingProvider({ children: null })).props.value;
+  await render().startRecording();
+  assert.equal(prepared, 0);
+  assert.equal(starts, 0);
+  assert.equal(render().isStartingRecording, false);
+  assert.equal(render().isRecording, false);
+  assert.equal(render().needsMicrophoneSettings, true);
+  assert.match(render().error, /Settings/);
+  permission = { granted: true, canAskAgain: true }; // User grants access in device Settings.
+  await render().startRecording();
+  assert.equal(requests, 2);
+  assert.equal(prepared, 1);
+  assert.equal(starts, 1);
+  assert.equal(render().needsMicrophoneSettings, false);
+  assert.equal(render().error, null);
+  assert.equal(render().isRecording, true);
+});
+
+test('Record screen exposes Settings recovery and explains an interrupted microphone', async () => {
+  const state = hooks();
+  let opened = 0;
+  let fail = false;
+  const dialogs = [];
+  let recording = { needsMicrophoneSettings: true, pendingRecordings: [] };
+  const { HomeScreen } = load('screens/HomeScreen.tsx', {
+    react: state.react,
+    'react-native': { Platform: { OS: 'ios' }, StyleSheet: { create: styles => styles },
+      Pressable: 'Pressable', View: 'View', Linking: { async openSettings() {
+        opened++; if (fail) throw new Error('Unavailable');
+      } }, Alert: { alert: (...args) => dialogs.push(args) } },
+    'expo-router': { useRouter: () => ({}) }, 'react-native-svg': {},
+    '@/components/Screen': { Screen: 'Screen' }, '@/components/Typography': { Body: 'Body', Serif: 'Serif', Eyebrow: 'Eyebrow' },
+    '@/components/Icon': { Icon: {} }, '@/theme/tokens': { colors: {}, fonts: {} },
+    '@/auth/AuthContext': auth, '@/hooks/useDebriefs': { useDebriefs: () => ({ listItems: [] }) },
+    '@/hooks/useImportAudio': { useImportAudio: () => ({}) },
+    '@/hooks/useRecordAudio': { useRecordAudio: () => recording },
+  });
+  function settingsButton(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'Pressable' && node.props.children?.props.children === 'Open microphone settings') return node;
+    for (const child of React.Children.toArray(node.props?.children)) {
+      const found = settingsButton(child);
+      if (found) return found;
+    }
+  }
+  const render = () => state.render(HomeScreen);
+  settingsButton(render()).props.onPress();
+  await flush();
+  assert.equal(opened, 1);
+  fail = true;
+  settingsButton(render()).props.onPress();
+  await flush();
+  assert.match(dialogs[0][1], /allow microphone access/);
+  recording = { ...recording, needsMicrophoneSettings: false, isRecording: true, isRecordingPaused: true };
+  assert.equal(settingsButton(render()), undefined);
+  assert.match(JSON.stringify(render()), /Microphone interrupted · tap to stop and save/);
 });
 
 test('AI consent requires explicit approval, survives restart per account, and can be withdrawn', async () => {
@@ -624,6 +726,7 @@ test('declining blocks recording and import; withdrawal still allows the stopped
   const { RecordingProvider } = load('hooks/useRecordAudio.ts', {
     react: state.react, 'react-native': { Platform: { OS: 'ios' } },
     '@/auth/AuthContext': auth, '@/api/http': http, '@/privacy/aiConsent': privacy,
+    '@/utils/audioDuration': durationUnavailable,
     '@/storage/pendingRecordings': { recordingId: () => 'recording' },
     './usePendingRecordings': { usePendingRecordings: () => ({ async enqueue(clip) { saved.push(clip); } }) },
     'expo-audio': {
