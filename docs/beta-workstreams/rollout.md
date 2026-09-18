@@ -170,8 +170,8 @@ transcript, and runs real final acoustic statistics over mapped PCM. Upload mode
 exercises actual 2-GiB durable file writes in 512 chunks, rejects an extra byte and
 reloads the saved queued status from a new `RecordingJobs` instance.
 
-The following measurements used the original buffering `httpx.MockTransport`.
-They have not been repeated with the corrected streaming-discard transport.
+The following historical measurements used the original buffering
+`httpx.MockTransport`. Corrected follow-up results appear below.
 
 | Probe, hard limit 2 GiB, no swap | Process peak RSS | Cgroup peak | Result |
 | --- | ---: | ---: | --- |
@@ -207,8 +207,8 @@ The first full-day OOM remains unresolved and does not prove production fails at
 2 GiB. Integration's critic demonstrated that `MockTransport` calls
 `Request.read()`, buffering each full multipart body on its request, and SDK
 cycles can retain up to 34 requests until garbage collection. That amplifies
-memory use independently of normal HTTP streaming. No production minimum is
-established, and neither 2 GB nor 4 GB is validated for the complete workload.
+memory use independently of normal HTTP streaming. These original results
+establish no production minimum or evidence that buying 4 GB solves the problem.
 
 The corrected probe subclasses `httpx.BaseTransport`, consumes `request.stream`
 incrementally, counts bytes and keeps only a short tail to recognize speaker
@@ -228,9 +228,35 @@ client, verifies both speaker-label branches and byte counts, and fails if
 python -m scripts.benchmark_rollout transport-check
 ```
 
-The corrected full-day and maximum-upload probes remain unrun. Integration plans
-to run them in the existing GitHub container CI job using the exact Python 3.11
-deployment image after review, including writable-volume validation.
+After host-space recovery, one corrected full-day probe and one maximum-upload
+probe both passed sequentially. They used exact reconciled source
+`399f964f15c5effa511ad7a8d2ef996846fce3d0`, which closes production WAV buffers,
+with script correction `f88e625` mounted separately. The cached Python 3.14.3
+runtime and Docker limits above were unchanged; networking remained disabled.
+
+| Corrected probe, hard limit 2 GiB, no swap | Process peak RSS | Cgroup peak | Result |
+| --- | ---: | ---: | --- |
+| One 24-hour job, VAD and AI mocked | 2,003.4 MiB | 2,048.0 MiB | Pass; 140.046 seconds, exit 0, OOMKilled=false |
+| One exact 2-GiB durable upload/reload | 363.3 MiB | 2,048.0 MiB | Pass; exit 0, OOMKilled=false |
+
+The day probe decoded 5,529,600,000 PCM bytes, completed all 144 transcription
+requests, retained 4,320 turns and a 928,799-byte transcript, and verified temporary
+PCM removal. Its largest streamed multipart was 19,883,808 bytes. At completion,
+process RSS was 629.0 MiB and cgroup memory 656.1 MiB, split into 626.4 MiB anon
+and 3.1 MiB file cache. Maximum sampled anon memory was 663.0 MiB; that is a sampled
+counter, not an absolute peak. The upload probe wrote all 2,147,483,648 bytes in
+512 chunks, rejected an extra byte and recovered queued status with a fresh
+`RecordingJobs` object. Its final cgroup memory was 399.6 MiB, including
+279.5 MiB anon and 103.1 MiB file cache. Upload mode performs one upload regardless
+of the shared `--runs` default printed at startup.
+
+Both cgroup peaks reached the limit while reclaimable file cache was present.
+These single sequential offline passes do not establish production headroom,
+sustained behavior or capacity alongside incoming uploads and Reflect. Integration
+plans to repeat them in the existing GitHub container CI job using the exact
+Python 3.11 deployment image after review, including writable-volume validation.
+JSON logs and Docker exit/resource inspection are preserved at
+`/private/tmp/mirra-rollout-20260918/{day,upload}-streaming-2g.{log,inspect}`.
 
 The diagnostic repeat exhausted local host storage: `df` reported only 177 MiB
 available. Docker subsequently returned EIO for image blobs and metadata writes,
@@ -242,9 +268,13 @@ Root subsequently recovered space from idle task Xcode caches, restarted Docker
 and removed exactly these four task-owned containers: `mirra-rollout-speech-2g`,
 `mirra-rollout-speech-wav-2g`, `mirra-rollout-day-2g` and
 `mirra-rollout-day-diagnostic-2g`. No other Docker data was removed. Root reports
-3.7 GiB host space now available, still insufficient for the approximately
-6.9 GB full-day source/PCM files plus headroom. No further local heavy runs were
-attempted for the transport correction.
+3.7 GiB initially available was still insufficient for the approximately 6.9 GB
+full-day source/PCM files plus headroom. Deferred reclamation then recovered
+15 GiB. Root authorized the two corrected probes above, performed one at a time
+with a free-space check before each. Their exact containers,
+`mirra-rollout-day-streaming-2g` and `mirra-rollout-upload-streaming-2g`, were each
+removed after saving evidence and before the next run. Host space was 16 GiB
+afterward. No workstream containers remain.
 
 Exclusions: real AI latency/quality/cost, complete HTTP/auth/DB traffic, concurrent
 incoming uploads and Reflect, a 16-GiB full queue, cold production deployment,
