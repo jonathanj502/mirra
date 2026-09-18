@@ -70,7 +70,7 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
 | Shared duration reader (imports) | `b5bb77b6bf7a76d2a1f52301c919bd4d72d3930f` | Validated `getAudioDuration` helper; device has identical cherry-pick `34148ad3d889c0c46e35d00fb530be92c37121a8`. | Integrated once in the resulting source; original branch histories retained. |
 | Memory | `0f7adec` | Two bounded-allocation changes, tests and reproducible offline benchmarks. 512 MiB still fails; 2 GB is the next production-test candidate. | Merged as `f7a88f8`; [evidence](beta-workstreams/memory.md). |
 | Imports and queue dependencies | `4264627`, `5a3ee41`; equivalents of `ea2c446` and `cbeb382` | Durable imports, input boundaries, consent/account/MIME checks, known metadata quirks and terminal-error retention. | Merged as `f18f6c8`; [evidence](beta-workstreams/imports.md). |
-| Device/capture | `b406afe`, docs through `1058b29` | Fresh native files, actual saved duration with fallback, microphone Settings recovery and interruption UI. TF-2/TF-5 pass by user observation on Personal Team; TF-4 offline restart and TF-6 local locked capture/audio subchecks pass. Remaining physical checks stay open. | Code merged as `c9eadd0`; later [device evidence](beta-workstreams/device.md) integrated. |
+| Device/capture | `b406afe`, docs through `1cd77ec` | Fresh native files, actual saved duration with fallback, microphone Settings recovery and interruption UI. TF-2/TF-5 pass by user observation on Personal Team; TF-4 offline restart and TF-6 local locked capture/audio subchecks pass. Maximum recording duration/decode/markers pass; extra-clip clarification and end-to-end checks stay open. | Code merged as `c9eadd0`; later [device evidence](beta-workstreams/device.md) integrated. |
 | Transcription | `a907631` | Real 1400s local provider flow passed: 336.94s transcription / 351.5s complete session, history/Reflect/replay/refund checks. | Merged as `6dead13`; [evidence](beta-workstreams/transcription.md). |
 | Build/distribution | `13ae5d8`; evidence through `eda5c20` | Native Release source `a4b3c14` signed, installed and launch verified with the approved free Personal Team ID. TestFlight and complete recording-flow checks remain open; device auth/recovery results are above. | Guard merged as `62c5f61`; [build evidence](beta-workstreams/distribution.md) integrated. |
 | Reliability/quota | `ecb3413`, `108e07c` (app dependencies above) | Durable quota receipts, SQL concurrency/crash checks and rollout instructions. Migration is local only. | Merged as `3fa5593`; [evidence](beta-workstreams/reliability.md). |
@@ -111,8 +111,9 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
   clip at **1399.952834s**, 17,425,982 bytes; full local decode passed. Six completed
   manifests are present and cached metadata confirms all six belong to one account,
   including a later separate 2.436644s clip; this supersedes the earlier reported
-  count of five. The short clip's intent and the maximum clip's audio markers
-  remain unverified, and TF-7 stays open. Reconnect planning must account for all six clips,
+  count of five. The user confirmed the maximum clip's three audio markers audible
+  at 2026-09-18 03:59 UTC. The short clip's intent remains unverified; TF-7 stays open
+  for that clarification and import/provider/end-to-end checks. Reconnect planning must account for all six clips,
   observed usage and the five-debrief monthly cap without discarding originals.
   Originals remain queued and unchanged; no backend/provider upload occurred.
 - No production migration, deployment, push or purchase. Independent pre-push
