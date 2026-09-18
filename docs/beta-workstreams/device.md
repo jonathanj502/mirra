@@ -70,7 +70,8 @@ All native, permission, network and auth boundaries in these hook tests are mock
 ## Hardware and provider status
 
 **TF-2 and TF-5 installed-device behavior PASS (user-observed on the Personal
-Team build). TF-1, TF-3, TF-4, TF-6, and TF-7 remain OPEN.**
+Team build). TF-6 local locked capture/audio check PASS; its debrief-delivery
+portion remains OPEN. TF-1, TF-3, TF-4, and TF-7 remain OPEN.**
 
 Phone confirmed by distribution's device inventory: **iPhone 13 (`iPhone14,5`),
 iOS 26.6.2 (23G90)**. The user replied "connected" in this task after cable,
@@ -189,8 +190,38 @@ copied, along with the queued manifests needed for identification. Its details:
 This is **1m47s**, so the **TF-6 five-minute duration requirement is NOT MET** by
 the inspected clip. Marker listening is also unconfirmed. The user was told the
 measured result and asked to start a new offline recording, say "before lock,"
-lock the phone, and confirm on the Mac. This task will time five full minutes
-after that confirmation, cue "during lock," then cue unlock/"after lock"/Stop.
+lock the phone, and confirm on the Mac for an assisted five-minute timer. The
+user instead completed another recording independently and reported **"done i
+just did it. it should be more than 7 minutes"**. An assistant-timed locked
+interval was therefore not established; the new file was inspected below.
+
+### Longer repeat — recorded 2026-09-18 03:01 UTC
+
+Distribution inspected/copied the new completed clip under the existing narrow
+local-inspection approval. It is a different recording from the 106.9961s clip:
+
+- Recording ID: `1789699836005-og44nw1fwsq`.
+- Start: `2026-09-18T02:50:36.005Z`; completed manifest modified `02:57:41Z`.
+- Manifest and native `afinfo` duration agree: **424.784399 seconds (7m04.8s)**.
+- Copy size: **5,429,285 bytes**, matching the phone's file listing.
+- Local audio: `/private/tmp/mirra-distribution-capture-review/retest-zt3h3e_y/recording-1789699836005-og44nw1fwsq.m4a`.
+- Full local FFmpeg decode: **PASS**, exit 0, no errors.
+- Only that completed manifest/audio were copied. No app launch, phone writes,
+  queue changes, auth-data access, backend/provider requests, or uploads occurred.
+
+The local audio was presented for playback on the computer. The user confirmed
+the phone was continuously locked for at least five minutes (**"yes it was"**),
+then explicitly confirmed all three before/during/after-lock phrases were audible
+in playback (**"all heard"**). Recorded at **2026-09-18 03:08 UTC**:
+**TF-6 local locked capture/audio subcheck PASS**, combining the measured
+424.784399s file/full decode with the user's lock-time and listening observations.
+Delivery of those markers to a debrief remains untested, so the full end-to-end
+criterion is still OPEN. No assistant-timed interval is claimed.
+
+Next native capture check: remain offline, note the saved count, record until
+automatic stop at 23m20s with beginning/middle/end phrases, and confirm the queue
+increases by exactly one. Do not manually Stop. Then inspect the completed audio
+and verify all markers, stable queue count after relaunch, and actual duration.
 Keep all queued clips offline until candidate deployment and a usage baseline
 are ready. No provider/backend upload is authorized by local inspection.
 
@@ -206,7 +237,7 @@ separate evidence; complete microphone, local-save/restart, and lock checks offl
 | TF-3 | Real 30–60s capture, one saved nonempty debrief, history after relaunch, model Reflect reply | OPEN — device and working backend needed |
 | TF-4 | Two offline stopped clips survive restart; reconnect yields two debriefs and exactly +2 usage; expired token/account switch/consent recovery | OPEN — two clips survived offline restart (user-observed 2026-09-18 01:38 UTC); reconnect/usage/duplicate/token/account/consent checks pending |
 | TF-5 | Deny mic, responsive error/Settings action, grant in Settings, return and record/Stop/save without stuck state | PASS — user confirmed Settings recovery and one stopped clip saved offline on a4b3c14; recorded 2026-09-18 01:36 UTC |
-| TF-6 | At least 5 minutes locked with beginning/during/after-lock audio intact | OPEN — actual newest clip is 106.996100s, below 5 minutes; timed repeat and intact markers required |
+| TF-6 | At least 5 minutes locked with beginning/during/after-lock audio intact | Local capture/audio PASS — 424.784399s full decode, user confirms >=5min continuously locked and all 3 markers audible (2026-09-18 03:08 UTC); debrief delivery OPEN |
 | TF-7 | Native 1400s auto-stop, one saved clip, beginning/middle/end audio, one debrief/history/Reflect result; equivalent at-limit import and over-limit rejection | OPEN — imports/provider checks coordinated separately |
 
 Additional native check: Expo resumes interrupted iOS recorders with
