@@ -90,8 +90,8 @@ Native projects are maintained in Git. Their startup/build templates have been
 updated for SDK 57, preserving app identifiers and custom native files. A native
 iOS build requires Xcode 26.4 or later and iOS 16.4 or later. The checked-in
 Podfile.lock now matches SDK 57; use `pod install` from `ios/` to restore it.
-Full Xcode is absent on the current Mac. Native build evidence from EAS is tracked
-in the acceptance ledger.
+Local Xcode and native build evidence is tracked in
+[`docs/beta-workstreams/distribution.md`](../docs/beta-workstreams/distribution.md).
 Do not run `expo prebuild` blindly: SDK 57 clears native folders by default.
 If applying config plugins to existing native projects, use `--no-clean` and
 review the diff for custom extensions. The Expo Go build does not exercise those
@@ -120,8 +120,9 @@ npm run export:ios:production
 npx eas-cli build --platform ios --profile production
 ```
 
-The EAS post-install hook rejects missing configuration, HTTP/LAN endpoints,
-and privileged Supabase keys. The export command clears Metro's cache so an
+The EAS post-install hook and Xcode Release bundle phase reject missing
+configuration, HTTP/LAN endpoints, and privileged Supabase keys. Xcode Release
+builds always embed their JavaScript bundle. The export command clears Metro's cache so an
 earlier development URL cannot remain in a reused bundle. Check live backend
 connectivity separately; config validation does not prove a working service.
 
@@ -130,3 +131,42 @@ credentials are being arranged. Only a signed `production` build submitted to
 App Store Connect can satisfy the TestFlight install gate. After a successful
 production build, submit that specific build with `eas submit --platform ios
 --profile production --id BUILD_ID` and complete the recorded device checks.
+
+## Free installation on your own iPhone
+
+Apple's [Personal Team](https://developer.apple.com/help/account/basics/about-your-developer-account)
+supports local device testing without a paid membership. Its provisioning expires
+after seven days; rebuild/reinstall through Xcode to renew it. This does not
+satisfy the TestFlight installation gate.
+
+1. Install Xcode's iOS components. Sign in yourself under **Xcode → Settings →
+   Accounts** and complete any Apple agreements yourself.
+2. Connect and unlock the iPhone, trust the Mac, and enable **Settings → Privacy
+   & Security → Developer Mode** on the phone when prompted.
+3. Set the three public values above in ignored `app/.env.production.local`.
+   From `app/`, run `npm ci`, `npm run check:production`, then
+   `cd ios && pod install`. Do not run prebuild. Expo's precompiled pod checksum
+   can change with the checkout path; use ordinary `pod install`, not
+   `pod install --deployment`, when restoring in a different worktree.
+4. Open `app/ios/Mirra.xcworkspace`. Select target **Mirra → Signing &
+   Capabilities → Automatically manage signing**, then your **Personal Team**.
+   If Apple reports the bundle ID unavailable, use a unique local testing ID;
+   keep personal signing settings out of the shared release configuration.
+5. Choose the iPhone as destination. Under **Product → Scheme → Edit Scheme →
+   Run → Info**, set **Build Configuration: Release**. Run the app. Allow the
+   development certificate on the phone if iOS requests it.
+6. Disconnect the Mac and cold-launch Mirra to verify the embedded bundle.
+   Continue the device acceptance checklist, recording the source commit,
+   device/iOS version, bundle ID and build number. A successful compile alone
+   does not establish recording, offline recovery, or working production APIs.
+
+For compilation before account/device setup, this creates an **unsigned** iPhone
+app; it cannot be installed until rebuilt with signing:
+
+```sh
+cd app
+xcodebuild -workspace ios/Mirra.xcworkspace -scheme Mirra \
+  -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+  -derivedDataPath /private/tmp/mirra-distribution-device \
+  CODE_SIGNING_ALLOWED=NO build
+```

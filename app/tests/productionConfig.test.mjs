@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 const valid = {
@@ -30,4 +31,24 @@ test('production builds reject missing/local endpoints and privileged keys befor
   }
   const anon = `header.${Buffer.from('{"role":"anon"}').toString('base64url')}.signature`;
   assert.equal(check({ EXPO_PUBLIC_SUPABASE_ANON_KEY: anon }).status, 0);
+});
+
+test('Xcode release bundling rejects development endpoints even when skipping was requested', () => {
+  const project = readFileSync(new URL('../ios/Mirra.xcodeproj/project.pbxproj', import.meta.url), 'utf8');
+  const phase = project.split('name = "Bundle React Native code and images";')[1];
+  const script = JSON.parse(phase.match(/shellScript = ("(?:[^"\\]|\\.)*");/)[1]);
+  for (const configuration of ['Release', 'Debug']) {
+    const result = spawnSync('/bin/bash', ['-c', script], {
+      cwd: new URL('..', import.meta.url), encoding: 'utf8',
+      env: { ...process.env, ...valid,
+        EXPO_PUBLIC_MIRRA_BACKEND_URL: 'http://localhost:8000',
+        CONFIGURATION: configuration, NODE_BINARY: process.execPath,
+        PROJECT_DIR: new URL('../ios', import.meta.url).pathname,
+        PODS_ROOT: '/nonexistent', ENTRY_FILE: 'unused', CLI_PATH: 'unused',
+        SKIP_BUNDLING: '1', NODE_ENV: 'development', PLATFORM_NAME: 'iphonesimulator',
+      },
+    });
+    assert.equal(result.status, configuration === 'Release' ? 1 : 0, result.stderr);
+    if (configuration === 'Release') assert.match(result.stderr, /EXPO_PUBLIC_MIRRA_BACKEND_URL/);
+  }
 });
