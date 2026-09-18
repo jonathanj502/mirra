@@ -11,8 +11,11 @@ The user resumed beta work in six independent issue tasks/worktrees. Read
 for the prior checkpoint. The user authorized a narrower limit:
 **23 minutes 20 seconds (1400 seconds)** for capture and import, matching the
 observed single-request transcription ceiling. One-hour support is deferred.
-This local change is not deployed; production, billing, and open acceptance gates
-are unchanged. A full-length live API and physical-device pass is still required.
+The completed code is combined locally on `codex/beta-integration-2026-09-17`.
+The transcription branch passed a real 1400-second local API flow in 351.5 seconds;
+integrated production, migration/PostgREST, and physical-device checks remain open.
+Production and billing are unchanged. The new backend requires the durable-receipt
+migration before deployment; see the reliability workstream's rollout instructions.
 
 ## Project Overview
 
@@ -93,7 +96,7 @@ All audio capture happens on-device via `expo-audio` (`useRecordAudio.ts`), enco
 4. `pipeline/prosody.py` — Computes acoustic, word, question, filler, and speaking-rate statistics for the selected speaker. Other-speaker labels supply comparison durations. Interruption counts estimate overlap initiated by the user.
 5. `pipeline/coaching.py` — Sends the full labeled conversation and selected-speaker stats to OpenAI `gpt-4.1` using Responses API structured outputs validated by Pydantic. The prompt explains identity and timing uncertainty. Retains two retries for invalid output; the SDK retries transient API errors twice.
 6. `pipeline/coordinator.py` — Orchestrates these stages; returns a neutral debrief without calling the coaching model when no speech is found.
-7. `POST /sessions` reserves free usage before processing, saves the debrief and diarization metadata, and refunds failed processing. The full labeled transcript is stored only when transcript saving is enabled.
+7. `POST /sessions` reserves usage through an account-scoped durable receipt, saves the debrief and completion marker atomically, and refunds only an uncommitted attempt. The full labeled transcript is stored only when transcript saving is enabled.
 
 See `backend/app/pipeline/README.md` for request limits, timing caveats, and validation.
 
@@ -130,11 +133,13 @@ Control Center widget, Back Tap, and Lock Screen Shortcut all fire `ToggleRecord
 
 `RecordingProvider` (`app/src/hooks/useRecordAudio.ts`) sits under AuthProvider and above the routes. Stopped recordings are saved before upload, using `src/storage/pendingRecordings.ts` (native documents directory) or `.web.ts` (IndexedDB blobs and metadata). `usePendingRecordings.ts` restores the per-account queue and uploads serially on launch, foreground/online events, and a 15-second foreground poll. Each upload refreshes auth, checks account identity, and verifies saved AI consent before sending. Withdrawal pauses queued uploads without deleting local audio; the Record tab lets the user review their privacy choice to resume. Only acknowledged uploads or explicit discards remove queued audio. Storage failures retain the original clip and block another capture until saving succeeds.
 
-The optional `recording_id` form field on `POST /sessions` produces an account-scoped deterministic debrief primary key. Replays return the existing debrief before reserving usage. A process-local in-flight guard returns 409 for simultaneous retries; across processes the database primary key prevents duplicate rows and duplicate-insert reservations are refunded. No schema migration is required. The queue survives restarts after Stop/save completes; uploads resume when the app is foregrounded, not while force-quit. Browser offline app-shell loading and OS background upload jobs are not implemented.
+The optional `recording_id` form field on `POST /sessions` produces an account-scoped deterministic debrief primary key. Replays return existing rows before admission or quota reservation. A process-local in-flight guard returns 409 for simultaneous retries. The durable `debrief_receipts` table and reserve/release/complete RPCs reuse interrupted charges and prevent stale attempts from refunding or committing over newer attempts. Apply `20260918010000_durable_debrief_receipts.sql` before deploying this backend, and drain old writers; see `docs/beta-workstreams/reliability.md` for rollout/rollback limitations. A crashed reservation whose clip is abandoned remains counted in its original month; no automatic reconciliation job exists.
+
+The queue survives restarts after Stop/save completes; uploads resume when the app is foregrounded, not while force-quit. It uses a provisional 2100-second upload timeout paired with transcription's 600-second attempts and one retry. Terminal 400/410/413/415/422 errors retain the original file and allow other clips to proceed. Imports use the same queue, stable recording IDs and title metadata. Native queue files have fixed internal names; original filenames remain upload metadata. Browser offline app-shell loading and OS background upload jobs are not implemented.
 
 ### Audio file import
 
-`useImportAudio.ts` uses `expo-document-picker` (not an OS share-sheet intent) to let the user pick an existing audio file on either platform. Client-side guards: 100 MiB and 1400-second caps, MIME sniffed from the file extension when the picker returns `application/octet-stream`. Duration is read via a temporary `createAudioPlayer` that waits for loaded metadata and is removed afterward before upload. Goes through the same `uploadSession()` → `POST /sessions` path as a live recording, wired into `HomeScreen.tsx` alongside `useRecordAudio`.
+`useImportAudio.ts` uses `expo-document-picker` (not an OS share-sheet intent). It checks nonempty size up to 100 MiB, supported MIME/extension, current account and saved AI consent, then durably enqueues the original with a stable recording ID. The shared `audioDuration.ts` reads metadata without playback. Client import checks allow one second of metadata padding (Apple reports 1400.076 seconds for a valid 1400-second MP3); the backend's actual 1400-second limit is unchanged. Recognized WebM may have unknown duration when Apple's player cannot read it; the UI says duration is checked during analysis and the advisory duration is omitted on upload. Other unreadable metadata fails clearly. Saved native capture uses the same duration helper with an audio-preserving fallback.
 
 Note: the original plan called for `react-native-receive-sharing-intent` handling Android `ACTION_SEND` intents (share-sheet import, confirmation card instead of a manual picker) — that package was never installed and no intent filter exists in `AndroidManifest.xml`. The document-picker approach above is what actually shipped; treat any reference to `useSharedFile.ts` elsewhere as stale.
 
@@ -162,10 +167,11 @@ Note: the original plan called for `react-native-receive-sharing-intent` handlin
 
 - `users` — managed by Supabase Auth
 - `debrief_usage(user_id, month_key UNIQUE WITH user_id, count int)` — monthly usage counter
+- `debrief_receipts(debrief_id uuid PRIMARY KEY, user_id, month_key, attempt_id, completed)` — backend-only durable quota receipts; reserve/refund/complete transactions are service-role-only RPCs
 - `debriefs(id uuid, user_id, created_at, observation, pattern_to_reduce, thing_to_try_next, stats jsonb, transcript text)`
 - `user_settings(user_id, notifications_enabled, weekly_summary_day, weekly_summary_time, reflection_reminders, product_updates, save_transcripts, include_transcript_in_reflect, coaching_tone, coaching_depth)` — one row per user, backend-managed (`app/user_settings.py`)
 
-All tables have RLS enabled with `(select auth.uid()) = user_id` read policies; writes go through the backend's service-role key, not the client directly.
+Application tables have RLS enabled and owner read policies; writes go through the backend's service-role key. `debrief_receipts` has RLS and no client grants/policies; only the service role can access its rows or execute its accounting RPCs.
 
 Monthly cap: 5 debriefs per user, configured by `FREE_TIER_CAP`. Enforced server-side — `POST /sessions` returns 402 when at cap. There are no paid tiers or subscription bypasses.
 

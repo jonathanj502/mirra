@@ -19,6 +19,43 @@ The user initially chose the current free Render plan and subsequently reopened
 discussion of an upgrade or alternative host. No paid upgrade is authorized.
 The confirmed 512 MB memory failure remains open.
 
+## Parallel work integrated locally — 2026-09-18 UTC
+
+Completed memory, transcription, import, queue/capture, native Release guard and
+durable-quota code is combined on `codex/beta-integration-2026-09-17`.
+[Workstream index](beta-workstreams.md) records exact commits and evidence.
+No push, deployment, production migration or hosting purchase has occurred.
+
+- **Combined app:** 44 tests and TypeScript passed.
+- **Combined backend:** 187 passed; seven optional SQL tests skipped in that run.
+  The separate integrated PostgreSQL 14.23 run passed all seven with exit 0;
+  its disposable local server is stopped. This is not Supabase/PostgREST proof.
+- **Real provider flow (transcription branch):** exact 1400 seconds passed with
+  two speaker labels and beginning/middle/end speech retained. Transcription took
+  336.94 seconds; session completion took 351.5 seconds. Saved debrief, history,
+  real Reflect, same-ID replay with one usage charge, deletion, cleanup and
+  1400.1-second HTTP 413/refund checks passed. This predates the new receipt
+  migration and does not prove the whole integrated production flow.
+- **Memory:** two allocation fixes reduced the offline exact-limit peak by 15.8%.
+  The 512 MiB candidate still OOMs; five dense-audio jobs passed at 1 GiB, with
+  growing retained RSS. Use 2 GB as a production-test candidate, not a capacity
+  guarantee. Incoming multipart/concurrent load and sustained usage remain open.
+- **Imports/capture:** imports now use the durable queue. Metadata padding and
+  unsupported native WebM metadata reach strict backend validation safely.
+  Actual native capture, permissions, lock, auto-stop and interruption checks
+  remain open despite passing hook/storage tests.
+- **Quota:** the new backend requires
+  `20260918010000_durable_debrief_receipts.sql` before deployment and drained old
+  writers. Receipts and reserve/refund/complete RPCs protect retries after crashes;
+  abandoned pending receipts and old orphan charges remain recovery limitations.
+- **Distribution:** Xcode/Personal Team setup progressed and an unsigned iPhone
+  Release build passed from `b32546e` (build guard plus capture/helper). The
+  distribution task will rebuild with the combined source.
+  No signed device/TestFlight install or paid membership has been verified.
+
+All acceptance gates below remain **OPEN**. A longer upload timeout does not fix
+the nearly six-minute processing latency or establish a production deadline.
+
 ## Memory investigation — 2026-09-17
 
 Local candidate changes stream decoding directly to mono 16 kHz, batch pitch
@@ -162,10 +199,10 @@ The existing 100 MiB input cap is retained.
 | TF-1 | Signed production build processes in App Store Connect, installs through TestFlight, and cold-launches without a development server. | OPEN | EAS Simulator native build succeeded; production Hermes export passes (1,881 modules). Production store build stopped because distribution credentials are not configured. No TestFlight build yet. |
 | TF-2 | Installed build connects over public HTTPS to the intended backend; sign-up/sign-in, restored session, and authenticated reads work. | OPEN | Live Render health, sign-up/sign-in, JWT verification, history, and usage reads passed. Public URL and Supabase values saved to EAS production. Installed-device connection/session restoration remain untested. |
 | TF-3 | A real iPhone recording produces a saved, nonempty debrief; it reopens from history after relaunch and Reflect returns a model reply about it. | OPEN | Render processed synthetic M4A → saved debrief → history → real Reflect reply in the live test. The service then exceeded its 512 MB memory limit and restarted; final usage read returned 502. Hosting capacity and physical recording checks remain open. |
-| TF-4 | Offline stopped clips survive force-quit/relaunch; reconnect uploads each exactly once without losing audio, duplicating debriefs, or charging usage twice. | OPEN | App queue/recovery tests pass; backend replay/usage tests pass. Physical device, token refresh, and account-switch checks remain. |
+| TF-4 | Offline stopped clips survive force-quit/relaunch; reconnect uploads each exactly once without losing audio, duplicating debriefs, or charging usage twice. | OPEN | Combined app checks and local SQL crash/retry/accounting tests pass, including imported clips. New receipt migration needs Supabase/PostgREST rollout validation; physical device, token refresh, and account-switch checks remain. |
 | TF-5 | Denying microphone permission is recoverable; granting permission in Settings allows recording without a crash or stuck recorder. | OPEN | Device check pending. |
 | TF-6 | Recording continues for at least five minutes with the iPhone locked; after unlock/Stop, audio from before, during, and after lock reaches the debrief. | OPEN | Native audio background mode and Expo recording configuration exist. Real-device check pending. |
-| TF-7 | Both native capture and import support conversations up to 23m20s (imports ≤100 MiB), producing a saved debrief/history/Reflect result. Native recording stops and saves at the limit; overlong input fails clearly without consuming usage. Competing uploads retry safely. | OPEN | Exact-limit local codec test, duration/size rejection, refund, and auto-stop/save hook tests pass. Maximum-length real API, production memory, concurrent retry, and physical-device validation remain required. One-hour support is deferred. |
+| TF-7 | Both native capture and import support conversations up to 23m20s (imports ≤100 MiB), producing a saved debrief/history/Reflect result. Native recording stops and saves at the limit; overlong input fails clearly without consuming usage. Competing uploads retry safely. | OPEN | Real 1400s local provider/debrief/history/Reflect/replay and overlong refund checks passed on the transcription branch. Integrated migration/provider flow, production memory/load, latency, concurrent retry and physical-device validation remain required. One-hour support is deferred. |
 
 ## Automated baseline
 

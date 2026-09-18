@@ -67,8 +67,29 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
 
 | Issue | Local commits | Evidence and remaining work | Integration status |
 | --- | --- | --- | --- |
-| Shared duration reader (imports) | `b5bb77b6bf7a76d2a1f52301c919bd4d72d3930f` | Validated `getAudioDuration` helper; imports reports four passing helper tests. Device cherry-picked the same patch as `34148ad3d889c0c46e35d00fb530be92c37121a8`. | Include once before capture; full imports work is still in progress. |
-| Device/capture | `b406afe7668809537efad4369ded7e037b915c4c` | Fresh native recording files, completed-file duration with audio-preserving fallback, microphone Settings recovery and interruption UI. Evidence file in commit reports 31 app tests, TypeScript and diff checks passed. Physical TF-2–7 remain OPEN, including interruption timer persistence and locked auto-stop/save. | Code ready for integration after shared helper. Not yet merged; distribution was sent the candidate for device-build preparation. |
+| Shared duration reader (imports) | `b5bb77b6bf7a76d2a1f52301c919bd4d72d3930f` | Validated `getAudioDuration` helper; device has identical cherry-pick `34148ad3d889c0c46e35d00fb530be92c37121a8`. | Integrated once in the resulting source; original branch histories retained. |
+| Memory | `0f7adec` | Two bounded-allocation changes, tests and reproducible offline benchmarks. 512 MiB still fails; 2 GB is the next production-test candidate. | Merged as `f7a88f8`; [evidence](beta-workstreams/memory.md). |
+| Imports and queue dependencies | `4264627`, `5a3ee41`; equivalents of `ea2c446` and `cbeb382` | Durable imports, input boundaries, consent/account/MIME checks, known metadata quirks and terminal-error retention. | Merged as `f18f6c8`; [evidence](beta-workstreams/imports.md). |
+| Device/capture | `b406afe`, docs through `7b83aae` | Fresh native files, actual saved duration with fallback, microphone Settings recovery and interruption UI. Physical TF-2–7 remain OPEN. | Merged as `c9eadd0`; [evidence](beta-workstreams/device.md). |
+| Transcription | `a907631` | Real 1400s local provider flow passed: 336.94s transcription / 351.5s complete session, history/Reflect/replay/refund checks. | Merged as `6dead13`; [evidence](beta-workstreams/transcription.md). |
+| Build guard | `13ae5d8` | Native Release production-configuration guard and check. Unsigned iPhone Release build passed at source `b32546e`; integrated rebuild pending. | Merged as `62c5f61`; distribution evidence follows in `123699d`. |
+| Reliability/quota | `ecb3413`, `108e07c` (app dependencies above) | Durable quota receipts, SQL concurrency/crash checks and rollout instructions. Migration is local only. | Merged as `3fa5593`; [evidence](beta-workstreams/reliability.md). |
+
+## Combined validation — 2026-09-18 UTC
+
+- All six completed code areas are combined locally. Merges were clean, including
+  shared app files; helper and queue equivalents produced one implementation.
+- Import decoder tests were adapted to receipt identities and the atomic save RPC;
+  actual invalid/overlong decoding, same-attempt refund and no-save checks remain.
+- App: **44 tests passed**, TypeScript passed.
+- Backend: **187 tests passed**, seven opt-in database tests skipped in that run.
+- Separate integrated PostgreSQL 14.23 transaction run: **7 passed**, clean exit 0.
+  Used disposable Unix-socket cluster `/private/tmp/mirra-integration-pg-20260917`,
+  port 55449, no TCP listener. Its test database was removed and server stopped.
+- No production migration, deployment, push or purchase. Independent pre-push
+  review, actual Supabase/PostgREST validation, integrated real-provider memory,
+  sustained load, signed native build and physical checks remain open.
+- Worktrees and issue branches remain available for the user; none were deleted.
 
 ## Shared resources and boundaries
 

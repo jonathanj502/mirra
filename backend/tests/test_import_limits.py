@@ -1,6 +1,6 @@
 import io
 import wave
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import pytest
 from fastapi import HTTPException, UploadFile
@@ -89,6 +89,6 @@ def test_actual_decode_rejects_overlong_or_corrupt_imports_regardless_of_client_
     })
     assert response.status_code == (422 if invalid else 413)
     assert "Could not decode audio" in response.json()["detail"] if invalid else "23 minutes 20 seconds" in response.json()["detail"]
-    reserve.assert_called_once_with(db, "user-1")
-    refund.assert_called_once_with(db, "user-1", "2026-08")
-    db.table.return_value.insert.assert_not_called()
+    reserve.assert_called_once_with(db, "user-1", ANY, ANY)
+    refund.assert_called_once_with(*reserve.call_args.args)
+    db.rpc.assert_not_called()  # Invalid audio must never reach the atomic save RPC.
