@@ -23,7 +23,7 @@ const AUDIO_TYPES = [
 
 function mimeTypeFor(name: string, provided?: string | null): string {
   const type = provided?.split(';', 1)[0].trim().toLowerCase();
-  if (type && type !== 'application/octet-stream') return type;
+  if (type && AUDIO_TYPES.includes(type)) return type;
   const ext = name.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase();
   if (ext === 'mp3') return 'audio/mpeg';
   if (ext === 'wav') return 'audio/wav';

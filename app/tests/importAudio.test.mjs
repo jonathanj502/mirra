@@ -78,20 +78,22 @@ test('supported formats retain source, title, owner and exact limits in the exis
     ['at-limit.M4A', undefined, 'audio/mp4'], ['clip.mp3', 'application/octet-stream', 'audio/mpeg'],
     ['clip.wav', 'audio/x-wav', 'audio/x-wav'], ['clip.webm', 'application/octet-stream', 'audio/webm'],
     ['clip.webm', 'Audio/WebM; codecs=opus', 'audio/webm'],
+    ['interview.mp3', 'audio/mp3', 'audio/mpeg'], ['voice.wav', 'audio/vnd.wave', 'audio/wav'],
+    ['conversation.ogg', 'application/ogg', 'audio/ogg'],
   ]) {
     state.asset = { ...state.asset, name, mimeType, size: 2 * 1024 * 1024 * 1024 };
     await state.render().importAudio();
     const row = state.rows.at(-1);
     assert.equal(row.audio.uri, 'file:///original.m4a');
     assert.equal(row.audio.type, expected);
-    assert.match(row.audio.name, /^mirra-import-import-\d+\.(m4a|mp3|wav|webm)$/);
+    assert.match(row.audio.name, /^mirra-import-import-\d+\.(m4a|mp3|wav|webm|ogg)$/);
     assert.equal(row.title, name.replace(/\.[^.]+$/, ''));
     assert.equal(row.seconds, 86400);
     assert.equal(row.userId, 'owner');
     assert.ok(row.startedAt);
     assert.equal(state.render().error, null);
   }
-  assert.equal(new Set(state.rows.map(row => row.id)).size, 5);
+  assert.equal(new Set(state.rows.map(row => row.id)).size, 8);
 });
 
 test('oversized, overlong, unreadable, empty, and unsupported files never enter the queue', async () => {
@@ -99,6 +101,7 @@ test('oversized, overlong, unreadable, empty, and unsupported files never enter 
     [{ asset: { name: 'clip.wav', size: 2 * 1024 * 1024 * 1024 + 1 } }, /2 GiB/],
     [{ seconds: 86401.001 }, /24 hours/],
     [{ asset: { name: 'clip.txt', size: 10 } }, /Unsupported audio type/],
+    [{ asset: { name: 'clip.unknown', mimeType: 'audio/mp3', size: 10 } }, /Unsupported audio type/],
     [{ asset: { name: 'clip.wav', size: 0 } }, /nonempty/],
     [{ asset: { name: 'clip.wav', size: NaN } }, /file size/],
     [{ asset: { name: 'clip.wav' }, fileSize: 0 }, /file size/],
