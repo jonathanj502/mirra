@@ -70,9 +70,9 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
 | Shared duration reader (imports) | `b5bb77b6bf7a76d2a1f52301c919bd4d72d3930f` | Validated `getAudioDuration` helper; device has identical cherry-pick `34148ad3d889c0c46e35d00fb530be92c37121a8`. | Integrated once in the resulting source; original branch histories retained. |
 | Memory | `0f7adec` | Two bounded-allocation changes, tests and reproducible offline benchmarks. 512 MiB still fails; 2 GB is the next production-test candidate. | Merged as `f7a88f8`; [evidence](beta-workstreams/memory.md). |
 | Imports and queue dependencies | `4264627`, `5a3ee41`; equivalents of `ea2c446` and `cbeb382` | Durable imports, input boundaries, consent/account/MIME checks, known metadata quirks and terminal-error retention. | Merged as `f18f6c8`; [evidence](beta-workstreams/imports.md). |
-| Device/capture | `b406afe`, docs through `7b83aae` | Fresh native files, actual saved duration with fallback, microphone Settings recovery and interruption UI. Physical TF-2–7 remain OPEN. | Merged as `c9eadd0`; [evidence](beta-workstreams/device.md). |
+| Device/capture | `b406afe`, docs through `3f46d82` | Fresh native files, actual saved duration with fallback, microphone Settings recovery and interruption UI. TF-2/TF-5 pass by user observation on Personal Team; TF-4 offline restart subcheck passes. Remaining physical checks stay open. | Code merged as `c9eadd0`; later [device evidence](beta-workstreams/device.md) integrated. |
 | Transcription | `a907631` | Real 1400s local provider flow passed: 336.94s transcription / 351.5s complete session, history/Reflect/replay/refund checks. | Merged as `6dead13`; [evidence](beta-workstreams/transcription.md). |
-| Build/distribution | `13ae5d8`; evidence through `9dd9a92` | Native Release source `a4b3c14` signed, installed and connected-launch verified with the approved free Personal Team ID. TestFlight and standalone/auth/recording checks remain open. | Guard merged as `62c5f61`; [build evidence](beta-workstreams/distribution.md) and device handoff `f3e90ed` integrated. |
+| Build/distribution | `13ae5d8`; evidence through `9dd9a92` | Native Release source `a4b3c14` signed, installed and launch verified with the approved free Personal Team ID. TestFlight and complete recording-flow checks remain open; device auth/recovery results are above. | Guard merged as `62c5f61`; [build evidence](beta-workstreams/distribution.md) integrated. |
 | Reliability/quota | `ecb3413`, `108e07c` (app dependencies above) | Durable quota receipts, SQL concurrency/crash checks and rollout instructions. Migration is local only. | Merged as `3fa5593`; [evidence](beta-workstreams/reliability.md). |
 
 ## Combined validation — 2026-09-18 UTC
@@ -94,8 +94,13 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
 - Later physical preparation: signed Personal Team build installed and launched
   on iPhone 13 / iOS 26.6.2; user confirmed “Mirra opens.” Approved device-only
   ID `com.mirra.personal.dm85xzns55`; production ID unchanged. Developer Mode and
-  profile trust are resolved. Profile expires 2026-09-25 01:09:36 UTC. Device task
-  owns the pending disconnected launch/auth checks; no full gate is closed.
+  profile trust are resolved. Profile expires 2026-09-25 01:09:36 UTC.
+- User-observed **TF-2 and TF-5 PASS on the Personal Team build**: independent
+  launch/sign-in, session restoration and cellular reads, microphone denial and
+  Settings recovery with a stopped clip saved offline. Two stopped clips also
+  survived offline restart (partial TF-4). These checks used the current old
+  production backend; candidate audio processing is not validated. Repeat the
+  release checks on TestFlight. Device owns the pending lock/audio/reconnect checks.
 - No production migration, deployment, push or purchase. Independent pre-push
   review, actual Supabase/PostgREST validation, integrated real-provider memory,
   sustained load, TestFlight distribution and the remaining physical checks stay open.
@@ -129,7 +134,8 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
 4. Before any GitHub push, obtain the independent `code-critic` review required
    by `AGENTS.md` for the exact destination and outgoing base/head range. Review
    subsequent fixes before pushing.
-5. Keep TF-1 through TF-7 open until the agreed production/device evidence exists.
+5. Keep each gate open until its agreed evidence exists; qualify candidate passes
+   by build/backend and repeat release checks on the final TestFlight candidate.
    Retain issue branches/worktrees until their integration has been verified.
 
 The original release goal is not complete. Work in the six tasks is authorized;

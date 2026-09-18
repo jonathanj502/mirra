@@ -42,8 +42,9 @@ No push, deployment, production migration or hosting purchase has occurred.
   guarantee. Incoming multipart/concurrent load and sustained usage remain open.
 - **Imports/capture:** imports now use the durable queue. Metadata padding and
   unsupported native WebM metadata reach strict backend validation safely.
-  Actual native capture, permissions, lock, auto-stop and interruption checks
-  remain open despite passing hook/storage tests.
+  User-observed microphone denial/Settings recovery and short offline capture/save
+  passed; two stopped clips survived offline restart. Complete audio, reconnect,
+  lock, auto-stop and interruption checks remain open.
 - **Quota:** the new backend requires
   `20260918010000_durable_debrief_receipts.sql` before deployment and drained old
   writers. Receipts and reserve/refund/complete RPCs protect retries after crashes;
@@ -56,10 +57,14 @@ No push, deployment, production migration or hosting purchase has occurred.
   Subsequently, free Personal Team signing/install and connected launch passed
   on the verified iPhone 13 / iOS 26.6.2. The user confirmed “Mirra opens.” The
   approved device-only bundle ID is `com.mirra.personal.dm85xzns55`; the shared
-  release ID remains unchanged. Standalone cold launch/auth checks are pending
-  in the device task. No TestFlight install or paid membership is verified.
+  release ID remains unchanged. Standalone launch, sign-in, session restoration
+  and authenticated cellular reads passed by user observation on this build.
+  No TestFlight install or paid membership is verified.
 
-All acceptance gates below remain **OPEN**. A longer upload timeout does not fix
+**TF-2 and TF-5 pass on the installed Personal Team build; repeat them on the
+final TestFlight candidate. TF-1, TF-3, TF-4, TF-6 and TF-7 remain OPEN.** Device
+evidence is [recorded separately](beta-workstreams/device.md), with the build,
+backend and user observations. A longer upload timeout does not fix
 the nearly six-minute processing latency or establish a production deadline.
 
 ## Memory investigation — 2026-09-17
@@ -203,10 +208,10 @@ The existing 100 MiB input cap is retained.
 | ID | Acceptance criterion | Status | Evidence / next check |
 | --- | --- | --- | --- |
 | TF-1 | Signed production build processes in App Store Connect, installs through TestFlight, and cold-launches without a development server. | OPEN | Integrated Release source `a4b3c14` signed/installed/launched through free Personal Team using approved local ID. User confirmed “Mirra opens.” This is not TestFlight; store membership/signing, available release ID and TestFlight install still required. |
-| TF-2 | Installed build connects over public HTTPS to the intended backend; sign-up/sign-in, restored session, and authenticated reads work. | OPEN | Earlier live Render auth/read checks passed. The integrated Personal Team app is installed and connected launch passed; device task is awaiting disconnected cold launch, auth/session restoration and public-network results. |
+| TF-2 | Installed build connects over public HTTPS to the intended backend; sign-up/sign-in, restored session, and authenticated reads work. | PASS (Personal Team; repeat on TestFlight) | User confirmed independent launch/sign-in, then same-account restoration and Profile/history reads with Wi-Fi off and cellular on, recorded 2026-09-18 01:21 UTC. Source `a4b3c14`, iPhone 13/iOS 26.6.2, current production backend. Sign-up was covered by earlier live backend checks; this device pass covers sign-in. Candidate audio/backend rollout remains unverified. |
 | TF-3 | A real iPhone recording produces a saved, nonempty debrief; it reopens from history after relaunch and Reflect returns a model reply about it. | OPEN | Render processed synthetic M4A → saved debrief → history → real Reflect reply in the live test. The service then exceeded its 512 MB memory limit and restarted; final usage read returned 502. Hosting capacity and physical recording checks remain open. |
-| TF-4 | Offline stopped clips survive force-quit/relaunch; reconnect uploads each exactly once without losing audio, duplicating debriefs, or charging usage twice. | OPEN | Combined app checks and local SQL crash/retry/accounting tests pass, including imported clips. New receipt migration needs Supabase/PostgREST rollout validation; physical device, token refresh, and account-switch checks remain. |
-| TF-5 | Denying microphone permission is recoverable; granting permission in Settings allows recording without a crash or stuck recorder. | OPEN | Device check pending. |
+| TF-4 | Offline stopped clips survive force-quit/relaunch; reconnect uploads each exactly once without losing audio, duplicating debriefs, or charging usage twice. | OPEN | Two stopped physical clips survived offline force-close/relaunch, user-observed 2026-09-18 01:38 UTC on `a4b3c14`. Combined app and local SQL crash/retry/accounting tests pass. Reconnect, duplicates/usage, token/account recovery and candidate migration/PostgREST rollout remain open. |
+| TF-5 | Denying microphone permission is recoverable; granting permission in Settings allows recording without a crash or stuck recorder. | PASS (Personal Team; repeat on TestFlight) | User saw Open microphone settings after denial, enabled access in Settings, returned, recorded/stopped about ten seconds offline, and confirmed one saved row. Recorded 2026-09-18 01:36 UTC, source `a4b3c14`, iPhone 13/iOS 26.6.2. Audio completeness/upload is separate. |
 | TF-6 | Recording continues for at least five minutes with the iPhone locked; after unlock/Stop, audio from before, during, and after lock reaches the debrief. | OPEN | Native audio background mode and Expo recording configuration exist. Real-device check pending. |
 | TF-7 | Both native capture and import support conversations up to 23m20s (imports ≤100 MiB), producing a saved debrief/history/Reflect result. Native recording stops and saves at the limit; overlong input fails clearly without consuming usage. Competing uploads retry safely. | OPEN | Real 1400s local provider/debrief/history/Reflect/replay and overlong refund checks passed on the transcription branch. Integrated migration/provider flow, production memory/load, latency, concurrent retry and physical-device validation remain required. One-hour support is deferred. |
 

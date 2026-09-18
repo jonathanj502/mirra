@@ -18,8 +18,11 @@ Production and billing are unchanged. The new backend requires the durable-recei
 migration before deployment; see the reliability workstream's rollout instructions.
 The integrated iPhone Release build from `a4b3c14` is signed and installed via
 the approved free Personal Team identifier `com.mirra.personal.dm85xzns55` on an
-iPhone 13 / iOS 26.6.2. Connected launch and user confirmation passed; standalone
-launch, auth and recording checks remain open. The shared release ID is unchanged;
+iPhone 13 / iOS 26.6.2. User-observed standalone launch, production sign-in,
+session restoration/cellular reads (TF-2), and microphone denial/Settings recovery
+(TF-5) passed on this Personal Team build. Two stopped offline clips survived
+restart; reconnect, complete audio, locked recording and TestFlight checks remain
+open. Repeat release checks on the final TestFlight candidate. The shared release ID is unchanged;
 Apple rejected `com.mirra.app` for the current team, so confirm store-ID availability
 before TestFlight. Identity and provisioning expiry are in the distribution evidence.
 
