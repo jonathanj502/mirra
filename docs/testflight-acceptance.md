@@ -411,8 +411,10 @@ consenting participants. Keep private audio/transcripts out of this file.
    result. Repeat with an imported file at the limit; reject a file just over it
    without consuming usage. Test competing uploads and their eventual recovery.
 
-The default monthly cap is five debriefs. The current phone queue contains six
-completed clips (including the separate short clip after the maximum test).
+The default monthly cap is five debriefs. Cached metadata confirms all six
+completed clips in the current phone queue belong to one account (including the
+separate short clip after the maximum test). Whether that short clip was
+intentional remains unverified; do not infer a duplicate-save bug from the count.
 Before reconnecting, observe current usage and agree which clips/account will
 exercise each remaining check; six clips cannot all succeed in a fresh account's
 five-debrief allowance. Preserve queued originals and keep uploads paused until

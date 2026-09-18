@@ -25,7 +25,8 @@ restart. Local locked capture/audio also passed: a measured 424.784399s clip,
 user-confirmed five continuous minutes locked, and all three markers audible.
 The user observed auto-stop at 23:20; its saved file measures 1399.952834s and
 fully decodes. Maximum-clip markers, reconnect/debrief delivery and TestFlight
-remain open. Six clips are queued, including a separate later 2.436644s capture;
+remain open. Six clips are queued for one account, including a separate later
+2.436644s capture whose intent is still being clarified;
 plan reconnect checks against the five-debrief cap and an observed usage baseline.
 Repeat release checks on the final TestFlight candidate. The shared release ID is unchanged;
 Apple rejected `com.mirra.app` for the current team, so confirm store-ID availability
