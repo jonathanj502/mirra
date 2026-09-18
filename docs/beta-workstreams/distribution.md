@@ -1,8 +1,9 @@
 # Native build and distribution readiness
 
-Updated 2026-09-17 (local time). TF-1 remains **OPEN**. Free Personal Team signing
-and installation on the user's iPhone are verified; first launch is waiting on
-device-side developer trust. TestFlight delivery has not been verified.
+Updated 2026-09-17 (local time). TF-1 remains **OPEN**. Free Personal Team signing,
+installation and connected-device launch on the user's iPhone are verified;
+the user confirmed **“Mirra opens.”** TestFlight delivery, disconnected cold
+launch, authentication restoration and recording checks remain unverified.
 No store submission, EAS build purchase,
 Apple enrollment/payment, production deployment, or agreement acceptance was
 performed in this task.
@@ -181,14 +182,21 @@ confirm an available app identifier with the intended distribution team.
 - **PASS:** `devicectl device install app` exited 0 and confirmed the installed
   local bundle ID at **2026-09-18 01:11 UTC**. Log/JSON:
   `/private/tmp/mirra-distribution-install-a4b3c14.{log,json}`.
-- **OPEN:** launch attempt was denied by iOS with a security message covering
+- Initial launch attempt was denied by iOS with a security message covering
   signature, entitlements, or an untrusted profile. Local signature/profile
   checks passed. The user was directed to **Settings → General → VPN & Device
   Management → Developer App → their Apple Account → Trust/Verify App**, then
   to open Mirra. Launch log:
   `/private/tmp/mirra-distribution-launch-a4b3c14.log`.
-  No successful launch, disconnected cold launch, auth restoration, recording,
-  or TestFlight gate is claimed from the install alone.
+- **PASS (connected launch):** retry launched the installed app successfully at
+  **2026-09-18 01:15:51 UTC**, PID **849**. A filtered process check at
+  **01:16:36 UTC** confirmed Mirra was still running. The user then explicitly
+  confirmed **“Mirra opens.”** This resolves the developer-trust launch blocker.
+  Logs/JSON: `/private/tmp/mirra-distribution-launch-a4b3c14-recheck.{log,json}`
+  and `/private/tmp/mirra-distribution-running-a4b3c14.{log,json}`.
+  The device task received the exact installed build identity and owns the next
+  TF-2 disconnected cold-launch/auth-restoration check. This connected launch
+  does not close TF-1, TF-2, recording, or any other physical acceptance gate.
 
 Until an installed app is cold-launched with the Mac disconnected, this does
 not prove standalone launch. Capture, permission recovery, screen-lock behavior,
