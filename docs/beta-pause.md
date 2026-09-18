@@ -2,6 +2,11 @@
 
 ## Current resumed work
 
+The user has set TestFlight aside for now. Current work concerns reviewed code
+integration and CI; Apple enrollment, TestFlight submission and coordinated
+release-device checks are deferred. Preserve every unresolved release gate and
+its evidence. This does not waive requirements for a later production rollout.
+
 The user chose newer main `64db03b` and requested reassessing earlier work.
 Reconciliation `dbb25dea` is integrated locally in `codex/beta-integration-2026-09-17`.
 The canonical pipeline supports 24-hour/2-GiB resumable uploads and ten-minute

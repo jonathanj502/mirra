@@ -8,6 +8,13 @@ Never use em dashes in new or revised copy, generated coaching, or user-facing r
 
 ## Current release checkpoint (2026-09-18)
 
+The user has set TestFlight aside for now. Defer Apple enrollment, TestFlight
+submission and coordinated release-device checks. Preserve the acceptance ledger
+with unverified gates open; they do not block code integration into main. The
+current focus is reviewed code integration and CI. Existing pre-push review and
+explicit GitHub transfer authorization requirements still apply. Production
+rollout requirements remain necessary before any deployment.
+
 The user selected newer main `64db03b`, including 24-hour/2-GiB recordings.
 Reconciliation `dbb25dea` is integrated locally. Old 1400-second processing,
 receipt migrations and whole-file optimizations are superseded; see

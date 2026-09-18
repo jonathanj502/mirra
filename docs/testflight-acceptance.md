@@ -2,13 +2,20 @@
 
 Updated: 2026-09-18 UTC. Starting commit: `f628b73`.
 
-**Current direction: adopt newer main and reassess the earlier beta work.**
+**TestFlight work deferred at the user's request on 2026-09-18.**
+Keep the gates below open and retain their evidence for a later release. They
+are not prerequisites for merging reviewed code after CI passes. Apple enrollment,
+TestFlight submission and coordinated release-device checks are outside the
+current work scope. This deferral does not establish deployment or beta readiness.
+
+**Code direction: adopt newer main and reassess the earlier beta work.**
 On 2026-09-18 the user selected `origin/main` at `64db03b`, including resumable
 uploads and disk-backed, chunked processing for recordings up to 24 hours/2 GiB.
 This supersedes the earlier single-request/23m20s product limit. Parallel tasks
-have reconciled still-needed fixes and are validating rollout requirements; see
-[beta-workstreams.md](beta-workstreams.md). The new combined candidate is not yet
-reviewed, deployed, or installed. Historical device results below apply to the
+have reconciled still-needed fixes and recorded rollout requirements; see
+[beta-workstreams.md](beta-workstreams.md). Independent review through `0e30919`
+found no actionable findings. The combined candidate has not been pushed,
+deployed or installed. Historical device results below apply to the
 earlier `a4b3c14` build, not automatically to this changed implementation.
 
 ## Current release acceptance
