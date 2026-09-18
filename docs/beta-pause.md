@@ -20,9 +20,14 @@ removed and must not be deployed.
 - New schema, Render build configuration, persistent storage/retention and measured
   live capacity must be resolved before deployment. Three ten-minute 2-GiB probes
   pass. After closing upload buffers and correcting mock retention, one full-day
-  probe passed all 144 chunks at 2 GiB in the cached Python 3.14 runtime.
-  Exact deployment-image and sustained production checks remain open. Disk-full
+  probe passed all 144 chunks at 2 GiB. The exact Python 3.11.16 deployment
+  image now also passes day/upload, three real-VAD speech jobs and non-root
+  Docker-volume access. Sustained/live production checks remain open. Disk-full
   Docker failures were recovered by clearing only task caches/containers.
+- Independent code review through `b0d5933` has no remaining actionable findings.
+  Automatic approval review blocked the GitHub push pending explicit user consent
+  to transfer code to the existing repository/branch. Approval was requested in
+  Codex and via the user's requested iMessage channel. Nothing was pushed.
 - Every final production/device/TestFlight gate remains open in
   [the current acceptance ledger](testflight-acceptance.md). Historical phone and
   provider results below do not validate the selected architecture.

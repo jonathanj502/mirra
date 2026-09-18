@@ -23,10 +23,10 @@ receipt migrations and whole-file optimizations are superseded; see
   September 14/15/16 schema is unavailable through its API. The obsolete Render
   `scripts.warm_audio` build command must be replaced before deploying main.
 - Three ten-minute probes passed at 2 GiB. After upload-buffer cleanup and a
-  streaming mock correction, one full-day/144-chunk offline probe also passed
-  at 2 GiB. Its Python 3.14 cached runtime differs from deployment Python 3.11;
-  live capacity and sustained headroom remain open. The earlier mock-amplified
-  OOM and later disk-full failures are qualified in the rollout evidence.
+  streaming mock correction, full-day/144-chunk and 2-GiB upload probes also
+  pass in the exact Python 3.11.16 deployment image at 2 GiB. Three real-VAD
+  speech jobs pass there too. Non-root Docker-volume access passes. Actual
+  hosting, live providers and sustained headroom remain open; see rollout evidence.
 - Production, new-device and TestFlight acceptance remain open. No paid hosting
   or Apple membership purchase is authorized. Current evidence and next steps:
   `docs/testflight-acceptance.md`, `docs/beta-workstreams.md`, `docs/beta-pause.md`.

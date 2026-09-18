@@ -302,6 +302,47 @@ mount the probe script separately because the production Docker context excludes
 scripts. Retain JSON logs and `docker inspect` exit/OOM/cap values. Remove only
 these disposable test containers after collecting evidence.
 
+## Exact deployment-image validation (integration follow-up)
+
+Source: reviewed integration `b0d59330e0747e9dda664e3f1dabb8fbd0f5ac51`.
+The unchanged `backend/Dockerfile` built locally for Linux amd64 with Python
+3.11.16. Image manifest:
+`sha256:864c6ef554ed44cdf249b94b3e7b9a68972a779f19ec8fcb7b6356a0864eb909`.
+A separate runtime check confirmed UID 10001 can create/write a file in the
+mounted `/srv/mirra/.recordings` volume. This establishes local Docker-volume
+permissions, not ownership of a future provider mount.
+
+The actual container CI step was extracted from `.github/workflows/validate.yml`
+and executed locally against this image, changing only its local image/container
+names. Both modes passed with `--network none --memory 2g --memory-swap 2g
+--cpus 1`, using the non-root persistent-volume path for temporary files:
+
+| Deployment-image probe | Result |
+| --- | --- |
+| Full 24-hour pipeline, VAD/AI replies mocked | PASS: 144 chunks, 4,320 turns, 928,799-byte transcript, 141.956 seconds; cleanup succeeded |
+| Full 2-GiB durable upload | PASS: 512 chunks, extra byte rejected, fresh job-object recovery retained queued status |
+| Three 600-second synthetic speech jobs, real VAD/acoustics and mocked AI replies | PASS: 32.601 / 15.355 / 16.133 seconds; process peak RSS 1,001.3 MiB; cgroup peak 1,073.5 MiB |
+
+All three containers exited 0 with `oom_killed=false`; their named volumes and
+containers were removed. Speech post-job cgroup usage was 886.6 / 925.7 / 925.6
+MiB. Three jobs do not establish long-term steady state. Emulation produced
+NNPACK hardware warnings but completed the actual speech checks.
+
+The day probe reported peak RSS 2,102.4 MiB and cgroup peak 2,048.0 MiB while
+mapping 5.53 GB of disk-backed PCM; these counters account for mapped/shared/file
+pages differently. At completion, cgroup usage fell to 613.3 MiB, including
+601.6 MiB anonymous and 0.2 MiB file memory. The upload probe also reached the
+2-GiB cgroup cap through file cache and fell to 278.0 MiB after cleanup. Do not
+interpret file-cache-inclusive peaks as the application's irreducible RAM need.
+
+Evidence: `/private/tmp/mirra-deployment-build-b0d5933.log` and
+`/private/tmp/mirra-deployment-capacity-b0d5933/` (image identity, volume check,
+JSON stage logs, exit/OOM states and full logs). These are synthetic offline
+checks under Docker Desktop amd64 emulation. They close the local exact-image
+build and bounded-probe gaps. Live providers, the actual host/volume, simultaneous
+incoming traffic, sustained usage and physical recording quality remain open.
+No cloud CI, deployment, migration, live AI call or purchase occurred.
+
 ## Ordered rollout after integration approval
 
 1. Freeze the reconciled SHA and reviewed outgoing range. Preserve six phone
@@ -373,6 +414,6 @@ check environment, start command and health path explicitly.
 Missing gates: an authenticated Supabase dashboard/SQL session or securely supplied
 direct/pooler administrative connection; exact remote migration history/privileges;
 provider choice and paid-capacity approval; verified raw-audio backup configuration;
-successful final container build/mount validation; final integrated local checks;
+final combined cloud CI and actual provider-mount validation;
 authorized live provider validation and renewed physical/TestFlight acceptance.
 Root coordinates these actions and shared-ledger updates.

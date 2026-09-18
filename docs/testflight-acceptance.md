@@ -43,9 +43,13 @@ corrected stale Home limit copy and restored main's MIME-extension fallback;
 50 app checks and TypeScript pass. Final review and combined CI are pending.
 
 Infrastructure evidence is in [the rollout assessment](beta-workstreams/rollout.md).
-Production schema and Render settings remain unchanged. The corrected streaming-mock full-day probe passes all 144 chunks at 2 GiB
-in a cached Python 3.14 runtime after upload-buffer cleanup. It uses mocked AI/VAD;
-exact deployment-runtime and live sustained-capacity verification remain open.
+Production schema and Render settings remain unchanged. The exact Python 3.11.16 deployment image builds and passes non-root volume
+access, a corrected full-day/144-chunk probe, maximum 2-GiB upload/recovery, and
+three real-VAD synthetic speech jobs under a 2-GiB memory cap. AI replies are
+mocked; the day probe also mocks VAD. Actual hosting/providers and sustained
+concurrent capacity remain open. Independent review through `b0d5933` found no
+remaining actionable bugs. GitHub push/CI awaits explicit user authorization
+after automatic approval review blocked repository-code transfer.
 
 ## Earlier beta scope and evidence
 
