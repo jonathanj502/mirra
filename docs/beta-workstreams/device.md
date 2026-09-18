@@ -69,8 +69,8 @@ All native, permission, network and auth boundaries in these hook tests are mock
 
 ## Hardware and provider status
 
-**TF-2 installed-device behavior PASS (user-observed on the Personal Team build).
-TF-1 and TF-3 through TF-7 remain OPEN.**
+**TF-2 and TF-5 installed-device behavior PASS (user-observed on the Personal
+Team build). TF-1, TF-3, TF-4, TF-6, and TF-7 remain OPEN.**
 
 Phone confirmed by distribution's device inventory: **iPhone 13 (`iPhone14,5`),
 iOS 26.6.2 (23G90)**. The user replied "connected" in this task after cable,
@@ -130,10 +130,18 @@ backend; it does not validate candidate audio processing or change deployment.
 Personal Team delivery does not pass the TestFlight installation gate.
 Distribution retains native signing/install ownership for subsequent candidates.
 
-Next physical check requested: keep Wi-Fi off, enable Airplane Mode, tap Record,
-decline the iOS microphone permission, and report whether Mirra stays responsive
-and shows "Open microphone settings". Denial, Settings recovery, and actual
-capture/save are still pending; TF-5 remains OPEN.
+For TF-5, the user followed the offline microphone-denial check and reported
+**"it shows open microphone settings"**. After instructions to tap that action,
+enable Microphone in Settings, return to Mirra, record about ten seconds of
+speech, and Stop with Airplane Mode on/Wi-Fi off, the user confirmed
+**"it does say 1 recording saved on this device"**. Recorded at
+**2026-09-18 01:36 UTC**: **TF-5 PASS (user-observed)** for denial, Settings
+recovery, responsive recording/Stop, and one local saved row. This establishes
+permission recovery/local saving, not the clip's audio completeness or an upload.
+
+Next TF-4 subcheck requested: remain offline, record/Stop a second short clip,
+verify two saved recordings, force-close/reopen, and confirm both remain. The
+physical restart/reconnect/usage/account/token-expiry checks remain pending.
 
 Production remains `https://mirra-backend-wp2b.onrender.com`, deployed commit
 `f8cf5d7196654aff3ff578bb5503668aa3ff15cd`, Free 512 MB, not this candidate.
@@ -146,7 +154,7 @@ separate evidence; complete microphone, local-save/restart, and lock checks offl
 | TF-2 | Installed build cold launch, public production auth, restored correct account/history after force-quit, cellular read | PASS — user-observed on installed a4b3c14 Personal Team build, iPhone 13/iOS 26.6.2; recorded 2026-09-18 01:21 UTC |
 | TF-3 | Real 30–60s capture, one saved nonempty debrief, history after relaunch, model Reflect reply | OPEN — device and working backend needed |
 | TF-4 | Two offline stopped clips survive restart; reconnect yields two debriefs and exactly +2 usage; expired token/account switch/consent recovery | OPEN — device and provider evidence needed |
-| TF-5 | Deny mic, responsive error/Settings action, grant in Settings, return and record/Stop/save without stuck state | OPEN — mocked regression only |
+| TF-5 | Deny mic, responsive error/Settings action, grant in Settings, return and record/Stop/save without stuck state | PASS — user confirmed Settings recovery and one stopped clip saved offline on a4b3c14; recorded 2026-09-18 01:36 UTC |
 | TF-6 | At least 5 minutes locked with beginning/during/after-lock audio intact | OPEN — actual audio required |
 | TF-7 | Native 1400s auto-stop, one saved clip, beginning/middle/end audio, one debrief/history/Reflect result; equivalent at-limit import and over-limit rejection | OPEN — imports/provider checks coordinated separately |
 
@@ -167,6 +175,14 @@ decoded audio, so a displayed duration alone cannot prove the native boundary
 or complete audio. Capture preserves the original and falls back if metadata
 cannot be read; imports owns its boundary handling. Temporary fixtures/logs:
 `/private/tmp/mirra-imports-8b65`.
+
+## UI follow-up requested by the user — deferred
+
+- [ ] Simplify the saved-recording section on Record. On reaching **"1 recording
+  saved on this device"**, the user reported that the phone shows too much text
+  and asked to keep a note for a future simplification. Reduce the copy around
+  that state while keeping the saved status and useful actions clear. No UI
+  implementation change was requested for this test session.
 
 ## Device handoff: one check at a time
 
