@@ -1,5 +1,6 @@
 import io
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -24,8 +25,13 @@ def transcription_client(monkeypatch):
             {"start": 0.6, "end": 0.9, "speaker": "B", "text": "Hi."},
         ],
     }
+    create = client.audio.transcriptions.create
+    def capture(**request):
+        create.uploaded_bytes = request["file"].getvalue()
+        return create.return_value
+    create.side_effect = capture
     monkeypatch.setattr(transcription, "OpenAI", factory)
-    return client.audio.transcriptions.create
+    return create
 
 
 def test_transcribes_the_complete_timeline_with_speakers(transcription_client):
@@ -36,7 +42,7 @@ def test_transcribes_the_complete_timeline_with_speakers(transcription_client):
     assert request["response_format"] == "diarized_json"
     assert request["chunking_strategy"] == "auto"
     assert "prompt" not in request and "timestamp_granularities" not in request
-    encoded, sr = sf.read(request["file"])
+    encoded, sr = sf.read(io.BytesIO(transcription_client.uploaded_bytes))
     assert sr == 16000
     np.testing.assert_allclose(encoded, audio, atol=1 / 32768)
     assert turns == [TranscribedTurn(0.1, 0.4, "A", "Hello."), TranscribedTurn(0.6, 0.9, "B", "Hi.")]
@@ -51,7 +57,7 @@ def test_compressed_source_is_used_when_decoded_wav_exceeds_limit(monkeypatch, t
     monkeypatch.setattr(transcription, "MAX_TRANSCRIPTION_BYTES", 100)
     transcription.transcribe(np.zeros(16000), 16000, source_audio=b"compressed", content_type="Audio/WebM; codecs=opus")
     request = transcription_client.call_args.kwargs
-    assert request["file"].read() == b"compressed"
+    assert transcription_client.uploaded_bytes == b"compressed"
     assert request["file"].name.endswith(".webm")
     transcription_client.assert_called_once()
 
@@ -62,6 +68,42 @@ def test_oversized_audio_is_not_split_or_silently_truncated(monkeypatch, transcr
     with pytest.raises(TranscriptionInputTooLarge):
         transcription.transcribe(np.zeros(16000), 16000, source_audio=source, content_type=content_type)
     transcription_client.assert_not_called()
+
+
+@pytest.mark.parametrize("compressed", [False, True])
+@pytest.mark.parametrize("failure", [None, "encode", "size", "client", "request", "parse"])
+def test_transcription_closes_buffers_after_success_and_failures(monkeypatch, transcription_client, compressed, failure):
+    buffers = []
+    def buffer(*args):
+        value = io.BytesIO(*args)
+        buffers.append(value)
+        return value
+    monkeypatch.setattr(transcription, "io", SimpleNamespace(BytesIO=buffer))
+    if compressed or failure == "size":
+        monkeypatch.setattr(transcription, "MAX_TRANSCRIPTION_BYTES", 100)
+    if failure == "encode":
+        monkeypatch.setattr(transcription.sf, "write", MagicMock(side_effect=RuntimeError("encode")))
+    elif failure == "client":
+        transcription.OpenAI.side_effect = RuntimeError("client")
+    elif failure == "request":
+        transcription_client.side_effect = RuntimeError("request")
+    parse_turns = transcription._parse_turns
+    def parse(payload, duration):
+        assert not buffers[-1].closed, "The upload stays open until response parsing completes"
+        if failure == "parse":
+            raise RuntimeError("parse")
+        return parse_turns(payload, duration)
+    monkeypatch.setattr(transcription, "_parse_turns", parse)
+    kwargs = {"source_audio": b"compressed", "content_type": "audio/webm"} if compressed and failure != "size" else {}
+    if failure:
+        error = TranscriptionInputTooLarge if failure == "size" else RuntimeError
+        with pytest.raises(error):
+            transcription.transcribe(np.zeros(16000), 16000, **kwargs)
+    else:
+        assert len(transcription.transcribe(np.zeros(16000), 16000, **kwargs)) == 2
+    assert buffers and all(value.closed for value in buffers)
+    if compressed and failure not in ("encode", "size"):
+        assert len(buffers) == 2, "Close both the discarded WAV and replacement source buffer"
 
 
 @pytest.mark.parametrize("segment", [

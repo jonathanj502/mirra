@@ -68,26 +68,30 @@ def transcribe(
         return []
     # Preserve pauses and all speakers so timestamps refer to the original recording.
     buf = io.BytesIO()
-    sf.write(buf, audio, sample_rate, format="WAV", subtype="PCM_16")
-    buf.name = "conversation.wav"
-    if buf.tell() > MAX_TRANSCRIPTION_BYTES:
-        suffix = SOURCE_SUFFIXES.get((content_type or "").split(";", 1)[0].strip().lower())
-        if source_audio and suffix and len(source_audio) <= MAX_TRANSCRIPTION_BYTES:
-            # A long M4A/WebM can fit when its decoded PCM does not. Keep one
-            # request: anonymous speaker IDs cannot be joined across calls.
-            buf = io.BytesIO(source_audio)
-            buf.name = "conversation" + suffix
-        else:
-            raise TranscriptionInputTooLarge("Recording exceeds the transcription upload limit")
-    buf.seek(0)
-    with OpenAI(api_key=settings.openai_api_key, timeout=180.0, max_retries=1) as client:
-        response = client.audio.transcriptions.create(
-            model=TRANSCRIPTION_MODEL, file=buf, response_format="diarized_json",
-            chunking_strategy="auto",
-            **({"extra_body": {"known_speaker_names": list(known_speakers),
-                              "known_speaker_references": list(known_speakers.values())}} if known_speakers else {}),
-        )
-    return _parse_turns(response.model_dump(), len(audio) / sample_rate)
+    try:
+        sf.write(buf, audio, sample_rate, format="WAV", subtype="PCM_16")
+        buf.name = "conversation.wav"
+        if buf.tell() > MAX_TRANSCRIPTION_BYTES:
+            suffix = SOURCE_SUFFIXES.get((content_type or "").split(";", 1)[0].strip().lower())
+            if source_audio and suffix and len(source_audio) <= MAX_TRANSCRIPTION_BYTES:
+                # A long M4A/WebM can fit when its decoded PCM does not. Keep one
+                # request: anonymous speaker IDs cannot be joined across calls.
+                buf.close()
+                buf = io.BytesIO(source_audio)
+                buf.name = "conversation" + suffix
+            else:
+                raise TranscriptionInputTooLarge("Recording exceeds the transcription upload limit")
+        buf.seek(0)
+        with OpenAI(api_key=settings.openai_api_key, timeout=180.0, max_retries=1) as client:
+            response = client.audio.transcriptions.create(
+                model=TRANSCRIPTION_MODEL, file=buf, response_format="diarized_json",
+                chunking_strategy="auto",
+                **({"extra_body": {"known_speaker_names": list(known_speakers),
+                                  "known_speaker_references": list(known_speakers.values())}} if known_speakers else {}),
+            )
+        return _parse_turns(response.model_dump(), len(audio) / sample_rate)
+    finally:
+        buf.close()
 
 
 def speaker_reference(audio: np.ndarray, sample_rate: int, turns: list[TranscribedTurn], speaker: str) -> str | None:
