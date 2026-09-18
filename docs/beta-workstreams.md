@@ -100,7 +100,10 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
   Settings recovery with a stopped clip saved offline. Two stopped clips also
   survived offline restart (partial TF-4). These checks used the current old
   production backend; candidate audio processing is not validated. Repeat the
-  release checks on TestFlight. Device owns the pending lock/audio/reconnect checks.
+  release checks on TestFlight. The user also confirmed a 5+ minute locked capture
+  saved as the third queued clip with duration ≥300s (partial TF-6); actual audio
+  markers and debrief are unverified. Device/distribution coordinate read-only
+  local clip inspection while keeping the originals queued and the phone offline.
 - No production migration, deployment, push or purchase. Independent pre-push
   review, actual Supabase/PostgREST validation, integrated real-provider memory,
   sustained load, TestFlight distribution and the remaining physical checks stay open.
