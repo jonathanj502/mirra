@@ -63,6 +63,13 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
 - Distribution and device coordinate free personal-team build installation and
   physical checks directly. Device received reliability's TF-4 recovery checklist.
 
+## Received handoffs
+
+| Issue | Local commits | Evidence and remaining work | Integration status |
+| --- | --- | --- | --- |
+| Shared duration reader (imports) | `b5bb77b6bf7a76d2a1f52301c919bd4d72d3930f` | Validated `getAudioDuration` helper; imports reports four passing helper tests. Device cherry-picked the same patch as `34148ad3d889c0c46e35d00fb530be92c37121a8`. | Include once before capture; full imports work is still in progress. |
+| Device/capture | `b406afe7668809537efad4369ded7e037b915c4c` | Fresh native recording files, completed-file duration with audio-preserving fallback, microphone Settings recovery and interruption UI. Evidence file in commit reports 31 app tests, TypeScript and diff checks passed. Physical TF-2–7 remain OPEN, including interruption timer persistence and locked auto-stop/save. | Code ready for integration after shared helper. Not yet merged; distribution was sent the candidate for device-build preparation. |
+
 ## Shared resources and boundaries
 
 - Only distribution owns Xcode setup/signing/native build operations; device
