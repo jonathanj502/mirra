@@ -263,12 +263,15 @@ four earlier clips remain:
 
 The separate final short clip started `2026-09-18T03:39:28.066Z`, with its manifest
 modified `03:39:30Z`, about ten seconds after the maximum clip was saved. Size:
-84,995 bytes; its audio was not copied/decoded. The user has been asked whether
-they started this short recording. **Do not infer a duplicate-save bug or a
-manual extra recording until clarified.** Distribution confirmed from cached
-metadata that there is one queue owner folder and all six completed manifests
-belong to that same owner. Different account scope does not explain the count
-difference. No additional device access was needed for that check.
+84,995 bytes; its audio was not copied/decoded. When asked whether they started
+another brief recording after the long one, the user confirmed **"yes that was
+me by accident"** (recorded **2026-09-18 04:00 UTC**). The sixth clip is therefore
+a separate user-initiated accidental capture, resolving the count discrepancy;
+it is not evidence of a duplicate save from the maximum run. Distribution
+confirmed from cached metadata that there is one queue owner folder and all six
+completed manifests belong to that same owner. No additional device access was
+needed for that check. All six originals remain saved; accidental capture does
+not authorize deletion.
 
 Only the two new manifests needed to select the maximum run and that maximum
 audio file were copied. No app launch, phone writes, queue changes, auth-data
@@ -279,6 +282,11 @@ on the computer and the user was asked specifically about all three markers
 confirmed **"i can hear everything"**. Recorded at **2026-09-18 03:59 UTC**:
 **maximum-recording marker listening PASS (user-observed)**. This confirms local
 audio preservation; delivery of these markers to a debrief remains untested.
+With the extra clip explained, **TF-7 local native auto-stop/save/audio subcheck
+PASS**: user-observed 23:20 auto-stop, one distinct maximum file at 1399.952834s,
+successful full decode, and all three markers audible. The earlier user-reported
+five-recording restart result and later measured six-recording baseline remain
+separate observations.
 
 TF-7 remains OPEN. Account for all six actual queued clips: even a zero baseline
 would exceed the default five-debrief monthly cap. Keep originals offline and
@@ -299,7 +307,7 @@ separate evidence; complete microphone, local-save/restart, and lock checks offl
 | TF-4 | Two offline stopped clips survive restart; reconnect yields two debriefs and exactly +2 usage; expired token/account switch/consent recovery | OPEN — two clips survived offline restart (user-observed 2026-09-18 01:38 UTC); reconnect/usage/duplicate/token/account/consent checks pending |
 | TF-5 | Deny mic, responsive error/Settings action, grant in Settings, return and record/Stop/save without stuck state | PASS — user confirmed Settings recovery and one stopped clip saved offline on a4b3c14; recorded 2026-09-18 01:36 UTC |
 | TF-6 | At least 5 minutes locked with beginning/during/after-lock audio intact | Local capture/audio PASS — 424.784399s full decode, user confirms >=5min continuously locked and all 3 markers audible (2026-09-18 03:08 UTC); debrief delivery OPEN |
-| TF-7 | Native 1400s auto-stop, one saved clip, beginning/middle/end audio, one debrief/history/Reflect result; equivalent at-limit import and over-limit rejection | OPEN — maximum file 1399.952834s/full decode and all three audible markers PASS (user-observed 2026-09-18 03:59 UTC); actual queue is 6 under one owner (includes separate later 2.436644s clip); extra-clip clarification, imports/provider/end-to-end checks pending |
+| TF-7 | Native 1400s auto-stop, one saved clip, beginning/middle/end audio, one debrief/history/Reflect result; equivalent at-limit import and over-limit rejection | Local native auto-stop/save/audio PASS — maximum file 1399.952834s/full decode and all three audible markers; sixth clip confirmed accidental user capture (2026-09-18 04:00 UTC). Actual queue is 6 under one owner; imports/provider/end-to-end checks remain OPEN |
 
 Additional native check: Expo resumes interrupted iOS recorders with
 `startRecording()` → `AVAudioRecorder.record()` without reapplying `forDuration`.
