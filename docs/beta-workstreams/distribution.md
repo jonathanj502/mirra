@@ -230,11 +230,37 @@ Mac. The approved read-only inspection and copy are complete for the installed
   and the selected audio. The app was not launched; no phone files or queue
   entries were changed. No backend/provider request or upload was made.
   Audio, raw manifests, account identifiers, and transcripts are not in Git.
-- **TF-6 remains open:** the longest saved clip is approximately **1m47s**, below
-  the required **300 seconds**. The cause of the shorter capture has not been
-  established. Marker listening is unconfirmed. The device/capture task owns
-  the longer locked-screen test and playback confirmation; queued clips remain
+- **TF-6 remained open at this first inspection:** the longest saved clip was
+  approximately **1m47s**, below the required **300 seconds**. The cause of the
+  shorter capture has not been established. Marker listening is unconfirmed.
+  The device/capture task owns the longer locked-screen test and playback
+  confirmation; queued clips remain
   offline pending integration's backend-deployment and usage-baseline checks.
+
+### Longer completed recording — same approved inspection scope
+
+The user subsequently reported completing a recording longer than seven minutes.
+The device/capture task requested inspection after Stop/save. A fresh listing
+confirmed one new completed recording in addition to the three above.
+
+- New recording: `1789699836005-og44nw1fwsq`, started at
+  **2026-09-18 02:50:36.005 UTC**; saved manifest modified at **02:57:41 UTC**.
+  Only this new manifest and audio were copied.
+- **PASS (duration and local file check):** the manifest and macOS `afinfo`
+  agree on **424.784399 seconds (7m04.8s)**. The **5,429,285-byte** local copy
+  matches the device listing. Audio is AAC, stereo, 44.1 kHz; a complete local
+  FFmpeg decode exited **0** with no errors.
+- Local audio:
+  `/private/tmp/mirra-distribution-capture-review/retest-zt3h3e_y/recording-1789699836005-og44nw1fwsq.m4a`.
+  Sanitized summary: `selected-summary.json` beside it. Directory permissions
+  are **0700**, audio **0600**. SHA-256:
+  `5ec6971a690b57696af65f9d2051eeffe0e9163b516f1ec365773b599fe64134`.
+- The app was not launched, and phone originals and queue entries were left
+  untouched. No backend/provider calls or uploads occurred; private audio and
+  manifests remain outside Git.
+- **TF-6 remains open:** the file exceeds 300 seconds, but the locked interval
+  and before/during/after-lock markers still require confirmation. The
+  device/capture task has the local clip and owns that verification.
 
 ## TestFlight work still required
 
