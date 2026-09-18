@@ -77,10 +77,42 @@ jobs:
           OPENAI_API_KEY: test-key
   container:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t mirra:check backend
+      - name: Probe full-day processing and maximum upload in the deployment image
+        timeout-minutes: 15
+        run: |
+          mkdir -p capacity-logs
+          failed=0
+          for mode in day upload; do
+            volume="mirra-capacity-$mode"
+            docker volume create "$volume" >/dev/null
+            if docker run --name "$volume" --network none --memory 2g --memory-swap 2g --cpus 1 \
+              -e PYTHONPATH=/srv/mirra -e TMPDIR=/srv/mirra/.recordings \
+              -e NUMBA_CACHE_DIR=/srv/mirra/.recordings/numba \
+              --mount "type=volume,source=$volume,target=/srv/mirra/.recordings" \
+              --mount "type=bind,source=$GITHUB_WORKSPACE/backend/scripts/benchmark_rollout.py,target=/tmp/benchmark_rollout.py,readonly" \
+              --entrypoint python mirra:check -u /tmp/benchmark_rollout.py "$mode" --runs 1 \
+              >"capacity-logs/$mode.log" 2>&1; then
+              echo "$mode probe passed"
+            else
+              failed=1
+              tail -80 "capacity-logs/$mode.log"
+            fi
+            docker inspect --format '{"exit":{{.State.ExitCode}},"oom_killed":{{.State.OOMKilled}}}' "$volume" \
+              >"capacity-logs/$mode-state.json"
+            docker rm "$volume" >/dev/null
+            docker volume rm "$volume" >/dev/null
+          done
+          exit "$failed"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: capacity-logs
+          path: capacity-logs/
+          retention-days: 7
   android:
     runs-on: ubuntu-latest
     timeout-minutes: 35

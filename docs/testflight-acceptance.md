@@ -6,7 +6,7 @@ Updated: 2026-09-18 UTC. Starting commit: `f628b73`.
 On 2026-09-18 the user selected `origin/main` at `64db03b`, including resumable
 uploads and disk-backed, chunked processing for recordings up to 24 hours/2 GiB.
 This supersedes the earlier single-request/23m20s product limit. Parallel tasks
-are reconciling only still-needed fixes and validating rollout requirements; see
+have reconciled still-needed fixes and are validating rollout requirements; see
 [beta-workstreams.md](beta-workstreams.md). The new combined candidate is not yet
 reviewed, deployed, or installed. Historical device results below apply to the
 earlier `a4b3c14` build, not automatically to this changed implementation.
@@ -18,7 +18,7 @@ earlier `a4b3c14` build, not automatically to this changed implementation.
 | TF-1 | Reviewed production build, App Store Connect processing, TestFlight install and standalone cold launch. | OPEN |
 | TF-2 | Public HTTPS sign-in, correct restored account, authenticated reads and cellular access. | OPEN; earlier build passed and must be rechecked |
 | TF-3 | Actual iPhone recording uploads, produces a nonempty saved debrief, reopens in history, and receives a model Reflect reply. | OPEN |
-| TF-4 | Existing clips survive the app update; resumable/offline uploads, process restart and cancellation preserve originals and prevent duplicate debriefs/charges or cross-account access. | OPEN; compatibility fixes and new transaction validation in progress |
+| TF-4 | Existing clips survive the app update; resumable/offline uploads, process restart and cancellation preserve originals and prevent duplicate debriefs/charges or cross-account access. | OPEN; compatibility fixes and local transaction checks pass; physical upgrade/reconnect unverified |
 | TF-5 | Microphone denial, Settings recovery, recording/Stop/save without a stuck recorder. | OPEN; earlier build passed and must be rechecked |
 | TF-6 | At least five minutes continuously locked, intact before/during/after audio, then successful debrief delivery. | OPEN; earlier local capture/audio passed only |
 | TF-7 | New 24-hour/2 GiB boundaries for capture/import, safe auto-stop/save, chunked transcription with timeline/speaker handling, clear over-limit errors, and eventual safe recovery under competing uploads. | OPEN; earlier 1400s checks do not establish this |
@@ -29,7 +29,27 @@ canonical pipeline, and updated Render build/start/readiness configuration.
 The old 512 MiB failure and 2 GB test suggestion are historical measurements of a
 different implementation. Keep them as evidence, not new-architecture sizing.
 
+## Current integration evidence
+
+Reconciliation `dbb25dea` was merged locally, preserving main's architecture and
+selectively retaining recorder identity, saved-file compatibility, account/consent
+checks, import validation and production build safeguards. See
+[the disposition table](beta-workstreams/reconciliation.md). App checks (50),
+TypeScript, backend tests (170), four real PostgreSQL transaction checks,
+all-platform prebuild/export and website checks (5) passed at that snapshot.
+A subsequent focused transcription cleanup closes upload buffers on every exit;
+34 diarization checks pass. Final independent review and combined CI are pending.
+
+Infrastructure evidence is in [the rollout assessment](beta-workstreams/rollout.md).
+Production schema and Render settings remain unchanged. Initial full-day memory
+results need a corrected streaming mock and exact deployment-runtime verification.
+
 ## Earlier beta scope and evidence
+
+**Historical archive:** everything below describes earlier source revisions.
+Do not follow its superseded deployment instructions or apply the removed
+September 18 durable-receipt migration. Current rollout uses canonical September
+14/15/16 migrations after remote history reconciliation.
 
 The user agreed to the original gates on 2026-09-15. On 2026-09-17 they first
 selected one hour, then reduced the maximum to **23 minutes 20 seconds (1400
@@ -42,7 +62,7 @@ The user initially chose the current free Render plan and subsequently reopened
 discussion of an upgrade or alternative host. No paid upgrade is authorized.
 The confirmed 512 MB memory failure remains open.
 
-## Parallel work integrated locally — 2026-09-18 UTC
+## Historical integration before adopting newer main
 
 Completed memory, transcription, import, queue/capture, native Release guard and
 durable-quota code is combined on `codex/beta-integration-2026-09-17`.
