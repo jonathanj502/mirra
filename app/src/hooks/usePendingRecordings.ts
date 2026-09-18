@@ -71,12 +71,13 @@ export function usePendingRecordings() {
             stage = 'upload';
             const controller = new AbortController();
             activeRequest = controller;
-            // Bound a stalled connection. Retrying this ID returns the same server debrief.
-            const timeout = setTimeout(() => controller.abort(), 10 * 60_000);
+            // Allow the bounded provider retries for a 23m20s clip plus local work.
+            // This client deadline is provisional; a timed-out ID remains safe to retry.
+            const timeout = setTimeout(() => controller.abort(), 35 * 60_000);
             let response;
             try {
               response = await uploadSession(data.session.access_token, audio, {
-                title: 'Recorded conversation', clientDurationSeconds: row.seconds,
+                title: row.title ?? 'Recorded conversation', clientDurationSeconds: row.seconds > 0 ? row.seconds : undefined,
                 recordingId: row.id, startedAt: row.startedAt,
               }, controller.signal);
             } finally {
@@ -94,13 +95,14 @@ export function usePendingRecordings() {
           } catch (err) {
             if (cancelled) break;
             const status = err instanceof ApiError ? err.status : 0;
-            const delay = [413, 415, 422].includes(status) ? Infinity : status === 402 ? 300_000 : status >= 500 || status === 429 ? 60_000 : 15_000;
+            const permanent = [400, 410, 413, 415, 422].includes(status);
+            const delay = permanent ? Infinity : status === 402 ? 300_000 : status >= 500 || status === 429 ? 60_000 : 15_000;
             const message = stage === 'privacy' ? 'Could not check your privacy choice. Upload is paused.'
               : status || stage === 'storage' ? friendlyErrorMessage(err, 'Could not access saved audio.')
               : 'Waiting for a connection. Upload resumes automatically.';
             failures.current.set(row.id, { retryAt: Date.now() + delay, message });
             setPending(items => items.map(item => item.id === row.id ? { ...item, error: message } : item));
-            if (stage !== 'storage' && ![413, 415, 422].includes(status)) break;
+            if (stage !== 'storage' && !permanent) break;
           } finally {
             if (audio) releasePendingAudio(audio);
             busyId.current = null;

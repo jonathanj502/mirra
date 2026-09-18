@@ -51,6 +51,147 @@ async function until(check) {
   assert.fail('Timed out waiting for recovery');
 }
 
+function queueHarness(upload, initialRows) {
+  const state = hooks();
+  const controls = { now: 0, account: 'owner', token: 'fresh-token', tick() {}, foreground() {}, timeout() {} };
+  let rows = initialRows ?? [{ id: 'clip', userId: 'owner', seconds: 0, title: 'Imported meeting',
+    startedAt: '2026-09-18T00:00:00Z', audio: { uri: 'file:///original', name: 'clip.webm', type: 'audio/webm' } }];
+  const { usePendingRecordings } = load('hooks/usePendingRecordings.ts', {
+    react: state.react,
+    'react-native': { Platform: { OS: 'ios' }, AppState: { currentState: 'active',
+      addEventListener: (_, callback) => { controls.foreground = callback; return { remove() {} }; },
+    } },
+    '@/auth/AuthContext': { useAuth: () => ({ user: { id: controls.account } }) },
+    '@/api/supabase': { supabase: { auth: { getSession: async () => ({ data: {
+      session: { user: { id: controls.account }, access_token: controls.token },
+    } }) } } },
+    '@/privacy/aiConsent': { hasAIConsent: async () => true }, '@/api/http': http,
+    '@/storage/pendingRecordings': {
+      listPendingRecordings: async owner => rows.filter(row => row.userId === owner),
+      readPendingAudio: async row => row.audio, releasePendingAudio() {},
+      async removePendingRecording(row) { rows = rows.filter(item => item.id !== row.id); },
+    },
+    '@/api/client': { uploadSession: upload },
+  }, {
+    Date: class extends Date { static now() { return controls.now; } },
+    setInterval: callback => { controls.tick = callback; return 1; }, clearInterval() {},
+    setTimeout: (callback, ms) => { assert.equal(ms, 35 * 60_000); controls.timeout = callback; return 2; },
+    clearTimeout() {},
+  });
+  return { controls, rows: () => rows, render: () => state.render(usePendingRecordings), unmount: state.unmount };
+}
+
+test('busy backoff, bounded timeout and a lost successful response retain one ID and delete only after acknowledgment', async () => {
+  const requests = [];
+  const committed = new Set();
+  const queue = queueHarness(async (token, audio, metadata, signal) => {
+    requests.push({ token, audio, metadata });
+    if (requests.length === 1) throw new http.ApiError('Busy', 503);
+    if (requests.length === 2) return new Promise((_, reject) => {
+      signal.addEventListener('abort', () => reject(new Error('Timed out')));
+    });
+    committed.add(metadata.recordingId);
+    if (requests.length === 3) throw new TypeError('Network request failed');
+    return { debrief: { id: metadata.recordingId } };
+  });
+  try {
+    queue.render();
+    await until(() => queue.render().pendingRecordings[0]?.error === 'Busy');
+    queue.controls.now = 59_999;
+    queue.controls.tick();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requests.length, 1);
+    queue.controls.now = 60_000;
+    queue.controls.tick();
+    await until(() => requests.length === 2);
+    queue.controls.timeout();
+    await until(() => queue.render().pendingRecordings[0]?.error?.startsWith('Waiting for a connection'));
+    assert.equal(queue.rows().length, 1);
+    queue.controls.now += 15_000;
+    queue.controls.tick();
+    await until(() => requests.length === 3 && queue.render().uploadingId === null);
+    assert.equal(committed.size, 1);
+    assert.equal(queue.rows().length, 1, 'A lost acknowledgment cannot delete local audio');
+    queue.controls.foreground('active');
+    await until(() => queue.rows().length === 0);
+    assert.equal(requests.length, 4);
+    assert.equal(committed.size, 1);
+    assert.ok(requests.every(request => request.metadata.recordingId === 'clip'));
+    assert.equal(requests[0].metadata.clientDurationSeconds, undefined);
+    assert.equal(requests[0].metadata.title, 'Imported meeting');
+  } finally {
+    queue.unmount();
+  }
+});
+
+for (const status of [400, 410, 413, 415, 422]) {
+  test(`HTTP ${status} preserves the original clip without automatic retry and allows the next clip`, async () => {
+    const requests = [];
+    const clip = id => ({ id, userId: 'owner', seconds: 4, startedAt: '2026-09-18T00:00:00Z',
+      audio: { uri: `file:///${id}.m4a`, name: `${id}.m4a`, type: 'audio/mp4' } });
+    const queue = queueHarness(async (_, __, metadata) => {
+      requests.push(metadata.recordingId);
+      if (metadata.recordingId === 'invalid') throw new http.ApiError('Cannot analyze this clip', status);
+      return { debrief: { id: metadata.recordingId } };
+    }, [clip('invalid'), clip('valid')]);
+    try {
+      queue.render();
+      await until(() => queue.render().latestDebrief?.id === 'valid');
+      queue.controls.now += 24 * 60 * 60_000;
+      queue.controls.tick();
+      queue.controls.foreground('active');
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(requests, ['invalid', 'valid']);
+      assert.deepEqual(queue.rows().map(row => row.id), ['invalid']);
+      assert.equal(queue.render().pendingRecordings[0].error, 'Cannot analyze this clip');
+      await queue.render().discard(queue.rows()[0]);
+      assert.equal(queue.rows().length, 0, 'Only an explicit discard removes rejected audio');
+    } finally {
+      queue.unmount();
+    }
+  });
+}
+
+test('401 refresh retry and an account switch abort preserve the original account queue', async () => {
+  const requests = [];
+  let aborts = 0;
+  const queue = queueHarness(async (token, audio, metadata, signal) => {
+    requests.push({ token, metadata });
+    if (requests.length === 1) throw new http.ApiError('Expired token', 401);
+    if (requests.length === 2) return new Promise((_, reject) => {
+      signal.addEventListener('abort', () => { aborts++; reject(new Error('Aborted')); });
+    });
+    return { debrief: { id: metadata.recordingId } };
+  });
+  try {
+    queue.render();
+    await until(() => queue.render().pendingRecordings[0]?.error === 'Expired token');
+    queue.controls.token = 'refreshed-token';
+    queue.controls.now += 15_000;
+    queue.controls.tick();
+    await until(() => requests.length === 2);
+    assert.equal(requests[1].token, 'refreshed-token');
+    queue.controls.account = 'other';
+    queue.controls.token = 'other-account-token';
+    queue.render();
+    await until(() => aborts === 1);
+    assert.equal(queue.render().pendingRecordings.length, 0);
+    assert.equal(queue.rows().length, 1);
+    queue.controls.tick();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requests.length, 2);
+    queue.controls.account = 'owner';
+    queue.controls.token = 'owner-returned-token';
+    queue.render();
+    queue.controls.tick();
+    await until(() => queue.rows().length === 0);
+    assert.equal(requests.at(-1).token, 'owner-returned-token');
+    assert.ok(requests.every(request => request.token !== 'other-account-token'));
+  } finally {
+    queue.unmount();
+  }
+});
+
 test('durable native queue survives restart, isolates accounts, serializes reconnect uploads and deletes only acknowledged audio', async () => {
   const root = await fs.mkdtemp(join(tmpdir(), 'mirra-recording-test-'));
   const disk = {
@@ -75,7 +216,7 @@ test('durable native queue survives restart, isolates accounts, serializes recon
   let mounted;
   try {
     await storage().savePendingRecording(clip('one'));
-    await storage().savePendingRecording(clip('two'));
+    await storage().savePendingRecording({ ...clip('two'), title: 'Imported meeting' });
     await storage().savePendingRecording(clip('private', 'other'));
     await fs.unlink(source); // Temporary recording cache is gone after restart.
     const uploads = [];
@@ -144,11 +285,59 @@ test('durable native queue survives restart, isolates accounts, serializes recon
     await until(async () => (await storage().listPendingRecordings('owner')).length === 0);
     await until(() => mounted.render().latestDebrief?.id === 'three');
     assert.deepEqual(uploads.slice(-3).map(row => row.metadata.recordingId), ['one', 'two', 'three']);
+    assert.equal(uploads.find(row => row.metadata.recordingId === 'two').metadata.title, 'Imported meeting');
+    assert.equal(uploads.find(row => row.metadata.recordingId === 'one').metadata.title, 'Recorded conversation');
     assert.equal((await storage().listPendingRecordings('other')).length, 1);
     assert.equal(uploads.at(-1).token, 'refreshed-token');
   } finally {
     mounted?.unmount();
     assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep + 'mirra-recording-test-'));
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('native save failures preserve source bytes; restart recovers a temporary manifest and legacy filenames', async () => {
+  const root = await fs.mkdtemp(join(tmpdir(), 'mirra-storage-reliability-'));
+  const cache = join(root, 'cache');
+  await fs.mkdir(cache);
+  const source = join(cache, 'original.m4a');
+  let failAt;
+  const disk = {
+    documentDirectory: `${root}/`, cacheDirectory: `${cache}/`,
+    makeDirectoryAsync: path => fs.mkdir(path, { recursive: true }),
+    async copyAsync({ from, to }) { if (failAt === 'copy') throw new Error('Storage full'); await fs.copyFile(from, to); },
+    async writeAsStringAsync(path, text) { if (failAt === 'write') throw new Error('Storage full'); await fs.writeFile(path, text); },
+    async moveAsync({ from, to }) { if (failAt === 'move') throw new Error('Storage full'); await fs.rename(from, to); },
+    readAsStringAsync: path => fs.readFile(path, 'utf8'), readDirectoryAsync: path => fs.readdir(path),
+    async getInfoAsync(path) { return { exists: await fs.stat(path).then(() => true, () => false) }; },
+    deleteAsync: path => fs.rm(path, { recursive: true, force: true }),
+  };
+  const storage = () => load('storage/pendingRecordings.ts', { 'expo-file-system/legacy': disk });
+  const clip = id => ({ id, userId: 'owner', startedAt: '2026-09-18T00:00:00Z', seconds: 4,
+    audio: { uri: source, name: '../recording.json', type: 'audio/mp4' } });
+  try {
+    await fs.writeFile(source, 'original audio');
+    for (failAt of ['copy', 'write', 'move']) {
+      await assert.rejects(storage().savePendingRecording(clip(failAt)), /Storage full/);
+      assert.equal(await fs.readFile(source, 'utf8'), 'original audio');
+    }
+    const recovered = await storage().listPendingRecordings('owner');
+    assert.deepEqual(recovered.map(row => row.id), ['move']);
+    assert.equal(await fs.readFile((await storage().readPendingAudio(recovered[0])).uri, 'utf8'), 'original audio');
+    failAt = undefined;
+    const saved = await storage().savePendingRecording(clip('saved'));
+    assert.equal(saved.audio.name, '../recording.json');
+    assert.equal(saved.audio.uri, `${root}/pending-recordings/owner/saved/audio`);
+    assert.equal(await fs.readFile(saved.audio.uri, 'utf8'), 'original audio');
+    await assert.rejects(fs.access(source)); // Only the cache copy is removed after commit.
+    const folder = `${root}/pending-recordings/owner/saved`;
+    await fs.rename(saved.audio.uri, `${folder}/legacy.m4a`);
+    await fs.writeFile(`${folder}/recording.json`, JSON.stringify({ ...saved,
+      audio: { ...saved.audio, name: 'legacy.m4a', uri: 'file:///previous-ios-container/legacy.m4a' },
+    }));
+    const restored = (await storage().listPendingRecordings('owner')).find(row => row.id === 'saved');
+    assert.equal(await fs.readFile(restored.audio.uri, 'utf8'), 'original audio');
+  } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
 });
