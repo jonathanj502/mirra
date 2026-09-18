@@ -1,6 +1,6 @@
 // Home / Record screen.
 import React, { useEffect, useRef } from 'react';
-import { View, Pressable, StyleSheet, Animated, Easing, ActivityIndicator, Alert, Platform } from 'react-native';
+import { View, Pressable, StyleSheet, Animated, Easing, ActivityIndicator, Alert, Linking, Platform } from 'react-native';
 import Svg, { Defs, RadialGradient, Stop, Circle, Rect, Path } from 'react-native-svg';
 import { useRouter } from 'expo-router';
 import { Screen } from '@/components/Screen';
@@ -136,7 +136,7 @@ export function HomeScreen() {
   const { user } = useAuth();
   const { listItems, loading, error, setDebriefs, refresh } = useDebriefs();
   const { importAudio, importing, error: importError } = useImportAudio();
-  const { isRecording, isSavingRecording, isStartingRecording, hasUnsavedRecording, recordingSeconds,
+  const { isRecording, isRecordingPaused, needsMicrophoneSettings, isSavingRecording, isStartingRecording, hasUnsavedRecording, recordingSeconds,
     pendingRecordings, uploadingId, latestDebrief, queueError, needsAIConsent, resumeUploads, discard,
     toggleRecording, error: recordingError } = useRecordAudio();
   const busy = importing || isRecording || isSavingRecording || isStartingRecording || hasUnsavedRecording;
@@ -150,6 +150,7 @@ export function HomeScreen() {
   const name = displayName(user?.email, user?.user_metadata?.username);
   const heroHint = isSavingRecording
     ? 'Saving on this device…'
+    : isRecordingPaused ? 'Microphone interrupted · tap to stop and save'
     : isRecording
       ? `${Math.floor(recordingSeconds / 60)}:${String(Math.floor(recordingSeconds % 60)).padStart(2, '0')} · tap to stop`
       : isStartingRecording ? 'Starting microphone…' : hasUnsavedRecording ? 'Tap to save recording' : 'Tap to record · works offline';
@@ -198,9 +199,17 @@ export function HomeScreen() {
         <RecordButton size={172} recording={isRecording} loading={isSavingRecording || isStartingRecording}
           disabled={importing} onPress={handleRecord} />
         <Body style={styles.heroHint}>{heroHint}</Body>
-        <Body style={styles.consentHint}>Up to 23 min 20 sec per conversation · imports up to 100 MB.</Body>
+        <Body style={styles.consentHint}>Recording stops at 23 min 20 sec · imports up to 100 MB.</Body>
         <Body style={styles.consentHint}>Get everyone’s consent to recording and AI analysis.</Body>
         {recordingError ? <Body accessibilityRole="alert" style={styles.audioError}>{recordingError}</Body> : null}
+        {needsMicrophoneSettings && Platform.OS !== 'web' ? (
+          <Pressable accessibilityRole="button" style={styles.recoveryButton}
+            onPress={() => { void Linking.openSettings().catch(() => {
+              Alert.alert('Open Settings', 'Open your device Settings and allow microphone access for Mirra.');
+            }); }}>
+            <Body>Open microphone settings</Body>
+          </Pressable>
+        ) : null}
         {importError ? <Body accessibilityRole="alert" style={styles.audioError}>{importError}</Body> : null}
         {queueError ? <Body accessibilityRole="alert" style={styles.audioError}>{queueError}</Body> : null}
         {pendingRecordings.length > 0 ? (
