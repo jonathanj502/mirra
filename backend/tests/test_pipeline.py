@@ -1,6 +1,6 @@
 import io
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import numpy as np
 import httpx
@@ -55,7 +55,14 @@ def _db_for_sessions(under_cap: bool = True) -> MagicMock:
     usage_result = MagicMock()
     usage_result.data = None if under_cap else {"count": 5}
     db.table.return_value.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = usage_result
-    db.table.return_value.insert.return_value.execute.return_value.data = [SAMPLE_DEBRIEF]
+    def rpc(name, params):
+        if name == "reserve_debrief":
+            if not under_cap:
+                from postgrest.exceptions import APIError
+                raise APIError({"code": "PT402", "message": "Monthly debrief limit reached", "details": "", "hint": ""})
+            return MagicMock(execute=MagicMock(return_value=MagicMock(data=True)))
+        return MagicMock(execute=MagicMock(return_value=MagicMock(data=[SAMPLE_DEBRIEF])))
+    db.rpc.side_effect = rpc
     return db
 
 
@@ -239,7 +246,7 @@ def test_post_sessions_success(mock_run):
     assert "used_this_month" in data
     assert "remaining" in data
     assert data["debrief"]["observation"] == SAMPLE_DEBRIEF["observation"]
-    insert_payload = db.table.return_value.insert.call_args.args[0]
+    insert_payload = db.rpc.call_args.args[1]["p_debrief"]
     assert "session_id" in insert_payload
     assert mock_run.call_args.kwargs["content_type"] == "audio/wav"
 
@@ -260,7 +267,7 @@ def test_post_sessions_respects_transcript_setting(mock_run, mock_settings):
     app.dependency_overrides[verify_token] = lambda: "user-1"
     r = TestClient(app).post("/sessions", files={"audio": ("test.wav", _fake_wav(), "audio/wav")})
     assert r.status_code == 200
-    insert_payload = db.table.return_value.insert.call_args.args[0]
+    insert_payload = db.rpc.call_args.args[1]["p_debrief"]
     assert insert_payload["transcript"] is None
 
 
@@ -308,10 +315,11 @@ def session_io(monkeypatch):
     db = _db_for_sessions()
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[verify_token] = lambda: "user-1"
-    reserve = MagicMock(return_value="2026-08")
+    reserve = MagicMock(return_value=True)
     refund = MagicMock()
     monkeypatch.setattr(main, "check_and_increment", reserve)
     monkeypatch.setattr(main, "release", refund)
+    monkeypatch.setattr(main, "_fetch_debrief_row", MagicMock(return_value=None))
     monkeypatch.setattr(main, "fetch_user_settings", MagicMock(return_value=UserSettings()))
     monkeypatch.setattr(main.coordinator, "run", MagicMock(return_value=dict(SAMPLE_DEBRIEF)))
     monkeypatch.setattr(main, "get_usage", MagicMock(return_value={"used_this_month": 1, "remaining": 4}))
@@ -328,13 +336,13 @@ def test_session_failure_refunds_reservation(session_io, failure):
     elif failure == "result":
         main.coordinator.run.return_value = {"stats": None}
     else:
-        db.table.return_value.insert.return_value.execute.side_effect = RuntimeError("insert failed")
+        db.rpc.side_effect = RuntimeError("insert failed")
 
     r = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")})
 
     assert r.status_code == 500
     reserve.assert_called_once()
-    refund.assert_called_once_with(db, "user-1", "2026-08")
+    refund.assert_called_once_with(db, "user-1", *reserve.call_args.args[2:])
 
 
 def test_refund_failure_preserves_original_audio_error(session_io):
@@ -359,8 +367,8 @@ def test_session_failure_refunds_reserved_usage(session_io):
     main.coordinator.run.side_effect = ValueError("bad audio")
     r = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")})
     assert r.status_code == 422
-    reserve.assert_called_once_with(_db, "user-1")
-    refund.assert_called_once_with(_db, "user-1", "2026-08")
+    reserve.assert_called_once_with(_db, "user-1", ANY, ANY)
+    refund.assert_called_once_with(_db, "user-1", ANY, ANY)
 
 
 def test_audio_content_type_accepts_parameters_and_case(session_io):
@@ -389,7 +397,7 @@ def test_session_preserves_diarization_metadata_with_transcript_saving_disabled(
     }
     r = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")}, data={"title": "Meeting"})
     assert r.status_code == 200
-    payload = db.table.return_value.insert.call_args.args[0]
+    payload = db.rpc.call_args.args[1]["p_debrief"]
     assert payload["stats"]["metadata"]["diarization"] == diarization
     assert payload["stats"]["metadata"]["title"] == "Meeting"
     assert payload["transcript"] is None
@@ -402,16 +410,16 @@ def test_transcription_upload_limit_returns_413_and_refunds_usage(session_io):
     r = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")})
     assert r.status_code == 413
     assert "too large to transcribe" in r.json()["detail"]
-    refund.assert_called_once_with(_db, "user-1", "2026-08")
+    refund.assert_called_once_with(_db, "user-1", ANY, ANY)
 
 
 def test_duration_limit_returns_413_and_refunds_usage(session_io):
-    client, db, _reserve, refund = session_io
+    client, db, reserve, refund = session_io
     main.coordinator.run.side_effect = main.coordinator.RecordingTooLong("Conversations must be no longer than 23 minutes 20 seconds.")
     response = client.post("/sessions", files={"audio": ("test.m4a", b"audio", "audio/mp4")})
     assert response.status_code == 413
     assert "23 minutes 20 seconds" in response.json()["detail"]
-    refund.assert_called_once_with(db, "user-1", "2026-08")
+    refund.assert_called_once_with(db, "user-1", *reserve.call_args.args[2:])
 
 
 def test_offline_recording_replay_is_account_scoped_and_does_not_use_quota_twice(session_io, monkeypatch):
@@ -419,13 +427,13 @@ def test_offline_recording_replay_is_account_scoped_and_does_not_use_quota_twice
     saved = {}
     monkeypatch.setattr(main, "_fetch_debrief_row", lambda _db, user, key: saved.get((user, key)))
 
-    def insert():
-        payload = db.table.return_value.insert.call_args.args[0]
-        row = {**SAMPLE_DEBRIEF, **payload}
+    def insert(name, params):
+        assert name == "complete_debrief"
+        row = {**SAMPLE_DEBRIEF, **params["p_debrief"], "user_id": params["p_user_id"], "id": params["p_debrief_id"]}
         saved[(row["user_id"], row["id"])] = row
-        return MagicMock(data=[row])
+        return MagicMock(execute=MagicMock(return_value=MagicMock(data=[row])))
 
-    db.table.return_value.insert.return_value.execute.side_effect = insert
+    db.rpc.side_effect = insert
     request = {"files": {"audio": ("test.wav", b"audio", "audio/wav")},
                "data": {"recording_id": "saved-offline-1", "started_at": "2026-08-31T23:00:00Z"}}
     first = client.post("/sessions", **request)
@@ -486,12 +494,12 @@ def test_committed_upload_recovery_and_duplicate_reservation_refund(session_io, 
 
     client, db, _reserve, refund = session_io
     monkeypatch.setattr(main, "_fetch_debrief_row", MagicMock(side_effect=[None, dict(SAMPLE_DEBRIEF)]))
-    db.table.return_value.insert.return_value.execute.side_effect = (
+    db.rpc.side_effect = (
         APIError({"code": "23505", "message": "duplicate key", "details": "", "hint": ""})
         if duplicate else httpx.ReadError("response lost after commit")
     )
     response = client.post("/sessions", files={"audio": ("test.wav", b"audio", "audio/wav")}, data={"recording_id": "recover-commit"})
     assert response.status_code == 200
     assert response.json()["debrief"]["id"] == SAMPLE_DEBRIEF["id"]
-    assert refund.call_count == int(duplicate)
+    refund.assert_called_once()  # The receipt RPC makes this a no-op for a committed charge.
     assert not main._processing_sessions

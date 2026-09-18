@@ -35,55 +35,28 @@ def get_usage(db: Client, user_id: str) -> dict:
     }
 
 
-def _adjust_count(db: Client, user_id: str, month: str, delta: int, enforce_cap: bool) -> None:
-    # ponytail: compare-and-swap retry loop instead of a DB-side atomic increment function;
-    # bounded to 5 attempts, fine at this write volume, revisit if usage writes get hot
-    for _ in range(5):
-        row = (
-            db.table("debrief_usage")
-            .select("count")
-            .eq("user_id", user_id)
-            .eq("month_key", month)
-            .maybe_single()
-            .execute()
-        )
-        used = row.data["count"] if row and row.data else 0
-        if enforce_cap and used >= settings.free_tier_cap:
-            raise HTTPException(status_code=402, detail="Monthly debrief limit reached")
-        new_count = max(0, used + delta)
-        if new_count == used:
-            return
-        if row and row.data:
-            result = (
-                db.table("debrief_usage")
-                .update({"count": new_count})
-                .eq("user_id", user_id)
-                .eq("month_key", month)
-                .eq("count", used)
-                .execute()
-            )
-            if result.data:
-                return
-            continue  # lost the race to a concurrent writer; re-read and retry
-        if delta <= 0:
-            return
-        try:
-            db.table("debrief_usage").insert({"user_id": user_id, "month_key": month, "count": new_count}).execute()
-            return
-        except APIError as exc:
-            if exc.code != "23505":
-                raise
-            continue  # someone else inserted the row first; retry as an update
-    raise HTTPException(status_code=503, detail="Please try again")
+def _receipt_rpc(db: Client, name: str, user_id: str, debrief_id: str, attempt_id: str, **params):
+    try:
+        return db.rpc(name, {
+            "p_user_id": user_id, "p_debrief_id": debrief_id, "p_attempt_id": attempt_id, **params,
+        }).execute().data
+    except APIError as exc:
+        if exc.code in {"PT402", "PT409", "PT410"}:
+            raise HTTPException(status_code=int(exc.code[2:]), detail=exc.message) from exc
+        raise
 
 
-def check_and_increment(db: Client, user_id: str) -> str:
-    """Reserve a debrief and return the month to use if it needs to be refunded."""
-    month = _month_key()
-    _adjust_count(db, user_id, month, delta=1, enforce_cap=True)
-    return month
+def check_and_increment(db: Client, user_id: str, debrief_id: str, attempt_id: str) -> bool:
+    """Reuse a durable reservation on retry; False means this ID already completed."""
+    return _receipt_rpc(db, "reserve_debrief", user_id, debrief_id, attempt_id,
+                        p_month_key=_month_key(), p_cap=settings.free_tier_cap)
 
 
-def release(db: Client, user_id: str, month: str) -> None:
-    """Undo a reservation from check_and_increment when the debrief attempt fails downstream."""
-    _adjust_count(db, user_id, month, delta=-1, enforce_cap=False)
+def release(db: Client, user_id: str, debrief_id: str, attempt_id: str) -> None:
+    """Refund only this uncommitted attempt, in its original reservation month."""
+    _receipt_rpc(db, "release_debrief", user_id, debrief_id, attempt_id)
+
+
+def complete_debrief(db: Client, user_id: str, debrief_id: str, attempt_id: str, payload: dict) -> dict:
+    """Save the debrief and mark its charge committed in one database transaction."""
+    return _receipt_rpc(db, "complete_debrief", user_id, debrief_id, attempt_id, p_debrief=payload)[0]

@@ -22,7 +22,7 @@ from app.models.settings import UserSettings, UserSettingsUpdate
 from app.reflection import generate_reflection
 from app.pipeline import coordinator
 from app.pipeline.transcription import TranscriptionInputTooLarge
-from app.usage import check_and_increment, get_usage, release
+from app.usage import check_and_increment, complete_debrief, get_usage, release
 from app.user_settings import fetch_user_settings, save_user_settings
 
 app = FastAPI(title="Mirra Backend")
@@ -269,15 +269,18 @@ def create_session(
     db: Client = Depends(get_db),
 ):
     # Account-scoped deterministic IDs use the existing primary key for durable duplicate protection.
-    debrief_id = str(uuid5(NAMESPACE_URL, f"mirra:{user_id}:{recording_id}")) if recording_id else None
-    if debrief_id:
-        # ponytail: this suppresses duplicate model work within one process. Across workers the DB
-        # primary key still prevents duplicate debriefs; add a DB job lease if scaling workers.
-        with _session_lock:
-            if debrief_id in _processing_sessions:
-                raise HTTPException(status_code=409, detail="This recording is already being processed.")
-            _processing_sessions.add(debrief_id)
+    debrief_id = str(uuid5(NAMESPACE_URL, f"mirra:{user_id}:{recording_id}")) if recording_id else str(uuid4())
+    # ponytail: suppress duplicate model work in one process; DB receipts protect
+    # commits across restarts/workers, but scaling needs job admission across workers.
+    with _session_lock:
+        if debrief_id in _processing_sessions:
+            raise HTTPException(status_code=409, detail="This recording is already being processed.")
+        _processing_sessions.add(debrief_id)
     try:
+        if recording_id:
+            existing = _fetch_debrief_row(db, user_id, debrief_id)
+            if existing:
+                return _session_response(db, user_id, existing)
         if not _audio_pipeline_lock.acquire(blocking=False):
             raise HTTPException(status_code=503, detail="Another recording is processing. Please retry shortly.", headers={"Retry-After": "60"})
         try:
@@ -285,9 +288,8 @@ def create_session(
         finally:
             _audio_pipeline_lock.release()
     finally:
-        if debrief_id:
-            with _session_lock:
-                _processing_sessions.discard(debrief_id)
+        with _session_lock:
+            _processing_sessions.discard(debrief_id)
 
 
 def _session_response(db: Client, user_id: str, row: dict):
@@ -296,10 +298,6 @@ def _session_response(db: Client, user_id: str, row: dict):
 
 
 def _process_session(audio, started_at, client_duration_seconds, title, user_id, db, debrief_id):
-    if debrief_id:
-        existing = _fetch_debrief_row(db, user_id, debrief_id)
-        if existing:
-            return _session_response(db, user_id, existing)
     content_type = (audio.content_type or "").split(";", 1)[0].strip().lower()
     if content_type not in SUPPORTED_AUDIO_TYPES:
         raise HTTPException(status_code=415, detail="Unsupported audio type. Choose M4A, MP3, WAV, WebM, AAC, or OGG.")
@@ -311,7 +309,12 @@ def _process_session(audio, started_at, client_duration_seconds, title, user_id,
         raise HTTPException(status_code=422, detail="The audio file is empty. Choose a nonempty audio file.")
 
     logger.info("Session pipeline: reserving usage")
-    reservation_month = check_and_increment(db, user_id)
+    attempt_id = str(uuid4())
+    if not check_and_increment(db, user_id, debrief_id, attempt_id):
+        existing = _fetch_debrief_row(db, user_id, debrief_id)
+        if existing:
+            return _session_response(db, user_id, existing)
+        raise HTTPException(status_code=410, detail="This recording's debrief has been deleted.")
     inserting = False
     try:
         logger.info("Session pipeline: loading settings")
@@ -337,38 +340,26 @@ def _process_session(audio, started_at, client_duration_seconds, title, user_id,
             **{k: v for k, v in metadata.items() if v is not None},
         }}
         inserting = True
-        row = (
-            db.table("debriefs")
-            .insert(
-                {
-                    **({"id": debrief_id} if debrief_id else {}),
-                    "user_id": user_id,
-                    "session_id": session_id,
-                    "observation": result["observation"],
-                    "pattern_to_reduce": result["pattern_to_reduce"],
-                    "thing_to_try_next": result["thing_to_try_next"],
-                    "stats": stats,
-                    "transcript": result["transcript"] if user_settings.save_transcripts else None,
-                }
-            )
-            .execute()
-        )
-    except Exception as exc:
-        existing = None
-        if debrief_id and inserting:
-            existing = _fetch_debrief_row(db, user_id, debrief_id)
-            # The insert may have committed even though its HTTP response was lost.
-            if existing and getattr(exc, "code", None) != "23505":
-                return _session_response(db, user_id, existing)
-        if reservation_month is not None:
-            try:
-                release(db, user_id, reservation_month)
-            except Exception:
-                logger.exception("Could not release debrief reservation for user %s in %s", user_id, reservation_month)
+        row = complete_debrief(db, user_id, debrief_id, attempt_id, {
+            "session_id": session_id,
+            "observation": result["observation"],
+            "pattern_to_reduce": result["pattern_to_reduce"],
+            "thing_to_try_next": result["thing_to_try_next"],
+            "stats": stats,
+            "transcript": result["transcript"] if user_settings.save_transcripts else None,
+        })
+    except Exception:
+        # The RPC checks the receipt: a lost commit response can never refund a saved
+        # debrief, and a failed refund is safely retried with the same reservation.
+        try:
+            release(db, user_id, debrief_id, attempt_id)
+        except Exception:
+            logger.exception("Could not release debrief reservation %s for user %s", debrief_id, user_id)
+        existing = _fetch_debrief_row(db, user_id, debrief_id) if inserting else None
         if existing:
             return _session_response(db, user_id, existing)
         raise
-    return _session_response(db, user_id, row.data[0])
+    return _session_response(db, user_id, row)
 
 
 @app.get("/debriefs", response_model=list[Debrief])
