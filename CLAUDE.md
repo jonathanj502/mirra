@@ -62,7 +62,7 @@ npx expo run:android       # run on Android emulator
 ### Backend (`backend/`)
 ```bash
 cd backend
-uv sync                    # or: pip install -e ".[dev]"
+uv sync --locked --extra dev # install the tested dependencies, including pytest
 uvicorn app.main:app --reload
 pytest                     # all tests
 pytest tests/test_pipeline.py  # pipeline tests only

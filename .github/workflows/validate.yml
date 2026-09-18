@@ -69,7 +69,14 @@ jobs:
           python-version: '3.11'
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg libsndfile1
       - run: pip install torch==2.12.1 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cpu
-      - run: pip install -e '.[dev]' && pytest -q
+      - run: |
+          pip install uv==0.11.3
+          uv export --frozen --extra dev --no-emit-project --no-hashes --no-emit-package torch --no-emit-package torchaudio \
+            | sed '/^nvidia-/d; /^triton==/d' > /tmp/requirements-ci.txt
+          pip install -r /tmp/requirements-ci.txt
+          pip install --no-deps -e .
+          pytest -q
+        shell: bash
         working-directory: backend
         env:
           SUPABASE_URL: https://example.supabase.co
