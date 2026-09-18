@@ -116,12 +116,15 @@ launch PASS** for source `a4b3c14dfaa8fa5950026aae173b901439ad02f1`:
   that the trust blocker was resolved. No further signing approval is needed for
   the already authorized operation.
 
-This task has asked the user to disconnect USB, force-close Mirra, reopen it from
-its icon, and report sign-in/home/error as the first TF-2 subcheck. That reply,
-production sign-in, authenticated reads, cellular access, and session restoration
-remain pending. Connected launch alone does not pass TF-2. Personal Team delivery
-does not pass the TestFlight installation gate. Distribution retains native
-signing/install ownership for any subsequent integrated candidate.
+After this task asked the user to disconnect USB, force-close Mirra, and reopen
+it from its icon, the user reported: **"i see the sign in screen. the signin
+works"**. Independent launch to sign-in and successful sign-in are therefore
+**PASS (user-observed)** on the installed candidate. The next requested check is
+Wi-Fi off/cellular on, force-close/reopen, verify the same account is restored,
+then open Profile and conversation history without errors. Authenticated reads,
+cellular access, and session restoration remain pending; TF-2 is still OPEN.
+Personal Team delivery does not pass the TestFlight installation gate.
+Distribution retains native signing/install ownership for subsequent candidates.
 
 Production remains `https://mirra-backend-wp2b.onrender.com`, deployed commit
 `f8cf5d7196654aff3ff578bb5503668aa3ff15cd`, Free 512 MB, not this candidate.
@@ -131,7 +134,7 @@ separate evidence; complete microphone, local-save/restart, and lock checks offl
 
 | Gate | Required physical evidence | Status |
 | --- | --- | --- |
-| TF-2 | Installed build cold launch, public production auth, restored correct account/history after force-quit, cellular read | OPEN — installed/connected launch passed; independent launch/auth/restore/cellular checks pending |
+| TF-2 | Installed build cold launch, public production auth, restored correct account/history after force-quit, cellular read | OPEN — install, independent launch and sign-in passed; restore/authenticated reads/cellular check pending |
 | TF-3 | Real 30–60s capture, one saved nonempty debrief, history after relaunch, model Reflect reply | OPEN — device and working backend needed |
 | TF-4 | Two offline stopped clips survive restart; reconnect yields two debriefs and exactly +2 usage; expired token/account switch/consent recovery | OPEN — device and provider evidence needed |
 | TF-5 | Deny mic, responsive error/Settings action, grant in Settings, return and record/Stop/save without stuck state | OPEN — mocked regression only |
