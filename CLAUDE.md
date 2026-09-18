@@ -8,7 +8,10 @@ Verify implementation details against the code before relying on descriptions of
 
 The user resumed beta work in six independent issue tasks/worktrees. Read
 `docs/beta-workstreams.md` for ownership and integration, and `docs/beta-pause.md`
-for the prior checkpoint. The user authorized a narrower limit:
+for the current session handoff and historical checkpoint. The user wrapped up
+the session on 2026-09-18: all issue changes/evidence are merged locally, four
+completed worktrees were removed, and device/distribution are retained and idle.
+The user authorized a narrower limit:
 **23 minutes 20 seconds (1400 seconds)** for capture and import, matching the
 observed single-request transcription ceiling. One-hour support is deferred.
 The completed code is combined locally on `codex/beta-integration-2026-09-17`.
