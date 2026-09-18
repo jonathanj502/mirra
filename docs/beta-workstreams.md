@@ -34,19 +34,27 @@ Tasks may touch separate sections of an existing shared test/source file. Keep
 diffs narrow, coordinate interface changes, and resolve conflicts during integration
 without dropping either task's tests. Do not independently rewrite shared modules.
 
-## Active worktrees
+## Worktree status
 
 All six confirmed initialization at the shared `773d35f` implementation base.
 Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
 
-| Issue | Task ID | Branch | Worktree suffix |
-| --- | --- | --- | --- |
-| Memory | `01a0b1d5-a406-7de2-9ef1-5932f835e3d1` | `codex/beta-memory` | `c3a6/mirra` |
-| Transcription | `01a0b1d5-aa8e-70b3-a3a3-1e613af3f951` | `codex/beta-transcription-1400` | `b07f/mirra` |
-| Imports | `01a0b1d5-b7e6-7f72-a84a-7f78482db974` | `codex/beta-imports` | `8b65/mirra` |
-| Reliability | `01a0b1d5-c243-7e10-8ce5-8776f5f97780` | `codex/beta-reliability` | `0f48/mirra` |
-| Device | `01a0b1d5-d76c-76c0-9ac4-e499b15bdc2a` | `codex/beta-device-capture` | `3a46/mirra` |
-| Distribution | `01a0b1d5-ee26-7bb3-a253-c4c421279434` | `codex/beta-distribution-2026-09-17` | `7411/mirra` |
+| Issue | Task ID | Branch | Worktree suffix | Current status |
+| --- | --- | --- | --- | --- |
+| Memory | `01a0b1d5-a406-7de2-9ef1-5932f835e3d1` | `codex/beta-memory` | `c3a6/mirra` | Worktree and local branch removed after integration |
+| Transcription | `01a0b1d5-aa8e-70b3-a3a3-1e613af3f951` | `codex/beta-transcription-1400` | `b07f/mirra` | Worktree and local branch removed after integration |
+| Imports | `01a0b1d5-b7e6-7f72-a84a-7f78482db974` | `codex/beta-imports` | `8b65/mirra` | Worktree and local branch removed after integration |
+| Reliability | `01a0b1d5-c243-7e10-8ce5-8776f5f97780` | `codex/beta-reliability` | `0f48/mirra` | Worktree and local branch removed after integration |
+| Device | `01a0b1d5-d76c-76c0-9ac4-e499b15bdc2a` | `codex/beta-device-capture` | `3a46/mirra` | Retained for remaining device checks |
+| Distribution | `01a0b1d5-ee26-7bb3-a253-c4c421279434` | `codex/beta-distribution-2026-09-17` | `7411/mirra` | Retained for signing/distribution work |
+
+At the user's request on 2026-09-18, device removed the four completed implementation
+worktrees and their local branches after verifying clean checkouts and that their
+heads (`0f7adec`, `a907631`, `5a3ee41`, `108e07c`) were ancestors of integration
+`39b1538`. Normal `git worktree remove` and `git branch -d` were used without force.
+All commits remain in integration history. The main integration checkout and the
+two worktrees marked retained above remain available; phone recordings and local
+audio/build artifacts were not changed.
 
 ### Coordinated dependencies
 
@@ -120,7 +128,9 @@ Worktree paths are beneath `/Users/jonathanj/.codex/worktrees/`.
 - No production migration, deployment, push or purchase. Independent pre-push
   review, actual Supabase/PostgREST validation, integrated real-provider memory,
   sustained load, TestFlight distribution and the remaining physical checks stay open.
-- Worktrees and issue branches remain available for the user; none were deleted.
+- User-requested cleanup removed the four merged implementation worktrees and
+  local branches listed above. Integration, device and distribution checkouts
+  remain; all merged commits and recorded evidence are preserved.
 
 ## Shared resources and boundaries
 
