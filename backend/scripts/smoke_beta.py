@@ -19,13 +19,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", required=True)
     parser.add_argument("--audio", required=True, type=Path)
+    parser.add_argument("--expect-seconds", type=float)
+    parser.add_argument("--expect-text", action="append", default=[], help="Synthetic transcript marker; repeat for each marker")
+    parser.add_argument("--min-speakers", type=int, default=1)
+    parser.add_argument("--reject-audio", type=Path, help="Overlong synthetic M4A that must return 413 without using quota")
     args = parser.parse_args()
     audio = args.audio.read_bytes()
     assert args.audio.suffix.lower() == ".m4a", "Use synthetic M4A audio to exercise the iOS codec"
     assert 0 < len(audio) <= 100 * 1024 * 1024
     username, password = f"beta_{uuid4().hex[:16]}", secrets.token_urlsafe(24)
     user_id = None
-    with httpx.Client(base_url=args.url.rstrip("/"), timeout=600) as client:
+    with httpx.Client(base_url=args.url.rstrip("/"), timeout=2100) as client:
         def call(method, path, **kwargs):
             print(f"CHECK {method} {path}", flush=True)
             response = client.request(method, path, **kwargs)
@@ -54,6 +58,16 @@ def main():
             before = call("GET", "/usage")["used_this_month"]
             print("PASS signup, sign-in, JWT verification, empty history, usage", flush=True)
 
+            if args.reject_audio:
+                rejected_audio = args.reject_audio.read_bytes()
+                assert args.reject_audio.suffix.lower() == ".m4a" and 0 < len(rejected_audio) <= 100 * 1024 * 1024
+                response = client.post("/sessions", data={"recording_id": str(uuid4())},
+                                       files={"audio": ("overlong.m4a", rejected_audio, "audio/mp4")})
+                assert response.status_code == 413, f"Expected rejection, got {response.status_code}"
+                assert call("GET", "/usage")["used_this_month"] == before
+                assert call("GET", "/debriefs") == []
+                print("PASS overlong M4A rejected, no saved debrief or usage charge", flush=True)
+
             recording_id = str(uuid4())
             metadata = {"recording_id": recording_id, "title": "Synthetic beta smoke test",
                         "started_at": datetime.now(timezone.utc).isoformat()}
@@ -63,7 +77,7 @@ def main():
             for field in ["observation", "pattern_to_reduce", "thing_to_try_next"]:
                 assert debrief[field].strip(), field
             assert debrief["stats"]["session_duration_minutes"] > 0
-            assert debrief["stats"]["metadata"]["diarization"]["speaker_count"] >= 1, "No speech transcribed"
+            check_transcription(debrief, args.expect_seconds, args.expect_text, args.min_speakers)
             assert result["used_this_month"] == before + 1
             print(f"PASS M4A decode, speech transcription, coaching, persistence ({time.monotonic() - start:.1f}s)", flush=True)
 
@@ -91,6 +105,21 @@ def main():
                 )
                 response.raise_for_status()
                 print("PASS temporary test account cleanup", flush=True)
+
+
+def check_transcription(debrief, expected_seconds, expected_text, min_speakers):
+    stats = debrief["stats"]
+    diarization = stats["metadata"]["diarization"]
+    assert diarization["model"] == "gpt-4o-transcribe-diarize", "Unexpected transcription model"
+    assert diarization["speaker_count"] >= min_speakers, "Missing expected speakers"
+    seconds = stats["session_duration_minutes"] * 60
+    if expected_seconds is not None:
+        assert abs(seconds - expected_seconds) <= 0.1, "Unexpected saved duration"
+    transcript = " ".join((debrief.get("transcript") or "").casefold().split())
+    for index, marker in enumerate(expected_text):
+        assert " ".join(marker.casefold().split()) in transcript, f"Missing transcript marker {index + 1}"
+    print(f"PASS transcription model, {seconds:.2f}s, {diarization['speaker_count']} speakers, "
+          f"{len(expected_text)} transcript markers", flush=True)
 
 
 if __name__ == "__main__":
