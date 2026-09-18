@@ -1,6 +1,6 @@
 # Mirra TestFlight beta acceptance
 
-Updated: 2026-09-17. Starting commit: `f628b73`.
+Updated: 2026-09-18 UTC. Starting commit: `f628b73`.
 
 **Parallel issue work is authorized in separate tasks/worktrees.** See
 [beta-workstreams.md](beta-workstreams.md) for ownership and integration. The user
@@ -45,7 +45,8 @@ No push, deployment, production migration or hosting purchase has occurred.
   User-observed microphone denial/Settings recovery and short offline capture/save
   passed; two stopped clips survived offline restart. Local locked capture/audio
   passed on a 424.784399s file with user-confirmed lock time and all three markers.
-  Reconnect/debrief delivery, auto-stop and interruption checks remain open.
+  Native auto-stop/save/audio also passed at the 23m20s limit. Reconnect/debrief
+  delivery, remaining import and interruption checks remain open.
 - **Quota:** the new backend requires
   `20260918010000_durable_debrief_receipts.sql` before deployment and drained old
   writers. Receipts and reserve/refund/complete RPCs protect retries after crashes;
@@ -214,7 +215,7 @@ The existing 100 MiB input cap is retained.
 | TF-4 | Offline stopped clips survive force-quit/relaunch; reconnect uploads each exactly once without losing audio, duplicating debriefs, or charging usage twice. | OPEN | Two stopped physical clips survived offline force-close/relaunch, user-observed 2026-09-18 01:38 UTC on `a4b3c14`. Combined app and local SQL crash/retry/accounting tests pass. Reconnect, duplicates/usage, token/account recovery and candidate migration/PostgREST rollout remain open. |
 | TF-5 | Denying microphone permission is recoverable; granting permission in Settings allows recording without a crash or stuck recorder. | PASS (Personal Team; repeat on TestFlight) | User saw Open microphone settings after denial, enabled access in Settings, returned, recorded/stopped about ten seconds offline, and confirmed one saved row. Recorded 2026-09-18 01:36 UTC, source `a4b3c14`, iPhone 13/iOS 26.6.2. Audio completeness/upload is separate. |
 | TF-6 | Recording continues for at least five minutes with the iPhone locked; after unlock/Stop, audio from before, during, and after lock reaches the debrief. | OPEN (local capture/audio PASS) | Installed `a4b3c14`, iPhone 13/iOS 26.6.2: read-only inspection independently measured 424.784399s (7m04.8s), 5,429,285 bytes; complete decode passed. At 2026-09-18 03:08 UTC the user confirmed ≥5 continuous minutes locked and all three before/during/after-lock markers audible in local playback. Lock time/listening are user-observed, not assistant-timed. Delivery to a debrief remains unverified. Originals remain queued and unchanged, with no upload; repeat on the final TestFlight build. |
-| TF-7 | Both native capture and import support conversations up to 23m20s (imports ≤100 MiB), producing a saved debrief/history/Reflect result. Native recording stops and saves at the limit; overlong input fails clearly without consuming usage. Competing uploads retry safely. | OPEN | On installed `a4b3c14`, user reports automatic stop exactly at 23:20 and saved clips surviving offline relaunch. Read-only inspection measured 1399.952834s (23m19.953s), 17,425,982 bytes; full decode passed. The user confirmed beginning/middle/end markers audible, recorded 2026-09-18 03:59 UTC. Six completed manifests belong to one account, including a separate later 2.436644s clip whose intent is unverified. Real 1400s local provider flow passed on the transcription branch; integrated production, imports, concurrent retry and debrief/history/Reflect checks remain required. One-hour support is deferred. |
+| TF-7 | Both native capture and import support conversations up to 23m20s (imports ≤100 MiB), producing a saved debrief/history/Reflect result. Native recording stops and saves at the limit; overlong input fails clearly without consuming usage. Competing uploads retry safely. | OPEN (local native auto-stop/save/audio PASS) | On installed `a4b3c14`, user reports automatic stop exactly at 23:20 and saved clips surviving offline relaunch. One distinct maximum file measures 1399.952834s (23m19.953s), 17,425,982 bytes; full decode passed and user confirmed all three markers audible. At 2026-09-18 04:00 UTC the user explained the later 2.436644s clip as an accidental capture, reconciling the six-clip baseline under one account. Real 1400s local provider flow passed on the transcription branch; integrated production, imports, interruption/resume, concurrent retry and debrief/history/Reflect checks remain required. One-hour support is deferred. |
 
 ## Automated baseline
 
@@ -413,8 +414,8 @@ consenting participants. Keep private audio/transcripts out of this file.
 
 The default monthly cap is five debriefs. Cached metadata confirms all six
 completed clips in the current phone queue belong to one account (including the
-separate short clip after the maximum test). Whether that short clip was
-intentional remains unverified; do not infer a duplicate-save bug from the count.
+separate short clip after the maximum test, confirmed by the user as an accidental
+capture). The reconciled count does not indicate a duplicate save from the maximum run.
 Before reconnecting, observe current usage and agree which clips/account will
 exercise each remaining check; six clips cannot all succeed in a fresh account's
 five-debrief allowance. Preserve queued originals and keep uploads paused until
