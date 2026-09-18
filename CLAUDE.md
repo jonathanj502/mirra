@@ -21,8 +21,10 @@ the approved free Personal Team identifier `com.mirra.personal.dm85xzns55` on an
 iPhone 13 / iOS 26.6.2. User-observed standalone launch, production sign-in,
 session restoration/cellular reads (TF-2), and microphone denial/Settings recovery
 (TF-5) passed on this Personal Team build. Two stopped offline clips survived
-restart; reconnect, complete audio, locked recording and TestFlight checks remain
-open. Repeat release checks on the final TestFlight candidate. The shared release ID is unchanged;
+restart. Local locked capture/audio also passed: a measured 424.784399s clip,
+user-confirmed five continuous minutes locked, and all three markers audible.
+Reconnect/debrief delivery, maximum-duration auto-stop and TestFlight remain open.
+Repeat release checks on the final TestFlight candidate. The shared release ID is unchanged;
 Apple rejected `com.mirra.app` for the current team, so confirm store-ID availability
 before TestFlight. Identity and provisioning expiry are in the distribution evidence.
 
