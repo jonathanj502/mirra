@@ -11,11 +11,10 @@ import soxr
 from app.pipeline.coaching import analyze
 from app.pipeline.prosody import compute_stats
 from app.pipeline.speaker import audio_segments, select_user_speaker
-from app.pipeline.transcription import TRANSCRIPTION_MODEL, transcribe
+from app.pipeline.transcription import MAX_TRANSCRIPTION_SECONDS as MAX_RECORDING_SECONDS, TRANSCRIPTION_MODEL, transcribe
 from app.pipeline.vad import has_speech
 
 ANALYSIS_SAMPLE_RATE = 16000
-MAX_RECORDING_SECONDS = 60 * 60
 logger = logging.getLogger("uvicorn.error")
 CONTENT_TYPE_SUFFIXES = {
     "audio/aac": ".aac",
@@ -33,7 +32,15 @@ class RecordingTooLong(Exception):
     """The decoded recording exceeds the MVP duration limit."""
 
 
-def _read_mono(blocks, sample_rate: int) -> tuple[np.ndarray, int]:
+def _read_mono(blocks, sample_rate: int, *, duration: float | None = None) -> tuple[np.ndarray, int]:
+    limit_message = "Conversations must be no longer than 23 minutes 20 seconds."
+    if duration is not None and duration > MAX_RECORDING_SECONDS:
+        raise RecordingTooLong(limit_message)
+    # Compressed decoders can emit a padded final frame beyond the container's
+    # duration. Only allow that padding when the container itself fits the limit.
+    padded = duration is not None and 0 < duration <= MAX_RECORDING_SECONDS
+    max_samples = MAX_RECORDING_SECONDS * ANALYSIS_SAMPLE_RATE
+    decode_limit = max_samples + (ANALYSIS_SAMPLE_RATE if padded else 0)
     # Downmix/resample each block before retaining it, not the full stereo input.
     resampler = soxr.ResampleStream(sample_rate, ANALYSIS_SAMPLE_RATE, 1, dtype="float32", quality="HQ")
     output = io.BytesIO()
@@ -41,13 +48,13 @@ def _read_mono(blocks, sample_rate: int) -> tuple[np.ndarray, int]:
         mono = np.asarray(block, dtype=np.float32).mean(axis=1)
         np.nan_to_num(mono, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
         output.write(resampler.resample_chunk(mono).tobytes())
-        # Allow one second for container/encoder padding at the native stop limit.
-        if output.tell() > (MAX_RECORDING_SECONDS + 1) * ANALYSIS_SAMPLE_RATE * 4:
-            raise RecordingTooLong("Conversations must be no longer than one hour.")
+        if output.tell() > decode_limit * 4:
+            raise RecordingTooLong(limit_message)
     output.write(resampler.resample_chunk(np.empty(0, dtype=np.float32), last=True).tobytes())
     audio = np.frombuffer(output.getbuffer(), dtype=np.float32)
-    if len(audio) > (MAX_RECORDING_SECONDS + 1) * ANALYSIS_SAMPLE_RATE:
-        raise RecordingTooLong("Conversations must be no longer than one hour.")
+    if len(audio) > decode_limit:
+        raise RecordingTooLong(limit_message)
+    audio = audio[:max_samples]
     if not len(audio):
         raise ValueError("Could not decode audio")
     return audio, ANALYSIS_SAMPLE_RATE
@@ -69,7 +76,7 @@ def _decode_audio(audio_bytes: bytes, content_type: str | None = None) -> tuple[
                         np.frombuffer(block, dtype="<i2").reshape(-1, source.channels).astype(np.float32) / 32768
                         for block in source
                     )
-                    return _read_mono(blocks, source.samplerate)
+                    return _read_mono(blocks, source.samplerate, duration=source.duration)
         except RecordingTooLong:
             raise
         except Exception as exc:

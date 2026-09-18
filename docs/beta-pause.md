@@ -3,9 +3,11 @@
 ## State at the pause
 
 The user requested a reset and planning discussion before further implementation.
-The goal remains paused. This is an **experimental checkpoint, not a release**.
+The broader goal remains paused. The user subsequently authorized the specific
+duration-limit change recorded below. This is a **local candidate, not a release**.
 
 - Local checkpoint branch: `codex/beta-pause-2026-09-17`.
+- Original pause checkpoint: `06aa7d4`; it retains the earlier one-hour experiment.
 - Based on `5131485d2a1024fc0712f63c219d4142a54b3610` on `codex/testflight-beta`.
 - Production is unchanged: Render deploy `dep-dakpvn61egvs73aqdb8g`, commit
   `f8cf5d7196654aff3ff578bb5503668aa3ff15cd`, free 512 MB service.
@@ -20,20 +22,21 @@ The goal remains paused. This is an **experimental checkpoint, not a release**.
 ## Agreed product scope
 
 The original TestFlight criteria remain open in [the acceptance ledger](testflight-acceptance.md).
-The latest agreed MVP maximum is **one hour for both native recordings and imports**.
-The candidate also sets a 100 MiB import limit, enough for an hour at Mirra's
-current 128 kbps recording setting. No shorter-duration scope was approved.
+The latest agreed MVP maximum is **23 minutes 20 seconds for both native recordings
+and imports**, matching the observed 1400-second single-request ceiling. The user
+explicitly deferred longer recordings after the one-hour API failure. The
+existing candidate's 100 MiB import limit is retained for supported file formats.
 The user reopened the hosting budget discussion but has not authorized a paid plan.
 
 ## Issues to resolve together
 
 | Issue | What is confirmed | Next decision or validation |
 | --- | --- | --- |
-| Long-conversation transcription | `gpt-4o-transcribe-diarize` rejected a 3599.568-second recording because its maximum is 1400 seconds per request. Compression alone cannot enable one hour. | Choose an approach for the agreed one-hour scope: sections with validated speaker continuity, or evaluate a provider that supports the complete conversation. A 20-minute beta is an optional scope reduction, not the current agreement. |
+| Transcription duration | `gpt-4o-transcribe-diarize` rejected a 3599.568-second recording because its maximum is 1400 seconds per request. The user chose that shorter limit for the beta. | Validate the complete 23m20s flow with real OpenAI and an iPhone. One-hour processing and cross-section speaker matching are deferred. |
 | Server memory | Current Render 512 MB has crashed. The optimized five-minute Linux test also exceeded 512 MiB. One-hour decode/compression/acoustic analysis passed a 2 GiB Linux cap at 1151.0 MiB RSS, with AI mocked. | Treat 2 GB as a single-worker production test candidate. Validate the selected transcription approach and actual production memory before purchasing or promising capacity. |
-| File size | An hour at the current recording setting produced a 58.13 MB M4A. The live backend's 25 MiB cap rejects it. | Candidate 100 MiB input cap and 48 kbps MP3 conversion produced a 21.60 MB transcription file. Reassess compression once the transcription strategy is chosen. |
+| File size | The candidate retains the 100 MiB input cap; the live backend still has a 25 MiB cap. An exact-limit synthetic codec check produced an 8.40 MB MP3. | Validate actual maximum-length capture/import on the candidate deployment, including quality after compression. |
 | Concurrent users | Candidate limits processing to one request per process and returns retryable 503 to competitors before reserving usage. Saved native recordings already retry from the device queue. | Validate competing uploads, waiting time, failures, and recovery. Imports currently use a direct request and require manual retry on failure; there is no server job queue. |
-| iPhone behavior | Unit tests and an EAS Simulator build passed. Physical recording/permissions/offline recovery/locked-screen behavior are unverified. | Set up a device build and perform the existing checklist, including one-hour native auto-stop/save. Xcode downloaded, but setup/signing/device installation remain open. |
+| iPhone behavior | Unit tests and an EAS Simulator build passed. Physical recording/permissions/offline recovery/locked-screen behavior are unverified. | Set up a device build and perform the existing checklist, including 23m20s native auto-stop/save. Xcode downloaded, but setup/signing/device installation remain open. |
 | TestFlight distribution | No signed store build or active paid Apple membership has been verified. | Defer payment while validating on the user's own iPhone with free Xcode signing, or enroll when the user is ready. Free signing does not satisfy the TestFlight installation gate. |
 
 ## What the checkpoint contains
@@ -42,16 +45,16 @@ The user reopened the hosting budget discussion but has not authorized a paid pl
 - Same Silero speech model via ONNX Runtime, without importing PyTorch at runtime;
   CPU-only Linux Torch dependency wheels.
 - One-at-a-time processing guard with retryable 503 and no extra quota reservation.
-- Candidate one-hour native auto-stop/save and import checks, 100 MiB input cap,
-  server-side decoded-duration enforcement and a one-second padding allowance.
+- Candidate 23m20s native auto-stop/save and import checks, 100 MiB input cap,
+  server-side duration enforcement and bounded removal of decoder padding only
+  when a compressed container's own duration fits the limit.
 - Candidate whole-conversation MP3 compression for the provider's 25 MB file cap.
 - Updated tests, deployment warm-up, and acceptance evidence.
 
-**Known limitation:** the single-request transcription implementation in this
-checkpoint still fails above the model's 1400-second limit. Do not deploy this
-as working one-hour support. The UI's one-hour capability is a candidate only.
+**Known limitation:** the new duration boundary has local tests, but has not passed
+real API, production-memory, or physical-device acceptance. Do not mark it release-ready.
 
-## Verification at this exact code state
+## Original pause verification (`06aa7d4`)
 
 - Backend: **152 tests passed**; one existing Starlette/httpx deprecation warning.
 - App: **25 tests passed**; TypeScript check passed.
@@ -67,11 +70,26 @@ as working one-hour support. The UI's one-hour capability is a candidate only.
   it did not test cross-section voice matching. The official API permits 2–10
   second references for up to four voices.
 
+## Authorized duration change — 2026-09-17
+
+- Native capture stops at 1400 seconds; imports reject metadata over that limit.
+- Server rejects overlong containers/PCM with 413 and refunds usage. It retains
+  only 1400 seconds when a valid container produces a padded final frame.
+- Near-limit recordings are re-encoded into a seekable MP3 with gapless metadata.
+  An unseekable MP3 added 0.0833125 seconds; the corrected file decodes to exactly
+  1400 seconds. The original synthetic M4A decoded to 1400.00075 seconds before
+  padding removal. The original user recording remains untouched.
+- Targeted backend tests: **70 passed** (`test_diarization.py`, `test_pipeline.py`).
+- App: **25 tests passed**; TypeScript check passed.
+- Actual FFmpeg M4A → decoder → MP3 boundary check: **PASS**, 1400 seconds,
+  8,400,716 bytes. OpenAI was mocked; this is codec evidence only.
+- No production deployment or billing change. Longer recordings are deferred.
+
 ## Resume order
 
-1. Agree on the one-hour transcription/speaker-continuity approach and beta limits.
-2. Validate that approach on a two-speaker conversation, including section
-   boundaries and the beginning, middle, and end of the recording.
+1. Validate the agreed 23m20s limit with real transcription, including speech at
+   the beginning, middle, and end, and rejection of longer files.
+2. Validate native auto-stop/save and imports at the limit on the physical iPhone.
 3. Measure complete-job memory and latency, then select hosting and concurrency.
 4. Review the exact candidate, deploy, and run production/device acceptance.
 5. Complete Apple signing and TestFlight delivery when the user is ready.

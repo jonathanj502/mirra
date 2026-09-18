@@ -405,12 +405,12 @@ def test_transcription_upload_limit_returns_413_and_refunds_usage(session_io):
     refund.assert_called_once_with(_db, "user-1", "2026-08")
 
 
-def test_one_hour_limit_returns_413_and_refunds_usage(session_io):
+def test_duration_limit_returns_413_and_refunds_usage(session_io):
     client, db, _reserve, refund = session_io
-    main.coordinator.run.side_effect = main.coordinator.RecordingTooLong("Conversations must be no longer than one hour.")
+    main.coordinator.run.side_effect = main.coordinator.RecordingTooLong("Conversations must be no longer than 23 minutes 20 seconds.")
     response = client.post("/sessions", files={"audio": ("test.m4a", b"audio", "audio/mp4")})
     assert response.status_code == 413
-    assert "one hour" in response.json()["detail"]
+    assert "23 minutes 20 seconds" in response.json()["detail"]
     refund.assert_called_once_with(db, "user-1", "2026-08")
 
 

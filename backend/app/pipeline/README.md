@@ -45,22 +45,27 @@ Speaker segment durations include pauses within a returned turn; word timestamps
 are unavailable from this model. Speaker splitting, overlap, and acoustic measures
 remain estimates. The model does not separate individual voices out of mixed audio.
 
-Captured and imported conversations have a one-hour maximum and a 100 MiB
-upload cap. The server stops decoding overlong input before retaining more than
-the limit (with one second allowed for encoder padding), returns HTTP 413, and
-refunds reserved usage. Client-provided duration is not trusted for enforcement.
+Captured and imported conversations have a 23-minute-20-second (1400-second)
+maximum and a 100 MiB upload cap. This matches the duration ceiling reported by
+the provider in the one-hour test. Overlong input returns HTTP 413 and refunds
+reserved usage. Client-provided duration is not trusted for enforcement.
+Compressed containers whose decoded metadata fits may emit up to one second of
+final-frame padding; decoded samples beyond 1400 seconds are removed. PCM and
+containers reporting a duration over the limit are rejected, not shortened.
 
 If decoded PCM exceeds the transcription API's separate 25 MB limit, the supported
-original M4A, MP3, WAV, or WebM is sent instead when it fits. Otherwise FFmpeg
-encodes the complete mono timeline to 48 kbps MP3, approximately 21.6 MB/hour.
+original M4A, MP3, WAV, or WebM is sent instead when it fits and has at least one
+second of duration headroom. Otherwise FFmpeg encodes the bounded mono timeline
+to 48 kbps MP3, approximately 8.4 MB at the limit. It writes a seekable file so
+gapless metadata preserves the actual duration without added encoder padding.
 The generated file is size-checked before sending. FFmpeg with `libmp3lame` is
-required; the deployment warm-up checks that encoder. The recording is never
-silently truncated, and separately generated speaker IDs are never joined.
+required; the deployment warm-up checks that encoder. Separately generated
+speaker IDs are never joined. Longer conversations are deferred.
 
 Only one audio request runs per server process. A competing request receives 503
 with `Retry-After: 60` before reading its audio into memory or reserving usage;
 the device queue keeps its clip and retries. Run a single Uvicorn worker on a
-small instance. Decoding separately bounds duration to one hour. The 512 MB
+small instance. Decoding separately bounds duration to 1400 seconds. The 512 MB
 hosting gate remains open pending deployment
 and actual production measurement; local Linux checks are in
 `docs/testflight-acceptance.md` at the repository root.

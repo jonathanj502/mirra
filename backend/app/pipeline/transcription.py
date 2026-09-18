@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 import io
 import math
+from pathlib import Path
 import subprocess
 import tempfile
 
@@ -13,6 +14,7 @@ from app.config import settings
 
 TRANSCRIPTION_MODEL = "gpt-4o-transcribe-diarize"
 MAX_TRANSCRIPTION_BYTES = 25_000_000
+MAX_TRANSCRIPTION_SECONDS = 1400  # Observed provider ceiling for this model.
 SOURCE_SUFFIXES = {
     "audio/mp4": ".m4a", "audio/x-m4a": ".m4a", "audio/mpeg": ".mp3",
     "audio/wav": ".wav", "audio/x-wav": ".wav", "audio/webm": ".webm",
@@ -73,24 +75,28 @@ def transcribe(
         buf.name = "conversation.wav"
     else:
         suffix = SOURCE_SUFFIXES.get((content_type or "").split(";", 1)[0].strip().lower())
-        if source_audio and suffix and len(source_audio) <= MAX_TRANSCRIPTION_BYTES:
+        if (source_audio and suffix and len(source_audio) <= MAX_TRANSCRIPTION_BYTES
+                and len(audio) / sample_rate <= MAX_TRANSCRIPTION_SECONDS - 1):
             # A long M4A/WebM can fit when its decoded PCM does not. Keep one
             # request: anonymous speaker IDs cannot be joined across calls.
             buf = io.BytesIO(source_audio)
             buf.name = "conversation" + suffix
         else:
             # Keep the full timeline and speaker identities in a single request.
-            # Mono 48 kbps MP3 is about 21.6 MB for the one-hour MVP maximum.
-            with tempfile.TemporaryFile() as encoded:
+            # Near the duration ceiling, encode the bounded decoded timeline.
+            # A seekable file writes gapless metadata so MP3 padding does not
+            # push a valid recording over the provider's duration ceiling.
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "conversation.mp3"
                 subprocess.run([
                     "ffmpeg", "-nostdin", "-v", "error", "-f", "f32le",
                     "-ar", str(sample_rate), "-ac", "1", "-i", "pipe:0",
                     "-map_metadata", "-1", "-c:a", "libmp3lame", "-b:a", "48k",
-                    "-f", "mp3", "pipe:1",
+                    "-f", "mp3", str(path),
                 ], input=memoryview(audio.astype("<f4", copy=False)).cast("B"),
-                    stdout=encoded, stderr=subprocess.PIPE, check=True, timeout=120)
-                encoded.seek(0)
-                buf = io.BytesIO(encoded.read(MAX_TRANSCRIPTION_BYTES + 1))
+                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True, timeout=120)
+                with path.open("rb") as encoded:
+                    buf = io.BytesIO(encoded.read(MAX_TRANSCRIPTION_BYTES + 1))
             buf.name = "conversation.mp3"
     if buf.getbuffer().nbytes > MAX_TRANSCRIPTION_BYTES:
         raise TranscriptionInputTooLarge("Recording exceeds the transcription upload limit")

@@ -86,8 +86,8 @@ export function useImportAudio() {
       }
 
       const durationSeconds = await getAudioDuration(asset.uri);
-      if (durationSeconds > MAX_RECORDING_SECONDS + 1) {
-        setError('Please choose a conversation no longer than one hour.');
+      if (durationSeconds > MAX_RECORDING_SECONDS) {
+        setError('Please choose a conversation no longer than 23 minutes 20 seconds.');
         return null;
       }
       if (!await requestAIConsent(user?.id)) return null;

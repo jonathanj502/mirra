@@ -2,12 +2,14 @@
 
 Updated: 2026-09-17. Starting commit: `f628b73`.
 
-**Paused at the user's request for a reset/planning discussion.** See
-[beta-pause.md](beta-pause.md) for the checkpoint, confirmed issues, and resume
-order. Experimental one-hour changes are not deployed or release-approved.
+**Broader release work is paused for a reset/planning discussion.** The user
+subsequently authorized limiting capture/import to one transcription request.
+See [beta-pause.md](beta-pause.md) for the checkpoint and remaining issues.
+The updated candidate is not deployed or release-approved.
 
-The user agreed to the original gates on 2026-09-15 and a one-hour maximum for
-both captured and imported conversations on 2026-09-17. Preserve the existing design and
+The user agreed to the original gates on 2026-09-15. On 2026-09-17 they first
+selected one hour, then reduced the maximum to **23 minutes 20 seconds (1400
+seconds) for both capture and import**, deferring longer recordings. Preserve the existing design and
 features. A passing unit test or JavaScript export does not close a production
 or physical-device gate. Keep failures and untested steps open.
 
@@ -55,7 +57,7 @@ at 25 MiB, and the transcription endpoint accepts at most 25 MB. These limits
 prevent ordinary hours-long captures from completing even with additional RAM.
 That investigation did not change upload limits or recording settings. The user
 subsequently selected one hour as the MVP maximum; the candidate changes below
-implement that scope.
+initially implemented that scope; the later duration decision below supersedes it.
 
 An isolated macOS / Python 3.13 test of the local candidate allocated synthetic
 16 kHz float32 mono audio, encoded its PCM WAV, then calculated actual speaker
@@ -81,7 +83,7 @@ strategy within provider limits, consistent speaker labels across any separately
 transcribed sections, and controlled processing concurrency. A larger instance
 alone does not close these gaps. No hosting purchase or pipeline redesign was made.
 
-### One-hour MVP candidate — 2026-09-17
+### One-hour MVP experiment — 2026-09-17 (superseded)
 
 The user explicitly confirmed one hour for **both captured and imported audio**.
 Candidate changes (not yet deployed): native auto-stop/save at 3600 seconds;
@@ -114,10 +116,9 @@ saved. Logs: `/private/tmp/mirra-hour-live-smoke.log` and
 `/private/tmp/mirra-hour-server.log`.
 
 The single-request one-hour candidate therefore **does not work end to end**.
-The user has been asked whether to retain one hour with section-based analysis
-and verified speaker continuity, or choose a 20-minute beta. The approved scope
-remains one hour unless the user changes it. Do not deploy or mark TF-7 passed
-on the strength of mocked tests. Official documentation supports up to four
+The user subsequently chose the observed single-request maximum of 1400 seconds
+and deferred longer recordings. Do not mark TF-7 passed on the strength of mocked
+tests. Official documentation supports up to four
 2–10-second speaker references per request; its suitability for preserving
 speaker identity across sections is not yet validated.
 
@@ -127,6 +128,31 @@ overlong import rejection are covered by the app hook tests. Existing visual
 design is retained with a short limits note. Native screen-lock/auto-stop,
 production one-hour processing, model quality after compression, and competing
 uploads remain open. No paid hosting change is authorized or applied.
+
+### Current beta limit — 23 minutes 20 seconds
+
+The user explicitly authorized the single-request maximum, with longer recording
+support deferred. The local candidate now uses 1400 seconds for native auto-stop,
+import metadata checks, visible limit copy, and server duration enforcement.
+The existing 100 MiB input cap is retained.
+
+- Backend duration checks reject overlong PCM and compressed containers with
+  HTTP 413 and refund reserved usage. Compressed containers within the limit may
+  produce a padded final frame; decoding allows at most one extra second and
+  removes samples beyond 1400 seconds before analysis/transcription.
+- Near-limit audio is re-encoded to a seekable MP3 with gapless metadata, avoiding
+  the original unseekable encoder's added duration. The saved original is unchanged.
+- **PASS:** 70 targeted backend tests, 25 app tests, and TypeScript validation.
+  Tests cover exact/just-over duration boundaries, bounded padding, HTTP 413/refund,
+  import rejection before upload, native duration options, and saving once on finish.
+- **PASS (codec only):** a synthetic 1400-second M4A decoded to 1400.00075 seconds
+  before the fix; an unseekable MP3 encoded from 1400 seconds decoded to
+  1400.0833125 seconds. The corrected path bounded audio and generated a
+  **1400.0-second, 8,400,716-byte MP3**. Actual FFmpeg/libsndfile were exercised;
+  OpenAI was mocked. Fixture: `/private/tmp/mirra-limit-1400.m4a` (temporary).
+- **OPEN:** real OpenAI processing at the maximum, production memory/latency,
+  compression quality, concurrent upload recovery, and physical native auto-stop.
+  The shorter limit does not resolve the confirmed 512 MB memory failure.
 
 ## Acceptance ledger
 
@@ -138,7 +164,7 @@ uploads remain open. No paid hosting change is authorized or applied.
 | TF-4 | Offline stopped clips survive force-quit/relaunch; reconnect uploads each exactly once without losing audio, duplicating debriefs, or charging usage twice. | OPEN | App queue/recovery tests pass; backend replay/usage tests pass. Physical device, token refresh, and account-switch checks remain. |
 | TF-5 | Denying microphone permission is recoverable; granting permission in Settings allows recording without a crash or stuck recorder. | OPEN | Device check pending. |
 | TF-6 | Recording continues for at least five minutes with the iPhone locked; after unlock/Stop, audio from before, during, and after lock reaches the debrief. | OPEN | Native audio background mode and Expo recording configuration exist. Real-device check pending. |
-| TF-7 | Both native capture and import support a full one-hour conversation (imports ≤100 MiB), producing a saved debrief/history/Reflect result. Native recording stops and saves at the limit; overlong input fails clearly without consuming usage. Competing uploads retry safely. | OPEN | Full-hour local codec/acoustic test passed with mocked AI. Duration/size rejection and auto-stop/save hook tests pass. Real API, production memory, concurrent retry, and physical-device validation remain required. |
+| TF-7 | Both native capture and import support conversations up to 23m20s (imports ≤100 MiB), producing a saved debrief/history/Reflect result. Native recording stops and saves at the limit; overlong input fails clearly without consuming usage. Competing uploads retry safely. | OPEN | Exact-limit local codec test, duration/size rejection, refund, and auto-stop/save hook tests pass. Maximum-length real API, production memory, concurrent retry, and physical-device validation remain required. One-hour support is deferred. |
 
 ## Automated baseline
 
@@ -325,6 +351,11 @@ consenting participants. Keep private audio/transcripts out of this file.
    increase of exactly two. Relaunch again; no duplicate rows or extra usage.
    Repeat after access-token expiry and switch accounts while clips are queued;
    another account must not see or upload the original account's clips.
+
+6. **TF-7:** Record until native auto-stop at 23m20s, including speech near the
+   beginning, middle, and end. Confirm one saved clip and debrief/history/Reflect
+   result. Repeat with an imported file at the limit; reject a file just over it
+   without consuming usage. Test competing uploads and their eventual recovery.
 
 The default monthly cap is five debriefs. Use fresh disposable beta accounts for
 additional runs; do not change product limits just to make the checks pass.

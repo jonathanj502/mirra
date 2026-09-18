@@ -6,11 +6,12 @@ Verify implementation details against the code before relying on descriptions of
 
 ## Current beta checkpoint
 
-The beta investigation is paused at the user's request. Read
-`docs/beta-pause.md` before resuming release work. The local one-hour candidate
-is **not deployable as one-hour support**: the live transcription model rejects
-inputs longer than 1400 seconds. Memory/component tests do not close this gap.
-Production and billing are unchanged; all TestFlight acceptance gates remain open.
+The broader beta investigation is paused for planning. Read `docs/beta-pause.md`
+before resuming release work. The user subsequently authorized a narrower limit:
+**23 minutes 20 seconds (1400 seconds)** for capture and import, matching the
+observed single-request transcription ceiling. One-hour support is deferred.
+This local change is not deployed; production, billing, and open acceptance gates
+are unchanged. A full-length live API and physical-device pass is still required.
 
 ## Project Overview
 
@@ -72,12 +73,13 @@ per server process; other requests receive retryable 503 before reserving usage.
 Local Linux testing still exceeded 512 MiB; see the acceptance ledger before
 assuming the free Render instance can run this pipeline reliably.
 
-The MVP maximum is one hour for both captured and imported conversations.
-Native recording uses Expo's `record({ forDuration: 3600 })`; its finish event
-saves through the existing durable device queue. Imports are capped at 100 MiB,
-enough for one hour at the current 128 kbps recording preset. Backend decoding
-enforces the duration independently, allowing one second of encoder padding.
-Overlong recordings return 413 and refund reserved usage. One-hour production
+The MVP maximum is 23 minutes 20 seconds for both captured and imported conversations.
+Native recording uses Expo's `record({ forDuration: 1400 })`; its finish event
+saves through the existing durable device queue. Imports retain the 100 MiB cap.
+Backend decoding enforces the duration independently. A compressed container
+whose duration fits may decode up to one extra second of encoder padding; any
+samples beyond 1400 seconds are removed before analysis/transcription. Overlong
+containers and PCM return 413 and refund reserved usage. At-limit production
 and physical-device acceptance remain open in the ledger.
 
 ### Audio Pipeline (the core product)
@@ -131,7 +133,7 @@ The optional `recording_id` form field on `POST /sessions` produces an account-s
 
 ### Audio file import
 
-`useImportAudio.ts` uses `expo-document-picker` (not an OS share-sheet intent) to let the user pick an existing audio file on either platform. Client-side guards: 25MB cap, MIME sniffed from the file extension when the picker returns `application/octet-stream`. Duration is read via a temporary `createAudioPlayer` that waits for loaded metadata and is removed afterward before upload. Goes through the same `uploadSession()` → `POST /sessions` path as a live recording, wired into `HomeScreen.tsx` alongside `useRecordAudio`.
+`useImportAudio.ts` uses `expo-document-picker` (not an OS share-sheet intent) to let the user pick an existing audio file on either platform. Client-side guards: 100 MiB and 1400-second caps, MIME sniffed from the file extension when the picker returns `application/octet-stream`. Duration is read via a temporary `createAudioPlayer` that waits for loaded metadata and is removed afterward before upload. Goes through the same `uploadSession()` → `POST /sessions` path as a live recording, wired into `HomeScreen.tsx` alongside `useRecordAudio`.
 
 Note: the original plan called for `react-native-receive-sharing-intent` handling Android `ACTION_SEND` intents (share-sheet import, confirmation card instead of a manual picker) — that package was never installed and no intent filter exists in `AndroidManifest.xml`. The document-picker approach above is what actually shipped; treat any reference to `useSharedFile.ts` elsewhere as stale.
 
@@ -147,7 +149,7 @@ Note: the original plan called for `react-native-receive-sharing-intent` handlin
 
 - **Speaker classification accuracy** — diarization groups voices but does not identify the recording owner. `speaker.py` still assumes the user is closer to the mic and chooses the loudest speaker by duration-weighted RMS. Document this constraint in onboarding. All turns of the chosen label are retained; speaker splitting and mixed-voice overlap can still affect metrics. `stats.metadata.diarization.user_speaker_confirmed` is false; there is no voice enrollment or speaker-correction UI.
 
-- **Transcription 25MB limit** — `main.py` caps incoming uploads at 100 MiB; this is separate from OpenAI's 25,000,000-byte limit. `transcription.py` uses PCM WAV when it fits, then the supported original compressed file when it fits, otherwise FFmpeg encodes the complete mono timeline as 48 kbps MP3 (about 21.6 MB/hour). FFmpeg with `libmp3lame` is required and checked by `scripts.warm_audio`. The generated file is size-checked before sending. Do not split into independent requests without reconciling speaker IDs; labels are local to each request.
+- **Transcription limits** — `main.py` caps incoming uploads at 100 MiB; this is separate from OpenAI's 25,000,000-byte and observed 1400-second limits. `transcription.py` uses PCM WAV when it fits, then the supported original compressed file when it fits and has at least one second of duration headroom; otherwise FFmpeg encodes the bounded mono timeline as 48 kbps MP3 (about 8.4 MB at the maximum duration). The seekable output file preserves gapless metadata so encoder padding does not exceed the ceiling. FFmpeg with `libmp3lame` is required and checked by `scripts.warm_audio`. The generated file is size-checked before sending. Do not split into independent requests without reconciling speaker IDs; labels are local to each request.
 
 - **JWT verification is ES256/JWKS, not a shared secret** — this Supabase project signs tokens with asymmetric keys, so an HS256 `SUPABASE_JWT_SECRET` can never verify them (this once silently broke every authenticated request). `app/auth.py` fetches the public JWKS once and caches it for the process lifetime; restart the backend if Supabase signing keys are ever rotated.
 
@@ -170,7 +172,7 @@ Monthly cap: 5 debriefs per user, configured by `FREE_TIER_CAP`. Enforced server
 
 | Endpoint | Description |
 |---|---|
-| `POST /sessions` | multipart `audio` (supported format, ≤100 MiB and ≤1 hour) + form metadata → runs pipeline → returns `{ debrief, usedThisMonth, remaining }` |
+| `POST /sessions` | multipart `audio` (supported format, ≤100 MiB and ≤23m20s) + form metadata → runs pipeline → returns `{ debrief, usedThisMonth, remaining }` |
 | `GET /debriefs`, `GET /debriefs/{id}` | paginated debrief history / single debrief for the authenticated user |
 | `DELETE /debriefs/{id}` | deletes the authenticated owner's saved conversation, transcript, and metrics; returns 204 even if already absent; does not refund monthly usage |
 | `GET /usage` | `{ usedThisMonth, remaining, resetsAt }` |

@@ -60,7 +60,7 @@ def test_compressed_source_is_used_when_decoded_wav_exceeds_limit(monkeypatch, t
 @pytest.mark.parametrize("source,content_type", [(None, None), (b"x" * 101, "audio/mp4"), (b"small", "audio/aac")])
 def test_oversized_audio_is_not_split_or_silently_truncated(monkeypatch, transcription_client, source, content_type):
     monkeypatch.setattr(transcription, "MAX_TRANSCRIPTION_BYTES", 100)
-    monkeypatch.setattr(transcription.subprocess, "run", lambda *_args, **kwargs: kwargs["stdout"].write(b"x" * 101))
+    monkeypatch.setattr(transcription.subprocess, "run", lambda command, **_kwargs: Path(command[-1]).write_bytes(b"x" * 101))
     with pytest.raises(TranscriptionInputTooLarge):
         transcription.transcribe(np.zeros(16000), 16000, source_audio=source, content_type=content_type)
     transcription_client.assert_not_called()
@@ -73,7 +73,7 @@ def test_large_audio_is_compressed_as_one_complete_timeline(monkeypatch, transcr
     def encode(command, **kwargs):
         assert command[0] == "ffmpeg" and "48k" in command
         np.testing.assert_array_equal(np.frombuffer(kwargs["input"], dtype="<f4"), audio)
-        kwargs["stdout"].write(b"compressed full conversation")
+        Path(command[-1]).write_bytes(b"compressed full conversation")
 
     monkeypatch.setattr(transcription.subprocess, "run", encode)
     transcription.transcribe(audio, 16000, source_audio=b"x" * 101, content_type="audio/mp4")
@@ -182,7 +182,7 @@ def test_decode_fallback_uses_a_closed_file_and_cleans_it_up(monkeypatch):
         assert Path(path).read_bytes() == b"encoded m4a"
         source = MagicMock()
         source.__enter__.return_value = source
-        source.samplerate, source.channels = 16000, 2
+        source.samplerate, source.channels, source.duration = 16000, 2, 2 / 16000
         source.__iter__.return_value = [np.array([8192, 16384], dtype="<i2").tobytes(),
                                         np.array([16384, 24576], dtype="<i2").tobytes()]
         return source
@@ -217,6 +217,40 @@ def test_decode_stops_at_duration_limit_without_retaining_the_rest(monkeypatch):
 
     with pytest.raises(coordinator.RecordingTooLong):
         coordinator._read_mono(blocks(), 16000)
-    assert len(consumed) < 12
+    assert len(consumed) < 8
     accepted, sr = coordinator._read_mono([np.zeros((16000, 2), dtype=np.float32)], 16000)
     assert len(accepted) == sr
+
+
+def test_duration_boundary_only_allows_decoder_padding_for_a_valid_container(monkeypatch):
+    assert coordinator.MAX_RECORDING_SECONDS == transcription.MAX_TRANSCRIPTION_SECONDS == 1400
+    monkeypatch.setattr(coordinator, "MAX_RECORDING_SECONDS", 1)
+    exact = np.zeros((16000, 1), dtype=np.float32)
+    accepted, sr = coordinator._read_mono([exact], 16000)
+    assert len(accepted) == sr
+    # One extra PCM sample is real excess; no blanket one-second allowance.
+    padded = np.zeros((16001, 1), dtype=np.float32)
+    with pytest.raises(coordinator.RecordingTooLong):
+        coordinator._read_mono([padded], 16000)
+    with pytest.raises(coordinator.RecordingTooLong):
+        coordinator._read_mono([padded], 16000, duration=1.001)
+    accepted, sr = coordinator._read_mono([padded], 16000, duration=1)
+    assert len(accepted) == sr  # The container ends at the limit; drop decoder padding.
+    with pytest.raises(coordinator.RecordingTooLong):
+        coordinator._read_mono([np.zeros((32001, 1), dtype=np.float32)], 16000, duration=1)
+
+
+def test_near_limit_source_is_reencoded_with_gapless_metadata(monkeypatch, transcription_client):
+    monkeypatch.setattr(transcription, "MAX_TRANSCRIPTION_BYTES", 100)
+    monkeypatch.setattr(transcription, "MAX_TRANSCRIPTION_SECONDS", 1)
+
+    def encode(command, **kwargs):
+        assert command[-1].endswith("conversation.mp3") and command[-1] != "pipe:1"
+        assert len(kwargs["input"]) == 16000 * 4
+        Path(command[-1]).write_bytes(b"bounded conversation")
+
+    monkeypatch.setattr(transcription.subprocess, "run", encode)
+    transcription.transcribe(np.zeros(16000, dtype=np.float32), 16000,
+                            source_audio=b"compressed with padding", content_type="audio/mp4")
+    assert transcription_client.call_args.kwargs["file"].read() == b"bounded conversation"
+    transcription_client.assert_called_once()
